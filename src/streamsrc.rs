@@ -36,8 +36,11 @@ pub enum StreamSource {
 
 /// Turn the shell's `IStream` into a decodable source without ever buffering an
 /// unbounded file. `who` prefixes the debug-log lines ("GetThumbnail" /
-/// "DoPreview"); `max_file_bytes` is the user's MaxSize cap (the streaming tiers
-/// deliberately sidestep it — a multi-GB video/audiobook/archive still previews).
+/// "DoPreview"); `max_file_bytes` is the user's MaxSize cap. Purpose-built
+/// previews may sidestep it when their cost is inherently small (one video frame,
+/// album art, or a comic's declared cover); generic ZIP/RAR/7z contact sheets
+/// honor it because discovering pictures in an arbitrary project archive can
+/// itself be expensive.
 ///
 /// The cascade, in order:
 /// 1. VIDEO — an MP4/MOV/M4V video shares the ISO-BMFF `ftyp` box with M4A/M4B
@@ -52,7 +55,7 @@ pub enum StreamSource {
 ///    read ONLY the art (not the whole file). Sidesteps the size cap AND avoids
 ///    buffering; artless audio stops here (raw audio bytes are not a decodable
 ///    image, a full read + decode would just burn time and fail).
-/// 3. OVERSIZED (past the cap) — streamed container cover (CBZ/CB7 central
+/// 3. OVERSIZED (past the cap) — streamed container cover (CBZ central
 ///    directory + one entry; Clip Studio `.clip` tail database) or the
 ///    head-preview prefix rescue (.blend/PSD-PSB baked previews sit in the
 ///    first bytes); otherwise skip.
@@ -87,12 +90,22 @@ pub unsafe fn stream_source(
         let frame = stream_path(stream)
             .and_then(|p| crate::video::frame_from_path(&p))
             .or_else(|| {
-                crate::mp4::keyframe_mini_mp4(&mut IStreamReader { stream: stream.clone() }, 0.30)
-                    .and_then(|buf| crate::video::frame_from_bytes(&buf))
+                crate::mp4::keyframe_mini_mp4(
+                    &mut IStreamReader {
+                        stream: stream.clone(),
+                    },
+                    0.30,
+                )
+                .and_then(|buf| crate::video::frame_from_bytes(&buf))
             })
             .or_else(|| {
-                crate::mkv::keyframe_mini_mkv(&mut IStreamReader { stream: stream.clone() }, 0.30)
-                    .and_then(|buf| crate::video::frame_from_bytes(&buf))
+                crate::mkv::keyframe_mini_mkv(
+                    &mut IStreamReader {
+                        stream: stream.clone(),
+                    },
+                    0.30,
+                )
+                .and_then(|buf| crate::video::frame_from_bytes(&buf))
             })
             .or_else(|| {
                 // MF demuxes AVI/WMV/etc. directly; the block-caching stream makes its
@@ -102,7 +115,9 @@ pub unsafe fn stream_source(
                     .and_then(|size| crate::video::frame_from_block_stream(stream, size, 0.30))
             })
             .or_else(|| video_prefix(stream).and_then(|buf| crate::video::frame_from_bytes(&buf)))
-            .or_else(|| mp4_remux_moov(stream).and_then(|buf| crate::video::frame_from_bytes(&buf)));
+            .or_else(|| {
+                mp4_remux_moov(stream).and_then(|buf| crate::video::frame_from_bytes(&buf))
+            });
         if let Some(frame) = frame {
             safety::log_debug(&format!(
                 "{who}: video frame {}x{}",
@@ -133,8 +148,9 @@ pub unsafe fn stream_source(
     // GENERIC archive (a registered .zip/.rar/.7z — NOT the cbz/epub/office/… zips,
     // which keep their dedicated cover paths): identify the image entries from the
     // archive's file LIST (central directory / headers — never a full decompress),
-    // then pull only those, sized cap-free for the seekable formats. Gated on the
-    // Stat-recovered file extension so the magic alone can't reroute a comic.
+    // then pull only those. Gated on the Stat-recovered file extension so the
+    // magic alone can't reroute a comic, and on MaxSize before any archive parser
+    // runs so a huge project backup remains a cheap stock icon.
     match generic_archive(stream, max_file_bytes, who) {
         ArchiveProbe::NotGeneric => {}
         ArchiveProbe::NoCover => {
@@ -161,7 +177,10 @@ pub unsafe fn stream_source(
     // Transparent PSDs skip this (preview_prefix_len bows out) — their composite
     // needs the full bytes.
     if let Some(prefix) = head_preview_fast(stream) {
-        safety::log_debug(&format!("{who}: head-preview fast path ({} bytes)", prefix.len()));
+        safety::log_debug(&format!(
+            "{who}: head-preview fast path ({} bytes)",
+            prefix.len()
+        ));
         return Ok(StreamSource::Bytes(prefix));
     }
 
@@ -173,8 +192,8 @@ pub unsafe fn stream_source(
     let size = stream_size(stream);
     match size {
         // Oversized: the whole-file read is a DoS risk, so we skip it —
-        // EXCEPT a seek-streamable container: a giant comic ARCHIVE
-        // (CBZ/CB7) reads only its central directory + one cover entry
+        // EXCEPT a seek-streamable container: a giant ZIP comic archive
+        // (CBZ) reads only its central directory + one cover entry
         // over the IStream, and a Clip Studio .clip seeks to the SQLite
         // database at its tail and reads only that. (CBR can't — `rars`
         // needs the full buffer — so a huge .cbr still gets the default
@@ -220,7 +239,11 @@ unsafe fn peek_is_video(stream: &IStream) -> bool {
     // offset 188 / 196) so we don't false-match any file that merely starts with 'G'.
     let mut head = [0u8; 208];
     let mut got: u32 = 0;
-    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, head.len() as u32, Some(&mut got));
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let got = (got as usize).min(head.len());
     hr.is_ok() && crate::video::is_video_magic(&head[..got])
@@ -307,7 +330,11 @@ unsafe fn head_preview_fast(stream: &IStream) -> Option<Vec<u8>> {
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let mut head = [0u8; 8];
     let mut got: u32 = 0;
-    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, head.len() as u32, Some(&mut got));
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     if hr.is_err() || (got as usize) < head.len() {
         return None;
@@ -319,7 +346,9 @@ unsafe fn head_preview_fast(stream: &IStream) -> Option<Vec<u8>> {
     let wanted = crate::container::head_preview_len(
         &head,
         ext.as_deref(),
-        &mut IStreamReader { stream: stream.clone() },
+        &mut IStreamReader {
+            stream: stream.clone(),
+        },
         decode::HEAD_PREVIEW_BYTES as u64,
     );
     // The length probe seeks the SHARED stream around; park it back at 0 before
@@ -331,7 +360,9 @@ unsafe fn head_preview_fast(stream: &IStream) -> Option<Vec<u8>> {
         return None; // prefix would be the whole file — the normal read is equivalent
     }
     let prefix = stream_prefix(stream, wanted as usize)?;
-    crate::container::extract_cover(&prefix).is_some().then_some(prefix)
+    crate::container::extract_cover(&prefix)
+        .is_some()
+        .then_some(prefix)
 }
 
 /// For an OVERSIZED file (past the in-memory cap): if its magic marks a container
@@ -346,7 +377,11 @@ unsafe fn head_preview_prefix(stream: &IStream) -> Option<Vec<u8>> {
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let mut head = [0u8; 8];
     let mut got: u32 = 0;
-    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, head.len() as u32, Some(&mut got));
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let got = (got as usize).min(head.len());
     if hr.is_err() || got < head.len() || !crate::container::has_head_preview(&head) {
@@ -362,7 +397,11 @@ unsafe fn read_full(stream: &IStream, buf: &mut [u8]) -> Option<()> {
     while filled < buf.len() {
         let mut got: u32 = 0;
         let want = (buf.len() - filled).min(u32::MAX as usize) as u32;
-        let hr = stream.Read(buf[filled..].as_mut_ptr() as *mut c_void, want, Some(&mut got));
+        let hr = stream.Read(
+            buf[filled..].as_mut_ptr() as *mut c_void,
+            want,
+            Some(&mut got),
+        );
         if hr.is_err() || got == 0 {
             break;
         }
@@ -485,15 +524,20 @@ enum ArchiveProbe {
 /// carries a generic-archive extension — cbz/epub/office/kra packages share the
 /// zip magic and must keep their dedicated single-cover paths, and a stream with
 /// no recoverable name (rare virtual sources) also falls through to those. ZIP
-/// and 7z read the entry list + picked entries over the seekable IStream with NO
-/// size cap (a multi-GB photo zip costs its central directory + 4 images); RAR
-/// buffers in-memory under the caller's cap (`rars` accepts no reader), so an
-/// oversized .rar keeps the stock icon exactly like an oversized .cbr.
+/// and 7z read the entry list + picked entries over the seekable IStream; RAR
+/// must buffer because `rars` accepts no reader. All three honor the caller's
+/// MaxSize BEFORE parsing. This is deliberately stricter than dedicated comic/
+/// ebook cover extraction: generic project archives can have huge encoded headers,
+/// tens of thousands of paths, and no meaningful image at all.
 unsafe fn generic_archive(stream: &IStream, max_file_bytes: u64, who: &str) -> ArchiveProbe {
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let mut head = [0u8; 8];
     let mut got: u32 = 0;
-    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, head.len() as u32, Some(&mut got));
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let got = (got as usize).min(head.len());
     if hr.is_err() || got < head.len() || !crate::container::is_generic_archive_magic(&head[..got])
@@ -510,25 +554,43 @@ unsafe fn generic_archive(stream: &IStream, max_file_bytes: u64, who: &str) -> A
         return ArchiveProbe::NotGeneric;
     }
 
+    // This gate is intentionally before ArchiveReader/ZipArchive/RAR parsing.
+    // A real 909 MB solid 7z on an SMB share had 18,037 entries and a 235 KB
+    // encoded header; despite the decompression budget, merely parsing it issued
+    // thousands of tiny remote reads and blocked the shell for minutes.
+    let size = stream_size(stream);
+    if let Some(n) = size.filter(|&n| n > max_file_bytes) {
+        safety::log_debug(&format!(
+            "{who}: generic archive over MaxSize ({n} > {max_file_bytes} bytes)"
+        ));
+        return ArchiveProbe::NoCover;
+    }
+
     // Contact sheet (up to 4 images) or classic single cover, per Settings.
-    let want = if crate::settings::archive_collage() { 4 } else { 1 };
+    let want = if crate::settings::archive_collage() {
+        4
+    } else {
+        1
+    };
 
     let covers = if crate::container::archive_needs_buffer(&head) {
         // RAR: same bounded whole-file read as the normal path, then the one-pass
         // multi-target extraction over the buffer.
         let max = max_file_bytes.min(MAX_BYTES as u64);
-        if stream_size(stream).is_some_and(|size| size > max) {
+        if size.is_some_and(|n| n > max) {
             safety::log_debug(&format!("{who}: generic .rar over the read cap"));
             return ArchiveProbe::NoCover;
         }
         let _ = stream.Seek(0, STREAM_SEEK_SET, None);
-        let Ok(bytes) = read_all(stream, MAX_BYTES, stream_size(stream)) else {
+        let Ok(bytes) = read_all(stream, MAX_BYTES, size) else {
             return ArchiveProbe::NoCover;
         };
         crate::container::archive_covers(&bytes, want)
     } else {
         crate::container::archive_covers_seek(
-            IStreamReader { stream: stream.clone() },
+            IStreamReader {
+                stream: stream.clone(),
+            },
             &head,
             want,
         )
@@ -550,23 +612,37 @@ unsafe fn generic_archive(stream: &IStream, max_file_bytes: u64, who: &str) -> A
 }
 
 /// For an OVERSIZED file (past the in-memory cap), sniff whether it's a seek-
-/// streamable container — a comic archive (CBZ/ZIP/CB7: central directory + one
+/// streamable container — a ZIP comic archive (CBZ: central directory + one
 /// cover entry) or a Clip Studio `.clip` (the tail SQLite database holding the
 /// canvas preview) — and, if so, pull just the cover over the IStream, never the
-/// whole file. Returns None for anything else (incl. CBR, which `rars` can't read
-/// without a full buffer), so the caller skips it. Rewinds the stream to 0 before
-/// handing it to the container reader.
+/// whole file. Oversized 7z/CB7 is deliberately excluded: unlike ZIP, even
+/// discovering its entries may require decoding a large encoded header through
+/// a name-less shell stream, where we cannot distinguish a comic from an
+/// arbitrary project backup. Returns None for everything else (including CBR,
+/// which `rars` can't read without a full buffer), so the caller skips it.
 unsafe fn archive_cover_streamed(stream: &IStream) -> Option<Vec<u8>> {
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let mut head = [0u8; 8];
     let mut got: u32 = 0;
-    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, head.len() as u32, Some(&mut got));
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let got = (got as usize).min(head.len());
     if hr.is_err() || got < head.len() {
         return None;
     }
-    crate::container::archive_cover_seek(IStreamReader { stream: stream.clone() }, &head[..got])
+    if crate::container::is_7z(&head[..got]) {
+        return None;
+    }
+    crate::container::archive_cover_seek(
+        IStreamReader {
+            stream: stream.clone(),
+        },
+        &head[..got],
+    )
 }
 
 /// Result of the audio-art probe. The three cases are distinct so the caller can
@@ -586,14 +662,20 @@ unsafe fn audio_art(stream: &IStream) -> AudioArt {
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let mut head = [0u8; 16];
     let mut got: u32 = 0;
-    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, head.len() as u32, Some(&mut got));
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     // Never trust the IStream-reported count past the buffer it filled.
     let got = (got as usize).min(head.len());
     if hr.is_err() || got < 12 || !crate::container::looks_like_audio(&head[..got]) {
         return AudioArt::NotAudio;
     }
-    match crate::container::audio_art_from_reader(IStreamReader { stream: stream.clone() }) {
+    match crate::container::audio_art_from_reader(IStreamReader {
+        stream: stream.clone(),
+    }) {
         Some(art) => AudioArt::Art(art),
         None => AudioArt::NoArt,
     }
@@ -608,9 +690,15 @@ struct IStreamReader {
 impl std::io::Read for IStreamReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut got: u32 = 0;
-        unsafe { self.stream.Read(buf.as_mut_ptr() as *mut c_void, buf.len() as u32, Some(&mut got)) }
-            .ok()
-            .map_err(std::io::Error::other)?;
+        unsafe {
+            self.stream.Read(
+                buf.as_mut_ptr() as *mut c_void,
+                buf.len() as u32,
+                Some(&mut got),
+            )
+        }
+        .ok()
+        .map_err(std::io::Error::other)?;
         // Never trust the IStream-reported count past the buffer it filled (the
         // sibling reads at `audio_art`/`read_all` clamp the same way) — returning
         // more than `buf.len()` violates the `Read` contract on a hostile stream.
@@ -626,7 +714,8 @@ impl std::io::Seek for IStreamReader {
             std::io::SeekFrom::End(n) => (STREAM_SEEK_END, n),
         };
         let mut newpos: u64 = 0;
-        unsafe { self.stream.Seek(off, origin, Some(&mut newpos)) }.map_err(std::io::Error::other)?;
+        unsafe { self.stream.Seek(off, origin, Some(&mut newpos)) }
+            .map_err(std::io::Error::other)?;
         Ok(newpos)
     }
 }
@@ -669,7 +758,12 @@ unsafe fn read_all(stream: &IStream, max: usize, size_hint: Option<u64>) -> Resu
 mod tests {
     use super::*;
     use crate::container::psd_testutil::synthetic_psd;
-    use windows::Win32::UI::Shell::SHCreateMemStream;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, STGM_READ, STGM_SHARE_DENY_NONE,
+    };
+    use windows::Win32::UI::Shell::{SHCreateMemStream, SHCreateStreamOnFileEx};
 
     /// Run the full source cascade on `bytes` (100 MB cap, like the default
     /// MaxSize) and return the byte payload it hands the decode tiers.
@@ -695,7 +789,11 @@ mod tests {
         // hand the decode tiers the exact head prefix, not the whole file.
         let (psd, head_len) = synthetic_psd(3, true, 6 << 20);
         let got = source_bytes(&psd);
-        assert_eq!(got.len(), head_len, "fast path should stop at the resources section");
+        assert_eq!(
+            got.len(),
+            head_len,
+            "fast path should stop at the resources section"
+        );
         assert_eq!(&got[..], &psd[..head_len]);
         // And the prefix must actually decode to the baked thumbnail.
         assert!(crate::container::extract_cover(&got).is_some());
@@ -705,7 +803,11 @@ mod tests {
     fn psd_without_baked_thumbnail_falls_back_to_the_whole_file() {
         let (psd, _) = synthetic_psd(3, false, 1 << 20);
         let got = source_bytes(&psd);
-        assert_eq!(got.len(), psd.len(), "no baked preview -> the pre-fast-path whole read");
+        assert_eq!(
+            got.len(),
+            psd.len(),
+            "no baked preview -> the pre-fast-path whole read"
+        );
     }
 
     #[test]
@@ -714,7 +816,11 @@ mod tests {
         // stops right after the PNG record's payload.
         let (dwg, head_len) = crate::container::dwg_testutil::synthetic_dwg(true, 4 << 20);
         let got = source_bytes(&dwg);
-        assert_eq!(got.len(), head_len, "DWG fast path should stop after the record payload");
+        assert_eq!(
+            got.len(),
+            head_len,
+            "DWG fast path should stop after the record payload"
+        );
         assert!(crate::container::extract_cover(&got).is_some());
     }
 
@@ -746,7 +852,10 @@ mod tests {
                 assert_eq!(b.len(), head_len);
                 assert!(crate::container::extract_cover(&b).is_some());
             }
-            other => panic!("oversized DWG should now yield its preview, got {}", other.is_ok()),
+            other => panic!(
+                "oversized DWG should now yield its preview, got {}",
+                other.is_ok()
+            ),
         }
     }
 
@@ -757,5 +866,49 @@ mod tests {
         let (psd, _) = synthetic_psd(4, true, 1 << 20);
         let got = source_bytes(&psd);
         assert_eq!(got.len(), psd.len());
+    }
+
+    /// A shell stream may expose no filename, so the generic-extension gate
+    /// cannot distinguish `.7z` from `.cb7`. Oversized 7z must still stop at
+    /// MaxSize instead of falling into the old cap-bypassing CB7 rescue.
+    #[test]
+    fn nameless_oversized_7z_is_not_streamed_past_max_size() {
+        const ARCHIVE: &[u8] = include_bytes!("../tests/fixtures/sevenz/solid_order.7z");
+        let path = std::env::temp_dir().join(format!("st2k_generic_cap_{}.7z", std::process::id()));
+        std::fs::write(&path, ARCHIVE).expect("write fixture");
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let open = || unsafe {
+            SHCreateStreamOnFileEx(
+                PCWSTR(wide.as_ptr()),
+                (STGM_READ | STGM_SHARE_DENY_NONE).0,
+                0,
+                false,
+                None,
+            )
+            .expect("SHCreateStreamOnFileEx")
+        };
+
+        let stream = open();
+        let stat_path = unsafe { stream_path(&stream) };
+        assert!(
+            stat_path.is_none(),
+            "fixture must exercise the name-less shell-stream path, got {stat_path:?}"
+        );
+        assert!(
+            unsafe { stream_source(&stream, 1, "test") }.is_err(),
+            "over-MaxSize name-less 7z must keep the stock icon"
+        );
+        drop(stream);
+
+        if com {
+            unsafe { CoUninitialize() };
+        }
+        let _ = std::fs::remove_file(path);
     }
 }

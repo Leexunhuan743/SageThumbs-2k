@@ -6,10 +6,13 @@
 use core::ffi::c_void;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT,
+    WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     AlphaBlend, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, GetDIBits, GetPixel,
+    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GdiFlush, GetDC, GetDIBits, GetPixel,
     IntersectClipRect, InvalidateRect, MonitorFromRect, ReleaseDC, RestoreDC, SaveDC, SelectObject,
     SetBkMode, SetStretchBltMode, SetTextColor, StretchBlt, TextOutW,
     AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, COLORONCOLOR, DIB_RGB_COLORS,
@@ -22,10 +25,12 @@ use windows::Win32::UI::Controls::Dialogs::{
     CF_ENABLEHOOK, CF_INITTOLOGFONTSTRUCT, CF_SCREENFONTS, CHOOSECOLORW, CHOOSEFONTW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_RETURN,
+    GetKeyState, SetActiveWindow, SetFocus, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_F8, VK_RETURN,
+    VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::System::Threading::CreateMutexW;
 
 use crate::dark::rgb;
 use crate::win::{app_icon, gui_font, wide};
@@ -85,6 +90,28 @@ struct Shot {
     // Tick (GetTickCount64) the overlay was created — used to swallow the in-flight
     // hotkey keystroke that would otherwise instantly close it (see SETTLE_CLOSE_MS).
     born: u64,
+    // Present only for the hidden, synthetic full-screen automation route. It uses
+    // the real editor/input/paint pipeline while fencing off clipboard, disk,
+    // dialogs, and upload/network side effects.
+    automation: Option<AutomationState>,
+}
+
+#[derive(Clone, Copy)]
+struct AutomationDrag {
+    tool: Tool,
+    anchor: POINT,
+    raw: POINT,
+    final_point: POINT,
+    snapped: bool,
+}
+
+struct AutomationState {
+    forced_shift: bool,
+    commit_gen: u64,
+    painted_gen: u64,
+    last_drag: Option<AutomationDrag>,
+    status: &'static str,
+    published_title: String,
 }
 
 /// Hover-delay timer id (one-shot, re-armed on each new hovered button).
@@ -96,6 +123,8 @@ const HOVER_TIMER: usize = 1;
 /// focus they arrive here and would cancel/accept-and-close the capture in a split
 /// second. Swallowing the close keys this briefly lets the triggering press settle.
 const SETTLE_CLOSE_MS: u64 = 400;
+
+const AUTOMATION_TITLE_PREFIX: &str = "SageThumbs 2K Screenshot Automation";
 
 impl Shot {
     fn color(&self) -> COLORREF {
@@ -138,11 +167,121 @@ unsafe fn shot_ptr(hwnd: HWND) -> *mut Shot {
     GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Shot
 }
 
+fn effective_shift(physical_shift: bool, automation: Option<&AutomationState>) -> bool {
+    physical_shift || automation.is_some_and(|state| state.forced_shift)
+}
+
+unsafe fn shift_active(s: &Shot) -> bool {
+    let physical = (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0;
+    effective_shift(physical, s.automation.as_ref())
+}
+
+fn automation_title(state: &AutomationState) -> String {
+    let base = format!(
+        "{AUTOMATION_TITLE_PREFIX} | snap={} | commit={} | painted={} | status={}",
+        u8::from(state.forced_shift),
+        state.commit_gen,
+        state.painted_gen,
+        state.status,
+    );
+    if let Some(drag) = state.last_drag {
+        format!(
+            "{base} | tool={} | anchor={},{} | raw={},{} | final={},{} | shifted={}",
+            drag.tool.label(),
+            drag.anchor.x,
+            drag.anchor.y,
+            drag.raw.x,
+            drag.raw.y,
+            drag.final_point.x,
+            drag.final_point.y,
+            u8::from(drag.snapped),
+        )
+    } else {
+        base
+    }
+}
+
+unsafe fn shot_dpi_for_sel(s: &Shot, sel: RECT) -> i32 {
+    if s.automation.is_some() {
+        96
+    } else {
+        dpi_for_sel(sel)
+    }
+}
+
+fn block_automation_output(s: &mut Shot, status: &'static str) -> bool {
+    if let Some(state) = s.automation.as_mut() {
+        state.status = status;
+        true
+    } else {
+        false
+    }
+}
+
+unsafe fn publish_automation_title(hwnd: HWND, s: &mut Shot) {
+    let Some(state) = s.automation.as_mut() else {
+        return;
+    };
+    // This runs only after EndPaint. Matching commit==painted in the externally
+    // visible title therefore proves the real committed-shape paint path completed.
+    state.painted_gen = state.commit_gen;
+    let title = automation_title(state);
+    if title != state.published_title {
+        let title_w = wide(&title);
+        let _ = SetWindowTextW(hwnd, PCWSTR(title_w.as_ptr()));
+        state.published_title = title;
+    }
+}
+
+unsafe fn activate_overlay(hwnd: HWND) {
+    // WS_EX_NOACTIVATE keeps this popup out of normal shell chrome, so activation
+    // is always explicit. SetForegroundWindow is normally allowed for the freshly
+    // spawned hotkey child; SetActiveWindow/SetFocus cover the same-thread state.
+    // Repeating this on click also recovers if Windows' foreground lock denied the
+    // initial request from a background daemon.
+    let _ = SetForegroundWindow(hwnd);
+    let _ = SetActiveWindow(hwnd);
+    let _ = SetFocus(Some(hwnd));
+}
+
 pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
+    run_capture_inner(hinst, false);
+}
+
+/// Hidden integration-test route: the real full-screen editor over a deterministic,
+/// opaque synthetic canvas. This intentionally ships without a UI entry point so an
+/// installed build can be exercised through Windows automation without exposing the
+/// user's desktop or producing clipboard/file/network side effects.
+pub(crate) unsafe fn run_capture_automation(hinst: HINSTANCE) {
+    run_capture_inner(hinst, true);
+}
+
+fn overlay_ex_style() -> WINDOW_EX_STYLE {
+    // WS_EX_TOOLWINDOW is deliberately absent. Windows automation enumerators
+    // commonly reject tool windows outright. WS_EX_NOACTIVATE still keeps this
+    // ownerless popup out of the taskbar while SetForegroundWindow below explicitly
+    // activates it for keyboard shortcuts.
+    WS_EX_TOPMOST | WS_EX_NOACTIVATE
+}
+
+unsafe fn run_capture_inner(hinst: HINSTANCE, automation: bool) {
+    // Claim one shared mutex before any window lookup or screen allocation. Two
+    // near-simultaneous hotkey/test launches can both pass FindWindow; the kernel
+    // mutex closes that TOCTOU race and covers normal + automation classes together.
+    let Ok(_overlay_lock) = CreateMutexW(None, true, w!("SageThumbs2K.ShotOverlay.Single"))
+    else {
+        return;
+    };
+    if GetLastError() == ERROR_ALREADY_EXISTS {
+        return;
+    }
+
     // One overlay at a time: each hotkey press spawns a fresh `--screenshot` process, and
     // MOD_NOREPEAT only suppresses key auto-repeat — a second REAL press would stack another
     // fullscreen overlay whose frozen snapshot is a picture OF the first (dimmed) overlay.
-    if FindWindowW(w!("SageThumbs2KShot"), PCWSTR::null()).is_ok() {
+    if FindWindowW(w!("SageThumbs2KShot"), PCWSTR::null()).is_ok()
+        || FindWindowW(w!("SageThumbs2KShotAutomation"), PCWSTR::null()).is_ok()
+    {
         return;
     }
     let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -152,13 +291,19 @@ pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
     if vw <= 0 || vh <= 0 {
         return;
     }
-    // Freeze the screen into a memory DC (the overlay paints from this, never the
-    // live desktop, so annotations don't fight with what's underneath).
+    // Freeze the screen into a memory DC (the normal overlay paints from this, never
+    // the live desktop, so annotations don't fight with what's underneath). The
+    // automation route MUST NOT copy or sample the desktop: it fills every pixel of
+    // the same full-virtual-screen bitmap with a deterministic synthetic canvas.
     let screen = GetDC(None);
     let mem = CreateCompatibleDC(Some(screen));
     let bmp = CreateCompatibleBitmap(screen, vw, vh);
     SelectObject(mem, HGDIOBJ(bmp.0));
-    let _ = BitBlt(mem, 0, 0, vw, vh, Some(screen), vx, vy, SRCCOPY);
+    if automation {
+        draw_automation_canvas(mem, vw, vh);
+    } else {
+        let _ = BitBlt(mem, 0, 0, vw, vh, Some(screen), vx, vy, SRCCOPY);
+    }
     // A pre-dimmed copy of the snapshot — paint blits this for the surround (no
     // per-frame alpha) and blits the bright `mem` through for the selection.
     let dim = CreateCompatibleDC(Some(screen));
@@ -173,9 +318,16 @@ pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
     // user-chosen size from here on stays physical — it's baked into the saved/copied
     // image — but the starting default should feel the same physical size on a HiDPI
     // display. Identity at 96 keeps a standard display byte-identical.
-    let mut cur = POINT::default();
-    let seed_dpi = if GetCursorPos(&mut cur).is_ok() {
-        dpi_for_sel(RECT { left: cur.x, top: cur.y, right: cur.x + 1, bottom: cur.y + 1 })
+    let mut cursor = POINT::default();
+    let seed_dpi = if automation {
+        96
+    } else if GetCursorPos(&mut cursor).is_ok() {
+        dpi_for_sel(RECT {
+            left: cursor.x,
+            top: cursor.y,
+            right: cursor.x + 1,
+            bottom: cursor.y + 1,
+        })
     } else {
         96
     };
@@ -210,16 +362,36 @@ pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
         move_from: None,
         text_font: tools::default_text_font(crate::win::dpi_scale_dpi(18, seed_dpi)),
         color_flyout: false,
-        customs: super::prefs::load_custom_colors(),
+        customs: if automation {
+            Vec::new()
+        } else {
+            super::prefs::load_custom_colors()
+        },
         cust_colors: [COLORREF(0); 16],
         text_flyout: false,
         font_dropdown: false,
         hover_btn: None,
         tip_show: false,
-        born: GetTickCount64(),
+        born: if automation {
+            GetTickCount64().saturating_sub(SETTLE_CLOSE_MS)
+        } else {
+            GetTickCount64()
+        },
+        automation: automation.then(|| AutomationState {
+            forced_shift: false,
+            commit_gen: 0,
+            painted_gen: 0,
+            last_drag: None,
+            status: "ready",
+            published_title: String::new(),
+        }),
     });
 
-    let class = w!("SageThumbs2KShot");
+    let class = if automation {
+        w!("SageThumbs2KShotAutomation")
+    } else {
+        w!("SageThumbs2KShot")
+    };
     let wc = WNDCLASSW {
         lpfnWndProc: Some(shot_wndproc),
         hInstance: hinst,
@@ -235,9 +407,13 @@ pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
     let gdip_token = gdip::startup();
 
     if let Ok(hwnd) = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        overlay_ex_style(),
         class,
-        w!("Screenshot"),
+        if automation {
+            w!("SageThumbs 2K Screenshot Automation")
+        } else {
+            w!("Screenshot")
+        },
         WS_POPUP,
         vx,
         vy,
@@ -250,7 +426,7 @@ pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
     ) {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
         let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = SetForegroundWindow(hwnd);
+        activate_overlay(hwnd);
         let mut msg = MSG::default();
         loop {
             let r = GetMessageW(&mut msg, None, 0, 0).0;
@@ -422,6 +598,7 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         match msg {
             WM_ERASEBKGND => LRESULT(1), // the snapshot covers every pixel
             WM_LBUTTONDOWN => {
+                activate_overlay(hwnd);
                 let s = &mut *shot_ptr(hwnd);
                 let p = pt(lparam);
                 match s.sel {
@@ -436,7 +613,7 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                         }
                     }
                     Some(sel) => {
-                        let dpi = dpi_for_sel(sel);
+                        let dpi = shot_dpi_for_sel(s, sel);
                         let buttons = toolbar::layout(sel, s.vw, s.vh, dpi);
                         // The open colour palette intercepts clicks first.
                         if s.color_flyout {
@@ -598,7 +775,11 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 // (re)arm the hover-delay timer so the tooltip pops after a beat.
                 let idle = !s.sel_dragging && s.draw_from.is_none() && s.move_from.is_none();
                 let hovered = match (idle, s.sel) {
-                    (true, Some(sel)) => toolbar::hit(&toolbar::layout(sel, s.vw, s.vh, dpi_for_sel(sel)), p.x, p.y),
+                    (true, Some(sel)) => toolbar::hit(
+                        &toolbar::layout(sel, s.vw, s.vh, shot_dpi_for_sel(s, sel)),
+                        p.x,
+                        p.y,
+                    ),
                     _ => None,
                 };
                 if hovered != s.hover_btn {
@@ -627,7 +808,22 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 } else if s.move_from.is_some() {
                     s.move_from = None; // finished dragging the selected shape
                 } else if let Some(a) = s.draw_from.take() {
-                    finish_shape(s, a, p);
+                    let shift = shift_active(s);
+                    let tool = s.tool;
+                    let final_point = tools::drag_endpoint(tool, a, p, shift);
+                    if finish_shape(s, a, final_point) {
+                        if let Some(state) = s.automation.as_mut() {
+                            state.commit_gen += 1;
+                            state.last_drag = Some(AutomationDrag {
+                                tool,
+                                anchor: a,
+                                raw: p,
+                                final_point,
+                                snapped: shift,
+                            });
+                            state.status = "ready";
+                        }
+                    }
                 }
                 let _ = InvalidateRect(Some(hwnd), None, false);
                 LRESULT(0)
@@ -673,8 +869,29 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 LRESULT(0)
             }
             WM_KEYDOWN => {
-                if handle_key(hwnd, wparam.0 as u16) {
+                let vk = wparam.0 as u16;
+                // Bit 30 means the key was already down. A held F8 must toggle the
+                // automation latch once, not on every auto-repeat WM_KEYDOWN.
+                let repeated_f8 = vk == VK_F8.0 && (lparam.0 & (1isize << 30)) != 0;
+                let shift_preview = if vk == VK_SHIFT.0 {
+                    let s = &*shot_ptr(hwnd);
+                    s.draw_from.is_some() && matches!(s.tool, Tool::Line | Tool::Arrow)
+                } else {
+                    false
+                };
+                if (!repeated_f8 && handle_key(hwnd, vk)) || shift_preview {
                     let _ = InvalidateRect(Some(hwnd), None, false);
+                }
+                LRESULT(0)
+            }
+            WM_KEYUP => {
+                // Shift can be pressed or released without moving the mouse. Repaint an
+                // active line/arrow so its preview toggles immediately in either direction.
+                if wparam.0 as u16 == VK_SHIFT.0 {
+                    let s = &*shot_ptr(hwnd);
+                    if s.draw_from.is_some() && matches!(s.tool, Tool::Line | Tool::Arrow) {
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
                 }
                 LRESULT(0)
             }
@@ -699,7 +916,7 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 let ctrl = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
                 // Over the toolbar, or over an open flyout panel?
                 let over_ui = s.sel.is_some_and(|sel| {
-                    let dpi = dpi_for_sel(sel);
+                    let dpi = shot_dpi_for_sel(s, sel);
                     let buttons = toolbar::layout(sel, s.vw, s.vh, dpi);
                     if toolbar::hit(&buttons, p.x, p.y).is_some() {
                         return true;
@@ -718,12 +935,25 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                     false
                 });
-                // Arrow over the UI; move-cursor while Ctrl is held (move mode);
-                // cross otherwise (the capture default).
-                let id = if over_ui {
-                    IDC_ARROW
-                } else if ctrl {
+                let moving = ctrl || s.tool == Tool::Move;
+                let over_shape =
+                    moving && tools::hit_shape(&s.shapes, p.x, p.y).is_some();
+                let active_typing_move =
+                    ctrl && s.tool == Tool::Text && s.typing.is_some();
+                // An already-active gesture wins over modifier changes and toolbar
+                // hover. When idle, match the pointer to what the next click would do.
+                let id = if s.typing_drag || s.move_from.is_some() {
                     IDC_SIZEALL
+                } else if s.sel_dragging || s.draw_from.is_some() {
+                    IDC_CROSS
+                } else if over_ui {
+                    IDC_ARROW
+                } else if active_typing_move || over_shape {
+                    IDC_SIZEALL
+                } else if moving {
+                    IDC_ARROW
+                } else if s.tool == Tool::Text {
+                    IDC_IBEAM
                 } else {
                     IDC_CROSS
                 };
@@ -753,11 +983,23 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
     }
 }
 
-/// Keyboard: tool shortcuts, colour/thickness, undo/redo, accept (Enter →
-/// clipboard+save), cancel (Esc). Returns true if a repaint is needed.
+/// Keyboard: tool shortcuts, colour/thickness, undo/redo, accept (Enter → copy),
+/// save (Ctrl+S), cancel/close (Esc). Returns true if a repaint is needed.
 unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
     let s = &mut *shot_ptr(hwnd);
     let ctrl = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
+    let shift = (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0;
+
+    // Windows automation can send a drag or a key chord, but cannot hold a
+    // modifier across a drag. This automation-only latch lets a real mouse-message
+    // drag exercise the exact same Shift-snap preview/commit path.
+    if vk == VK_F8.0 {
+        if let Some(state) = s.automation.as_mut() {
+            state.forced_shift = !state.forced_shift;
+            state.status = "ready";
+            return true;
+        }
+    }
 
     // Ignore the close keys for a moment after the overlay opens, so the keystroke
     // that fired the launching hotkey can't instantly cancel/accept the capture.
@@ -768,16 +1010,41 @@ unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
     }
 
     if vk == VK_ESCAPE.0 {
+        // Peel back transient editor state before closing the whole capture. This
+        // makes Esc useful for correcting a mis-click instead of immediately losing
+        // the screenshot underneath it.
+        if s.sel_dragging {
+            s.sel_dragging = false; // cancel the initial region drag, keep the overlay
+            return true;
+        }
+        if s.color_flyout || s.text_flyout || s.font_dropdown {
+            s.color_flyout = false;
+            s.text_flyout = false;
+            s.font_dropdown = false;
+            return true;
+        }
         if s.typing.is_some() {
             s.typing = None; // cancel the in-progress text only
             s.typing_drag = false; // and any active reposition drag
+            s.move_from = None;
             s.pending_hi = None; // drop any half-typed surrogate
+            return true;
+        }
+        if s.draw_from.take().is_some() {
+            s.pen_pts.clear(); // cancel the active annotation, keep the capture
+            return true;
+        }
+        if s.selected.take().is_some() {
+            s.move_from = None; // deselect first; a second Esc closes
             return true;
         }
         let _ = DestroyWindow(hwnd);
         return false;
     }
     if vk == VK_RETURN.0 {
+        if block_automation_output(s, "blocked-copy") {
+            return true;
+        }
         // Enter = accept to the clipboard (the quick "I'm done, it's copied" gesture).
         // Saving to a file is the explicit Ctrl+S / Save-button action.
         commit_text(s);
@@ -805,24 +1072,29 @@ unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
         return true;
     }
 
-    if ctrl && vk == b'Z' as u16 {
+    if ctrl && !shift && vk == b'Z' as u16 {
         if let Some(sh) = s.shapes.pop() {
             s.redo.push(sh);
         }
         s.selected = None; // indices may have shifted
+        s.move_from = None;
         return true;
     }
-    if ctrl && vk == b'Y' as u16 {
+    if ctrl && (vk == b'Y' as u16 || (shift && vk == b'Z' as u16)) {
         if let Some(sh) = s.redo.pop() {
             s.shapes.push(sh);
         }
         s.selected = None;
+        s.move_from = None;
         return true;
     }
     // Ctrl+C = copy to clipboard; Ctrl+S = save. Both accept + close (only once a
     // region exists). Ctrl+S keeps the overlay open if the Save-As prompt is cancelled.
     // Checked before the plain-letter tool shortcuts below, so 'C' alone is still Ellipse.
     if ctrl && vk == b'C' as u16 {
+        if block_automation_output(s, "blocked-copy") {
+            return true;
+        }
         if s.sel.is_some() {
             commit_text(s);
             finish_copy(s);
@@ -831,6 +1103,9 @@ unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
         return false;
     }
     if ctrl && vk == b'S' as u16 {
+        if block_automation_output(s, "blocked-save") {
+            return true;
+        }
         if s.sel.is_some() {
             commit_text(s);
             if finish_save(hwnd, s) {
@@ -890,8 +1165,9 @@ unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
     false
 }
 
-/// Turn the finished drag (anchor `a` → release `b`) into a [`Shape`].
-fn finish_shape(s: &mut Shot, a: POINT, b: POINT) {
+/// Turn the finished drag (anchor `a` → release `b`) into a [`Shape`]. Returns
+/// whether a shape was actually committed (tiny/unsupported gestures return false).
+fn finish_shape(s: &mut Shot, a: POINT, b: POINT) -> bool {
     let color = s.color();
     let w = s.thickness;
     let shape = match s.tool {
@@ -903,7 +1179,7 @@ fn finish_shape(s: &mut Shot, a: POINT, b: POINT) {
         Tool::Highlight => Shape::Highlight { r: tools::norm(a, b), color },
         Tool::Pixelate => Shape::Pixelate { r: tools::norm(a, b) },
         Tool::Invert => Shape::Invert { r: tools::norm(a, b) },
-        Tool::Text | Tool::Number | Tool::Eyedropper | Tool::Move => return,
+        Tool::Text | Tool::Number | Tool::Eyedropper | Tool::Move => return false,
     };
     // Skip a tiny accidental drag for any rect-based shape.
     if matches!(&shape,
@@ -911,26 +1187,32 @@ fn finish_shape(s: &mut Shot, a: POINT, b: POINT) {
             | Shape::Pixelate { r } | Shape::Invert { r }
         if (r.right - r.left).abs() < 3 && (r.bottom - r.top).abs() < 3)
     {
-        return;
+        return false;
     }
     s.shapes.push(shape);
     s.redo.clear();
+    true
 }
 
 /// The Eyedropper: read the colour of the frozen-screenshot pixel under `p`, make it
-/// the active drawing colour, and copy `#RRGGBB` to the clipboard — the whole point of
-/// the tool is "grab a colour and go." Client coords map 1:1 to the snapshot (the
-/// overlay spans the virtual screen from its top-left), so we read straight from
-/// `s.shot`. A `CLR_INVALID` read (cursor past the bitmap edge) is ignored.
+/// the active drawing colour, and normally copy `#RRGGBB` to the clipboard. The
+/// synthetic automation route samples locally but deliberately leaves the clipboard
+/// untouched. Client coords map 1:1 to the snapshot (the overlay spans the virtual
+/// screen from its top-left), so we read straight from `s.shot`. A `CLR_INVALID` read
+/// (cursor past the bitmap edge) is ignored.
 unsafe fn sample_pixel(s: &mut Shot, p: POINT) {
     let c = GetPixel(s.shot, p.x, p.y);
     if c.0 == 0xFFFF_FFFF {
         return; // CLR_INVALID — outside the snapshot
     }
     s.cur_color = c;
-    let (r, g, b) = (c.0 & 0xFF, (c.0 >> 8) & 0xFF, (c.0 >> 16) & 0xFF);
-    let _ = crate::win::set_clipboard_text(&format!("#{r:02X}{g:02X}{b:02X}"));
-    s.eye_copied = true; // flash the loupe's "Copied" confirmation until the next move
+    if let Some(state) = s.automation.as_mut() {
+        state.status = "sampled-no-clipboard";
+    } else {
+        let (r, g, b) = (c.0 & 0xFF, (c.0 >> 8) & 0xFF, (c.0 >> 16) & 0xFF);
+        let _ = crate::win::set_clipboard_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+    }
+    s.eye_copied = true; // flash the loupe confirmation until the next move
 }
 
 // ---- Eyedropper magnifier loupe --------------------------------------------
@@ -976,8 +1258,16 @@ fn loupe_box(cx: i32, cy: i32, vw: i32, vh: i32, mag: i32, lbl: i32, gap: i32) -
 /// invalidate just the old/new loupe area on each move instead of the whole screen.
 unsafe fn loupe_rect(s: &Shot, cx: i32, cy: i32) -> RECT {
     let dpi = match s.sel {
-        Some(sel) => dpi_for_sel(sel),
-        None => dpi_for_sel(RECT { left: cx, top: cy, right: cx + 1, bottom: cy + 1 }),
+        Some(sel) => shot_dpi_for_sel(s, sel),
+        None => shot_dpi_for_sel(
+            s,
+            RECT {
+                left: cx,
+                top: cy,
+                right: cx + 1,
+                bottom: cy + 1,
+            },
+        ),
     };
     let mag = crate::win::dpi_scale_dpi(LOUPE_MAG, dpi);
     let lbl = crate::win::dpi_scale_dpi(LOUPE_LBL, dpi);
@@ -988,11 +1278,22 @@ unsafe fn loupe_rect(s: &Shot, cx: i32, cy: i32) -> RECT {
 /// Draw the magnifier loupe near `(cx, cy)` into `hdc`, zooming the bright `shot`.
 /// Mirrors the standalone picker: nearest-neighbour 10× block, a red ring on the
 /// picked pixel, then a swatch + `#RRGGBB` + status hint. `copied` flips the hint to
-/// a confirmation right after a pick.
+/// a confirmation right after a pick; automation calls it "sampled" because its
+/// clipboard fence is active.
 // Geometry + state are all distinct scalars the GDI draw needs; bundling them into a
 // struct would just move the arg list, so allow the count here.
 #[allow(clippy::too_many_arguments)]
-unsafe fn draw_loupe(hdc: HDC, shot: HDC, cx: i32, cy: i32, vw: i32, vh: i32, dpi: i32, copied: bool) {
+unsafe fn draw_loupe(
+    hdc: HDC,
+    shot: HDC,
+    cx: i32,
+    cy: i32,
+    vw: i32,
+    vh: i32,
+    dpi: i32,
+    copied: bool,
+    sampled_only: bool,
+) {
     let mag = crate::win::dpi_scale_dpi(LOUPE_MAG, dpi);
     let lbl = crate::win::dpi_scale_dpi(LOUPE_LBL, dpi);
     let gap = crate::win::dpi_scale_dpi(18, dpi);
@@ -1043,8 +1344,12 @@ unsafe fn draw_loupe(hdc: HDC, shot: HDC, cx: i32, cy: i32, vw: i32, vh: i32, dp
     let hn = hex.len().saturating_sub(1);
     let mut hr = RECT { left: bx + pad * 2 + swsz, top: by + mag, right: bx + mag, bottom: by + mag + swsz + pad * 2 };
     DrawTextW(hdc, &mut hex[..hn], &mut hr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    let (hint_txt, hint_col) =
-        if copied { ("Copied \u{2713}", rgb(120, 220, 120)) } else { ("Click to copy", rgb(150, 150, 150)) };
+    let (hint_txt, hint_col) = match (sampled_only, copied) {
+        (true, true) => ("Sampled \u{2713}", rgb(120, 220, 120)),
+        (true, false) => ("Click to sample", rgb(150, 150, 150)),
+        (false, true) => ("Copied \u{2713}", rgb(120, 220, 120)),
+        (false, false) => ("Click to copy", rgb(150, 150, 150)),
+    };
     SetTextColor(hdc, hint_col);
     let mut hint = wide(hint_txt);
     let hin = hint.len().saturating_sub(1);
@@ -1072,7 +1377,7 @@ fn commit_text(s: &mut Shot) {
 }
 
 unsafe fn shot_paint(hwnd: HWND) {
-    let s = &*shot_ptr(hwnd);
+    let s = &mut *shot_ptr(hwnd);
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
 
@@ -1112,7 +1417,9 @@ unsafe fn shot_paint(hwnd: HWND) {
         tools::frame(mem, r, rgb(0, 200, 90), 1);
     }
     if let Some(a) = s.draw_from {
-        tools::draw_inprogress(mem, 0, 0, s.tool, a, s.cur, s.color(), s.thickness, &s.pen_pts);
+        let shift = shift_active(s);
+        let b = tools::drag_endpoint(s.tool, a, s.cur, shift);
+        tools::draw_inprogress(mem, 0, 0, s.tool, a, b, s.color(), s.thickness, &s.pen_pts);
     }
     if let Some((at, buf)) = &s.typing {
         tools::draw_text(mem, 0, 0, *at, buf, s.color(), &s.text_font, true);
@@ -1129,7 +1436,7 @@ unsafe fn shot_paint(hwnd: HWND) {
         draw_dim_badge(mem, s, sel);
     }
     if let Some(committed) = s.sel {
-        let dpi = dpi_for_sel(committed);
+        let dpi = shot_dpi_for_sel(s, committed);
         let buttons = toolbar::layout(committed, s.vw, s.vh, dpi);
         toolbar::draw(mem, &buttons, s.tool, s.color(), dpi);
         if s.color_flyout {
@@ -1160,10 +1467,28 @@ unsafe fn shot_paint(hwnd: HWND) {
     // cursor point); drawn from the bright snapshot so the zoom shows true colours.
     if s.tool == Tool::Eyedropper {
         let dpi = match s.sel {
-            Some(sel) => dpi_for_sel(sel),
-            None => dpi_for_sel(RECT { left: s.cur.x, top: s.cur.y, right: s.cur.x + 1, bottom: s.cur.y + 1 }),
+            Some(sel) => shot_dpi_for_sel(s, sel),
+            None => shot_dpi_for_sel(
+                s,
+                RECT {
+                    left: s.cur.x,
+                    top: s.cur.y,
+                    right: s.cur.x + 1,
+                    bottom: s.cur.y + 1,
+                },
+            ),
         };
-        draw_loupe(mem, s.shot, s.cur.x, s.cur.y, s.vw, s.vh, dpi, s.eye_copied);
+        draw_loupe(
+            mem,
+            s.shot,
+            s.cur.x,
+            s.cur.y,
+            s.vw,
+            s.vh,
+            dpi,
+            s.eye_copied,
+            s.automation.is_some(),
+        );
     }
 
     // One blit to the window.
@@ -1172,6 +1497,112 @@ unsafe fn shot_paint(hwnd: HWND) {
     let _ = DeleteObject(HGDIOBJ(frame_bmp.0));
     let _ = DeleteDC(mem);
     let _ = EndPaint(hwnd, &ps);
+    if s.automation.is_some() {
+        let _ = GdiFlush();
+        publish_automation_title(hwnd, s);
+    }
+}
+
+/// Paint an opaque, unmistakably synthetic full-virtual-screen surface for UI
+/// automation. The background fill happens first and covers every pixel; no live
+/// desktop BitBlt occurs anywhere on this route.
+unsafe fn draw_automation_canvas(dc: HDC, w: i32, h: i32) {
+    let full = RECT {
+        left: 0,
+        top: 0,
+        right: w,
+        bottom: h,
+    };
+    let bg = CreateSolidBrush(rgb(232, 238, 245));
+    FillRect(dc, &full, bg);
+    let _ = DeleteObject(bg.into());
+
+    // Broad alternating bands plus a regular grid make line angle/length changes
+    // easy to see in an external screenshot at any desktop resolution.
+    let band_h = (h / 4).max(1);
+    for (i, color) in [
+        rgb(221, 234, 244),
+        rgb(236, 230, 246),
+        rgb(226, 242, 232),
+        rgb(247, 237, 220),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let top = i as i32 * band_h;
+        let bottom = if i == 3 { h } else { (top + band_h).min(h) };
+        let brush = CreateSolidBrush(color);
+        FillRect(
+            dc,
+            &RECT {
+                left: 0,
+                top,
+                right: w,
+                bottom,
+            },
+            brush,
+        );
+        let _ = DeleteObject(brush.into());
+    }
+
+    let grid = CreateSolidBrush(rgb(185, 197, 210));
+    for x in (0..w).step_by(80) {
+        FillRect(
+            dc,
+            &RECT {
+                left: x,
+                top: 0,
+                right: (x + 1).min(w),
+                bottom: h,
+            },
+            grid,
+        );
+    }
+    for y in (0..h).step_by(80) {
+        FillRect(
+            dc,
+            &RECT {
+                left: 0,
+                top: y,
+                right: w,
+                bottom: (y + 1).min(h),
+            },
+            grid,
+        );
+    }
+    let _ = DeleteObject(grid.into());
+
+    let banner = RECT {
+        left: 32.min(w),
+        top: 32.min(h),
+        right: (w - 32).max(32.min(w)),
+        bottom: 104.min(h),
+    };
+    let banner_bg = CreateSolidBrush(rgb(28, 43, 59));
+    FillRect(dc, &banner, banner_bg);
+    let _ = DeleteObject(banner_bg.into());
+    let banner_border = CreateSolidBrush(rgb(0, 174, 255));
+    FrameRect(dc, &banner, banner_border);
+    let _ = DeleteObject(banner_border.into());
+
+    SelectObject(dc, HGDIOBJ(gui_font().0));
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, rgb(245, 248, 252));
+    let title = wide("SYNTHETIC FULL-SCREEN AUTOMATION CANVAS");
+    let _ = TextOutW(
+        dc,
+        banner.left + 18,
+        banner.top + 16,
+        &title[..title.len().saturating_sub(1)],
+    );
+    SetTextColor(dc, rgb(175, 205, 230));
+    let subtitle = wide("Safe test surface: no desktop pixels, clipboard, files, dialogs, or uploads");
+    let _ = TextOutW(
+        dc,
+        banner.left + 18,
+        banner.top + 42,
+        &subtitle[..subtitle.len().saturating_sub(1)],
+    );
 }
 
 /// Alpha-blend a ~55%-opacity black layer over `dc` (a 1×1 black source stretched
@@ -1199,7 +1630,7 @@ unsafe fn apply_dim(dc: HDC, w: i32, h: i32) {
 /// region hugs the top of the screen).
 unsafe fn draw_dim_badge(hdc: HDC, s: &Shot, sel: RECT) {
     let (w, h) = (sel.right - sel.left, sel.bottom - sel.top);
-    let dpi = dpi_for_sel(sel);
+    let dpi = shot_dpi_for_sel(s, sel);
     let txt = format!("{w} \u{00d7} {h}");
     SelectObject(hdc, HGDIOBJ(gui_font().0));
     // Measure the text so the chip hugs it (DT_CALCRECT writes the extent into `calc`).
@@ -1243,18 +1674,46 @@ unsafe fn draw_hint(hdc: HDC, s: &Shot) {
     } else {
         format!("size {}", s.thickness)
     };
-    // Kept short — the toolbar tooltips carry the per-button shortcuts now.
-    let txt = format!(
-        "[{tool}]  ·  [ ] {sz}  ·  #{cr:02X}{cg:02X}{cb:02X}  ·  Ctrl-drag moves  ·  Enter copy+save  ·  Esc   (hover buttons for help)",
-        tool = s.tool.label(),
-    );
+    let txt = if s.sel.is_none() {
+        if s.sel_dragging {
+            "Release to capture the region  ·  Esc cancels".to_string()
+        } else {
+            "Drag to select a region  ·  Esc cancels".to_string()
+        }
+    } else {
+        let snap = if matches!(s.tool, Tool::Line | Tool::Arrow) {
+            if let Some(state) = s.automation.as_ref() {
+                if state.forced_shift {
+                    "  ·  F8 snap 45° ON"
+                } else {
+                    "  ·  F8 snap 45° OFF"
+                }
+            } else {
+                "  ·  Shift snaps 45°"
+            }
+        } else {
+            ""
+        };
+        format!(
+            "[{tool}]  ·  [ ] {sz}  ·  #{cr:02X}{cg:02X}{cb:02X}{snap}  ·  Ctrl-drag moves  ·  Enter copy  ·  Ctrl+S save  ·  Esc close",
+            tool = s.tool.label(),
+        )
+    };
     // Size the strip for the monitor it sits on: the selection's monitor once
     // committed, else the monitor under the in-progress drag (or the cursor before a
     // drag). Falls back to 96 (identity), so a standard display is unchanged.
     let dpi = match s.sel {
-        Some(sel) => dpi_for_sel(sel),
-        None if s.sel_dragging => dpi_for_sel(tools::norm(s.sel_anchor, s.cur)),
-        None => dpi_for_sel(RECT { left: s.cur.x, top: s.cur.y, right: s.cur.x + 1, bottom: s.cur.y + 1 }),
+        Some(sel) => shot_dpi_for_sel(s, sel),
+        None if s.sel_dragging => shot_dpi_for_sel(s, tools::norm(s.sel_anchor, s.cur)),
+        None => shot_dpi_for_sel(
+            s,
+            RECT {
+                left: s.cur.x,
+                top: s.cur.y,
+                right: s.cur.x + 1,
+                bottom: s.cur.y + 1,
+            },
+        ),
     };
     let bar_w = s.vw.min(crate::win::dpi_scale_dpi(980, dpi));
     let bar_h = crate::win::dpi_scale_dpi(26, dpi);
@@ -1339,6 +1798,9 @@ unsafe fn compose(s: &Shot) -> Option<(Vec<u8>, i32, i32)> {
 
 /// Copy the composited capture to the clipboard. (Caller commits in-progress text first.)
 unsafe fn finish_copy(s: &Shot) {
+    if s.automation.is_some() {
+        return;
+    }
     if let Some((buf, w, h)) = compose(s) {
         output::copy_dib_to_clipboard(&buf, w, h);
     }
@@ -1350,6 +1812,9 @@ unsafe fn finish_copy(s: &Shot) {
 /// and it saved — false on cancel, so the caller can leave the overlay open. (Caller
 /// commits in-progress text first.)
 unsafe fn finish_save(hwnd: HWND, s: &Shot) -> bool {
+    if s.automation.is_some() {
+        return false;
+    }
     let Some((buf, w, h)) = compose(s) else { return false };
     if sagethumbs2k_core::settings::screenshot_use_save_dir() {
         let dir = super::effective_save_dir();
@@ -1383,6 +1848,16 @@ unsafe fn finish_save(hwnd: HWND, s: &Shot) -> bool {
 /// Handle a toolbar button click. Returns true if it destroyed the window (the
 /// caller must then stop touching `s`/`hwnd`).
 unsafe fn handle_button(hwnd: HWND, s: &mut Shot, btn: Button) -> bool {
+    let blocked_status = match btn {
+        Button::Copy => Some("blocked-copy"),
+        Button::Save => Some("blocked-save"),
+        Button::Upload => Some("blocked-upload"),
+        _ => None,
+    };
+    if blocked_status.is_some_and(|status| block_automation_output(s, status)) {
+        return false;
+    }
+
     match btn {
         Button::Tool(Tool::Text) => {
             if s.tool == Tool::Text {
@@ -1422,12 +1897,16 @@ unsafe fn handle_button(hwnd: HWND, s: &mut Shot, btn: Button) -> bool {
             if let Some(sh) = s.shapes.pop() {
                 s.redo.push(sh);
             }
+            s.selected = None;
+            s.move_from = None;
             false
         }
         Button::Redo => {
             if let Some(sh) = s.redo.pop() {
                 s.shapes.push(sh);
             }
+            s.selected = None;
+            s.move_from = None;
             false
         }
         Button::Copy => {
@@ -1508,6 +1987,9 @@ unsafe extern "system" fn center_dialog_hook(hdlg: HWND, msg: u32, _w: WPARAM, _
 /// The native Windows colour picker (Choose Colour), seeded with the current colour;
 /// a chosen colour is remembered across captures.
 unsafe fn pick_custom_color(hwnd: HWND, s: &mut Shot) {
+    if block_automation_output(s, "blocked-color-dialog") {
+        return;
+    }
     // Seed the dialog's 16 custom slots with the colours we remember.
     for (slot, c) in s.cust_colors.iter_mut().zip(s.customs.iter()) {
         *slot = *c;
@@ -1531,6 +2013,9 @@ unsafe fn pick_custom_color(hwnd: HWND, s: &mut Shot) {
 /// The native Windows font picker (Choose Font) — family, size, bold/italic,
 /// underline, colour — seeded with the current text font + colour.
 unsafe fn pick_text_font(hwnd: HWND, s: &mut Shot) {
+    if block_automation_output(s, "blocked-font-dialog") {
+        return;
+    }
     with_modal(hwnd, || {
         let mut lf = s.text_font;
         let mut cf: CHOOSEFONTW = core::mem::zeroed();
@@ -1545,4 +2030,61 @@ unsafe fn pick_text_font(hwnd: HWND, s: &mut Shot) {
             s.cur_color = cf.rgbColors; // honour the dialog's colour control too
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn automation_state() -> AutomationState {
+        AutomationState {
+            forced_shift: false,
+            commit_gen: 0,
+            painted_gen: 0,
+            last_drag: None,
+            status: "ready",
+            published_title: String::new(),
+        }
+    }
+
+    #[test]
+    fn overlay_style_is_visible_to_windows_automation_without_taskbar_chrome() {
+        let style = overlay_ex_style().0;
+        assert_ne!(style & WS_EX_TOPMOST.0, 0);
+        assert_ne!(style & WS_EX_NOACTIVATE.0, 0);
+        assert_eq!(style & WS_EX_TOOLWINDOW.0, 0);
+    }
+
+    #[test]
+    fn automation_shift_latch_ors_with_physical_shift() {
+        let mut state = automation_state();
+        assert!(!effective_shift(false, None));
+        assert!(effective_shift(true, None));
+        assert!(!effective_shift(false, Some(&state)));
+        assert!(effective_shift(true, Some(&state)));
+
+        state.forced_shift = true;
+        assert!(effective_shift(false, Some(&state)));
+        assert!(effective_shift(true, Some(&state)));
+    }
+
+    #[test]
+    fn automation_title_reports_post_paint_committed_geometry() {
+        let mut state = automation_state();
+        state.forced_shift = true;
+        state.commit_gen = 2;
+        state.painted_gen = 2;
+        state.last_drag = Some(AutomationDrag {
+            tool: Tool::Line,
+            anchor: POINT { x: 150, y: 290 },
+            raw: POINT { x: 350, y: 370 },
+            final_point: POINT { x: 302, y: 442 },
+            snapped: true,
+        });
+
+        assert_eq!(
+            automation_title(&state),
+            "SageThumbs 2K Screenshot Automation | snap=1 | commit=2 | painted=2 | status=ready | tool=Line | anchor=150,290 | raw=350,370 | final=302,442 | shifted=1"
+        );
+    }
 }

@@ -2,6 +2,31 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
+## Unreleased
+
+- **Screenshot lines and arrows now snap cleanly while Shift is held.** The live
+  preview and saved annotation use the same nearest-45° endpoint, even when Shift is
+  pressed or released midway through a drag. The editor also has clearer contextual
+  instructions and tool-aware cursors; Esc dismisses the current flyout, text edit,
+  drawing or selection before closing the capture, and Ctrl+Shift+Z now redoes.
+- **The full-screen screenshot editor can now be tested end to end.** Its window is
+  discoverable by Windows UI automation, and an internal synthetic-canvas mode exercises
+  the real editor without exposing the desktop or writing to the clipboard, files, or an
+  upload service.
+- **Large 7z files no longer stall Explorer, especially on network shares.** A 7z over
+  the configured maximum file size now keeps the normal 7-Zip icon before SageThumbs
+  parses its directory, including when the shell stream does not reveal the filename.
+  For archives that are within the limit, 7z reads are buffered instead of turning an
+  encoded header into thousands of tiny network round trips; decompression uses one CPU
+  thread and no more than 8 MiB of picked-image data in total.
+- **Archive contact sheets use bounded memory.** Each image is cropped and reduced as soon
+  as it is decoded, rather than retaining as many as four full-resolution images while
+  composing a thumbnail.
+- **Screenshot hotkeys and Quick preview now use one resident helper process.** The separate
+  watchdog process has been removed. The remaining helper still re-registers hotkeys after
+  sleep, lock/unlock and remote-desktop changes, and Settings or the next logon restores it
+  after a crash or manual termination.
+
 ## 1.3.4
 
 - **Quick preview opens common images with less disk I/O.** Static GIF, PNG and WebP files now

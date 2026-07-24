@@ -26,11 +26,11 @@ grouped):
 |---|---|---|
 | **Image** (194) | png, jpg, gif, bmp, tiff, webp, heic/heif/**heics/heifs/hif**, avif, psd, **xcf** (GIMP), **psp/pspimage + pspbrush/pspframe/psptube/pspshape/pspselection/pspmask/tub** (the Paint Shop Pro family, incl. LZ77 composites), **iff/ilbm/lbm** (Amiga ILBM), **c4d** (Cinema 4D preview), **cdr/cdt/cmx** (CorelDRAW DISP preview), tga, dds, exr, ico, **icns** (Apple), **jxr/wdp/hdp/wmp** (JPEG XR / HD Photo), jp2/**jpf/jpx**, hdr/**rgbe/xyze**, svg/svgz, **wmf/emf/emz/wmz** (metafiles), **sketch/procreate/skp/3dm/dwg/max/c4d/xd/cdr/cdt** (design/CAD/3D), **blend/.blend1–32** (Blender + auto-saves), **ai** (Illustrator), **eps** (DOS-EPS preview), **f3d** (Autodesk Fusion 360), … | image crate / WIC / ImageMagick / resvg (SVG) |
 | **Camera RAW** (34) | cr2/cr3, nef, arw, dng, raf, orf, rw2, pef, x3f, **bay/cap/dcs/drf/ori/ptx/pxn**, … | WIC (Raw Image Extension) / ImageMagick / embedded-JPEG preview |
-| **Ebook & comics** (12) | epub, mobi/azw/azw3, **prc** (Mobipocket), fb2/fbz, cbz, cb7, **cbr**, **cbt**, **phz** (zip comic) | native-Rust cover extraction (zip/7z/tar/**rar** via the pure-Rust `rars` crate + hand-parsed MOBI) |
+| **Ebook & comics** (12) | epub, mobi/azw/azw3, **prc** (Mobipocket), fb2/fbz, cbz, cb7, **cbr**, **cbt**, **phz** (zip comic) | native-Rust cover extraction (zip/7z/tar/**rar** via the pure-Rust `rars` crate + hand-parsed MOBI); an oversized CB7 received through a name-less shell stream keeps its stock icon rather than risking an expensive 7z directory scan |
 | **Document** (43) | **pdf** (page 1), **djv/djvu** (pure-Rust `djvu-rs` codec), **doc/docx/docm + dot/dotx** (Word), **xls/xlsx/xlsm/xlsb + xlt/xltx** (Excel), **ppt/pptx/pptm + pps/ppsx + pot/potx** (PowerPoint), **odt/ods/odp/odg/…** (OpenDocument), **key/pages/numbers** (Apple iWork), **indd** (InDesign), **vsd/vsdx/vsdm** (Visio), **pub** (Publisher), **ggb** (GeoGebra) | OS `Windows.Data.Pdf` (PDF); pure-Rust `djvu-rs` (DjVu); embedded preview extraction (Office OOXML `docProps/thumbnail` + legacy OLE `\x05SummaryInformation` / iWork / InDesign / Visio / Publisher) |
 | **Audio** (18) | mp3, flac, ogg, opus, m4a, wma, ape, wavpack, musepack, **wav, aiff, aiff-c, dsf** (DSD) | embedded album art via `lofty`; **plus a drawn waveform for raw-PCM WAV/AIFF/AIFF-C with no cover art**, and a hand-rolled ASF parser for WMA (cover art + tags) which `lofty` can't read |
 | **Video** (22) | **mkv** (Matroska), **webm**, mp4/m4v, mov, avi, wmv, …  | a representative frame (~30 % in, not the intro) via the OS **Media Foundation** codecs (no bundled bytes). MP4/MOV (`moov`) and Matroska/WebM (Cues) parse the container's own index to read just the one keyframe nearest 30 % (single-digit MB); AVI/WMV let MF's demuxer seek over a block-caching stream, never streaming the whole movie. (`.mpg/.mpeg/.flv` need MPEG-1/2 or FLV decoders Windows doesn't ship, so they keep the default icon.) |
-| **Archive** (3) | **zip**, **rar**, **7z** | the images INSIDE the archive, including SVG: a single cover, or by default a contact-sheet collage of up to four (Settings ▸ Ebook/comic). ZIP/RAR and non-solid 7z read only the picked images. Solid 7z scans only a small bounded prefix and falls back to the stock icon when its images are buried too deeply, rather than decompressing a huge archive for one thumbnail. No readable image (or encrypted) keeps the stock icon. Comic/ebook archives (cbz/cbr/cb7) stay in **Ebook & comics** and always show their one cover |
+| **Archive** (3) | **zip**, **rar**, **7z** | the images INSIDE the archive, including SVG: a single cover, or by default a contact-sheet collage of up to four (Settings ▸ Ebook/comic). Identified generic archives honor **Max file size** before their directory is parsed; an oversized 7z is also rejected safely when its shell stream has no filename. ZIP/RAR and non-solid 7z read only the picked images; 7z extraction is single-threaded with an 8 MiB aggregate image budget. Solid 7z scans only a small bounded prefix and falls back to the stock icon when its images are buried too deeply. No readable image (or encrypted) keeps the stock icon |
 
 *Counts sum to **326** (canonical source: `formats::FORMATS.len()`; `st2k formats` prints
 it). DjVu (`.djv/.djvu`) thumbnails are decoded by the **maintained pure-Rust `djvu-rs`
@@ -68,14 +68,22 @@ either a single cover image or (the default) a contact-sheet collage of up to fo
 pulled from inside, using the same smart pick as comic covers: natural filename sort, an
 image named "cover" preferred, junk like `__MACOSX` and `Thumbs.db` skipped. The file list
 comes straight from archive metadata. ZIP/RAR and non-solid 7z read only the handful of
-images actually shown. Solid 7z must decode front-to-back, so SageThumbs uses the first
-eligible images in physical order and enforces a small decompression budget; if the first
-image is buried too deeply, the archive keeps its normal icon instead of making Explorer
-grind through it. Raster images and SVG/SVGZ can both appear in the collage. The same picker
-feeds both the Explorer thumbnail and the big reading-pane preview. An archive with no
-images inside, or an encrypted one, keeps the normal icon. Toggle it (or drop back to a
-single cover image) in **Settings ▸ Ebook/comic**. Comic/ebook archives
-(cbz/cbr/cb7/epub) are unaffected: they still always show their one cover.
+images actually shown. Generic archives identified by filename honor **Max file size** before
+the directory is parsed; an oversized 7z is also refused when the shell supplies a name-less
+stream. This is especially important for large project backups on network shares. Oversized
+ZIP-family comics can still stream one cover without reading the whole archive. Within the
+limit, 7z reads are buffered to avoid tiny remote round trips, extraction uses one CPU thread,
+and picked images share an 8 MiB total budget. Solid 7z must decode
+front-to-back, so SageThumbs uses the first eligible images in physical order and enforces the
+same small decompression budget; if the first image is buried too deeply, the archive keeps
+its normal icon instead of making Explorer grind through it. Each collage image is reduced
+immediately after decode, so several full-resolution photos are never retained at once.
+Raster images and SVG/SVGZ can both appear in the collage. The same picker feeds both the
+Explorer thumbnail and the big reading-pane preview. An archive with no images inside, or an
+encrypted one, keeps the normal icon. Toggle it (or drop back to a single cover image) in
+**Settings ▸ Ebook/comic**. Comic/ebook archives still use their dedicated one-cover path;
+an oversized CB7 presented without a recoverable filename is the safety exception and keeps
+its stock icon.
 
 **Per-type toggle:** the Options dialog lists every format with a checkbox; turn
 any on/off (multi-select with Shift/Ctrl, then Space or right-click → Check/
@@ -334,6 +342,8 @@ long scroll is gone.)
   (like Win+Shift+S), and if the copy or the save failed, a small notification says
   exactly what went wrong instead of silence. As you drag out the region, a live **`width × height`
   pixel readout** follows the selection so you can size a capture precisely. In the editor,
+  hold **Shift** while drawing a line or arrow to snap it to the nearest **45° angle**;
+  Esc first cancels the active editor action before closing the capture, and
   **Ctrl+C copies to the clipboard and Ctrl+S saves** (Enter copies too). **Save to a set
   folder on Ctrl+S** (a toggle): when on, Ctrl+S auto-saves a timestamped PNG to a folder
   you pick with **Set save folder…** (defaults to your Desktop); when off, Ctrl+S asks where
@@ -364,11 +374,12 @@ long scroll is gone.)
   button that restores every option to its factory default.
 - **Hotkey service:** a live status line (Running / Stopped / Off) and a **Restart** button
   for the small background helper that powers the screenshot & custom-action hotkeys, plus
-  the **Hide tray icon** toggle (the hotkeys still fire when it's hidden). The service
-  **restarts itself automatically** if it ever stops, and simply opening Settings brings it
-  back if it was down. The hotkeys also **survive the things Windows silently breaks them
-  with**: sleep/resume, locking your PC, remote-desktop reconnects, Explorer restarts
-  (the tray icon comes back too), and app updates all re-register them automatically. If
+  Quick preview and the **Hide tray icon** toggle (the hotkeys still fire when it's hidden).
+  There is one resident helper, not a separate watchdog. Opening Settings, installing an
+  update, or the next logon brings it back after a crash or manual termination. The hotkeys
+  also **survive the things Windows silently breaks them with**: sleep/resume, locking your
+  PC, remote-desktop reconnects, Explorer restarts (the tray icon comes back too), and app
+  updates all re-register them automatically. If
   **another app owns your chosen chord**, the status line says so ("hotkey in use by
   another app") instead of pretending everything works, and it clears itself within a
   minute of that app letting go. Quitting from the tray icon disables it for good (until

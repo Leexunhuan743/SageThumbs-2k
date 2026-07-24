@@ -50,20 +50,14 @@ const IDM_HIDE: usize = 104;
 const UPDATE_TIMER_ID: usize = 9;
 /// Re-attempt every 6h; `update::lazy_check_worker` throttles the actual network hit to 1/day.
 const UPDATE_TIMER_MS: u32 = 6 * 60 * 60 * 1000;
-/// Mutual supervision: re-ensure our [`watchdog`](super::watchdog) is alive on a short timer
-/// (the watchdog does the same for us). Either process dying alone is then recovered within
-/// seconds; single-instance means re-ensuring is a no-op when it's already up.
-const WATCHDOG_TIMER_ID: usize = 10;
-const WATCHDOG_TIMER_MS: u32 = 5000;
 /// Periodic re-assertion of the global hotkey registrations. A `RegisterHotKey` binding can be
 /// silently dropped while THIS process keeps running — most notably across sleep/resume, session
 /// lock/unlock, and RDP reconnect — after which the hotkey just stops firing even though the tray
-/// icon and the watchdog still see a perfectly "healthy" daemon window (the watchdog only checks
-/// the window exists, not that the binding is live). The known triggers re-arm instantly (see the
-/// `WM_POWERBROADCAST` / `WM_WTSSESSION_CHANGE` / `WM_DISPLAYCHANGE` arms); this slow timer is the
-/// catch-all backstop so ANY unforeseen loss self-heals within a minute instead of staying dead
-/// until the user reopens the app. Unregister+Register is cheap and idempotent (the same dance
-/// `WM_RELOAD` already does), so re-running it when nothing was lost is harmless.
+/// icon remains present. The known triggers re-arm instantly (see the `WM_POWERBROADCAST` /
+/// `WM_WTSSESSION_CHANGE` / `WM_DISPLAYCHANGE` arms); this slow timer is the catch-all backstop
+/// so ANY unforeseen loss self-heals within a minute instead of staying dead until the user
+/// reopens the app. Unregister+Register is cheap and idempotent (the same dance `WM_RELOAD`
+/// already does), so re-running it when nothing was lost is harmless.
 const REARM_TIMER_ID: usize = 11;
 const REARM_TIMER_MS: u32 = 60_000;
 /// Retry cadence for a tray-icon add the shell rejected. `NIM_ADD` fails when the taskbar
@@ -97,10 +91,10 @@ fn spawn(arg: Option<&str>) {
 
 pub(crate) unsafe fn run_daemon(hinst: HINSTANCE) {
     // Single instance, TOCTOU-safe: claim a named mutex FIRST. The FindWindow check alone
-    // races — autostart, the watchdog's tick, and a Settings-open heal can all spawn a
-    // daemon in the same instant, each passing the window check before any has created its
-    // window; both then register hotkeys and one silently loses. The OS arbitrates the
-    // mutex, so exactly one proceeds. Held (leaked) for process life on purpose.
+    // races — autostart and a Settings-open heal can both spawn a daemon in the same
+    // instant, each passing the window check before either creates its window; both
+    // then register hotkeys and one silently loses. The OS arbitrates the mutex, so
+    // exactly one proceeds. Held (leaked) for process life on purpose.
     let Ok(_lock) = CreateMutexW(None, true, w!("SageThumbs2K.ShotDaemon.Single")) else {
         return;
     };
@@ -165,17 +159,6 @@ pub(crate) unsafe fn run_daemon(hinst: HINSTANCE) {
         let _ = SetTimer(Some(hwnd), UPDATE_TIMER_ID, UPDATE_TIMER_MS, None);
         kick_update_check(hwnd);
     }
-
-    // Bring up our lightweight watchdog so this daemon gets restarted if it ever dies
-    // (a `panic = "abort"` build takes the whole process — and all hotkeys — down on any
-    // panic). Only while we're actually wanted at logon; single-instance, so it's a no-op
-    // if one's already supervising. This also protects existing installs whose autostart
-    // still launches the daemon directly, with no autostart-entry migration. The timer then
-    // re-ensures it (mutual supervision) so a lone watchdog death is also recovered.
-    if super::supervise_wanted() {
-        super::ensure_watchdog();
-    }
-    let _ = SetTimer(Some(hwnd), WATCHDOG_TIMER_ID, WATCHDOG_TIMER_MS, None);
 
     // Keep the hotkeys alive across events that silently drop `RegisterHotKey` bindings while
     // this process stays up. Session notifications (lock/unlock, connect/disconnect, RDP
@@ -428,10 +411,6 @@ extern "system" fn daemon_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             WM_TIMER => {
                 match wparam.0 {
                     UPDATE_TIMER_ID => kick_update_check(hwnd),
-                    // Re-check the watchdog is alive; re-spawn it if it isn't and we're still
-                    // wanted (a manually-launched daemon with no autostart entry won't — the
-                    // guard then falls through to the no-op arm below).
-                    WATCHDOG_TIMER_ID if super::supervise_wanted() => super::ensure_watchdog(),
                     // Catch-all backstop: re-assert the hotkey registrations in case some
                     // unforeseen event silently dropped them while we kept running.
                     REARM_TIMER_ID => rearm_hotkeys(hwnd),
@@ -449,9 +428,9 @@ extern "system" fn daemon_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 LRESULT(0)
             }
             // Sleep/resume, lock/unlock, RDP reconnect and display changes can each silently drop
-            // a live `RegisterHotKey` while this process stays up — so the hotkey quietly dies and
-            // the watchdog (which only sees the window) never notices. Re-assert on each event so
-            // the hotkey comes back the instant the machine does, with no "reopen the app" needed.
+            // a live `RegisterHotKey` while this process stays up — so the hotkey quietly dies
+            // while the process remains apparently healthy. Re-assert on each event so the
+            // hotkey comes back the instant the machine does, with no "reopen the app" needed.
             WM_POWERBROADCAST => {
                 // Only on RESUME — never on suspend, so we never release the chord right before
                 // sleeping (which would leave it unregistered until wake).
@@ -512,7 +491,6 @@ extern "system" fn daemon_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             WM_DESTROY => {
                 let _ = KillTimer(Some(hwnd), UPDATE_TIMER_ID);
-                let _ = KillTimer(Some(hwnd), WATCHDOG_TIMER_ID);
                 let _ = KillTimer(Some(hwnd), REARM_TIMER_ID);
                 let _ = WTSUnRegisterSessionNotification(hwnd);
                 super::spacehook::uninstall(); // drop the Space hook with the daemon

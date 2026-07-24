@@ -1106,12 +1106,32 @@ pub fn thumbnail_from_image(img: DynamicImage, cx: u32) -> Decoded {
 /// failing the sheet. A single survivor degrades to the normal aspect-preserving
 /// single-cover fit, so the tile never shows a mostly-empty grid.
 pub fn thumbnail_from_covers(covers: &[Vec<u8>], cx: u32) -> Result<Decoded> {
-    let mut imgs: Vec<DynamicImage> = covers.iter().filter_map(|b| decode_cover(b).ok()).collect();
+    let edge = cx.max(1);
+    if covers.len() == 1 {
+        return decode_cover(&covers[0]).map(|img| fit_to_box(img, edge));
+    }
+
+    // Decode one cover at a time and immediately reduce it to the largest region
+    // any collage cell can use. Only these bounded (<= edge-square) intermediates
+    // remain in the Vec; the full-resolution image drops before the next decode.
+    let mut imgs: Vec<(usize, crate::container::collage::PreparedSheetImage)> = covers
+        .iter()
+        .enumerate()
+        .filter_map(|(i, bytes)| {
+            let img = decode_cover(bytes).ok()?;
+            Some((i, crate::container::collage::prepare_for_sheet(&img, edge)))
+        })
+        .collect();
     match imgs.len() {
         0 => Err(Error::from(E_FAIL)),
-        1 => Ok(fit_to_box(imgs.remove(0), cx.max(1))),
+        // Preserve the historical single-survivor aspect-fit. Re-decode only in
+        // this uncommon fallback (multiple candidates were supplied but all save
+        // one failed); the normal one-cover path returned above.
+        1 => decode_cover(&covers[imgs[0].0]).map(|img| fit_to_box(img, edge)),
         _ => {
-            let sheet = crate::container::collage::compose(&imgs, cx.max(1))
+            let prepared: Vec<crate::container::collage::PreparedSheetImage> =
+                imgs.drain(..).map(|(_, img)| img).collect();
+            let sheet = crate::container::collage::compose_prepared(&prepared, edge)
                 .ok_or_else(|| Error::from(E_FAIL))?;
             Ok(Decoded {
                 width: sheet.width(),

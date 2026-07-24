@@ -210,13 +210,11 @@ begin
   end;
 end;
 
-// Stop the resident hotkey daemon + its watchdog BEFORE any file is copied. They
-// deliberately supervise each other (either respawns the other within seconds), which
-// means Restart Manager's graceful close can RACE a respawn: it closes one, the survivor
-// relaunches it from the old EXE mid-install, and the file copy hits a fresh lock. One
-// taskkill sweep takes both down in the same instant (nothing left standing to respawn);
-// the second sweep mops up anything that slipped through the first pass's window. The
-// [Run] --heal-hotkeys step brings the daemon back from the NEW exe once files are in.
+// Stop the resident hotkey/Quick Preview helper BEFORE any file is copied so its
+// old EXE image cannot hold the destination open. The second sweep mops up a
+// concurrent Settings/logon launch that slipped through the first pass's window.
+// The [Run] --heal-hotkeys step brings the helper back from the NEW exe once the
+// files are in place.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   R: Integer;

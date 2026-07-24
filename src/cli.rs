@@ -35,11 +35,23 @@ pub fn devmode(sub: &str) -> Result<String, String> {
 /// `max_dim` px on the long edge (`0` = full size). The headline verb: produces
 /// previews for the formats Windows itself can't.
 pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, String> {
+    let archive_ext = Path::new(input).extension().and_then(|e| e.to_str()).unwrap_or("");
+    if crate::formats::is_archive(archive_ext) {
+        let max = crate::settings::max_file_size_bytes();
+        if let Ok(meta) = std::fs::metadata(input) {
+            if meta.len() > max {
+                return Err(format!(
+                    "input is {} bytes, over the configured archive limit of {max} bytes",
+                    meta.len()
+                ));
+            }
+        }
+    }
     // Generic archive (.zip/.rar/.7z): the same list-then-extract path Explorer
-    // uses — zip/7z stream off the open file (no size cap, the central directory
-    // plus the picked entries is all that's read), and the contact sheet composes
-    // per the same Setting. Falls through to the normal decode if it isn't really
-    // an archive (renamed file) so the magic-dispatch tiers still get their shot.
+    // uses — including the user's MaxSize gate before archive parsing — and the
+    // contact sheet composes per the same Setting. Falls through to the normal
+    // decode if it isn't really an archive (renamed file) so the magic-dispatch
+    // tiers still get their shot.
     if let Some(img) = archive_thumbnail(input) {
         let out = if max_dim > 0 { img.thumbnail(max_dim, max_dim) } else { img };
         out.save(output).map_err(|e| e.to_string())?;

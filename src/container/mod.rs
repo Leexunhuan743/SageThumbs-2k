@@ -92,7 +92,7 @@ fn is_zip(b: &[u8]) -> bool {
 }
 
 /// 7-Zip signature.
-fn is_7z(b: &[u8]) -> bool {
+pub(crate) fn is_7z(b: &[u8]) -> bool {
     b.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C])
 }
 

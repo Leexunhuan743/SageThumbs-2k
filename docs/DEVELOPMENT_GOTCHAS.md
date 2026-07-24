@@ -47,3 +47,30 @@ Read this before doing either again.
   conclude a plain-text file is being colorized. Before trusting a pixel-sampled color as
   "highlighting," confirm the file's detected language/highlight mode independently (a `Plain`-
   classified file has no highlighter running at all, whatever a color sampler reports).
+
+**Testing the full-screen screenshot editor with Windows UI automation:**
+
+- **`WS_EX_TOOLWINDOW` makes the editor undiscoverable.** The Windows automation bridge first
+  requires a visible, uncloaked top-level window, then rejects `WS_EX_TOOLWINDOW`; an ownerless
+  window is otherwise accepted. The main capture editor therefore uses
+  `WS_EX_TOPMOST | WS_EX_NOACTIVATE`, with its existing explicit foreground activation when
+  launched. `WS_EX_NOACTIVATE` keeps the popup out of the taskbar by default without hiding it
+  from automation. Do not apply this rule to the separate white-flash window: that click-through
+  helper should remain a tool window.
+- **Automated UI tests must use the exact hidden `--screenshot-automation` route.** It creates
+  the class `SageThumbs2KShotAutomation` with a title beginning
+  `SageThumbs 2K Screenshot Automation`, covering the complete virtual desktop with an opaque,
+  synthetic canvas. It must never copy pixels from the live desktop. Keep it isolated from the
+  normal `--screenshot` route and make both classes participate in the one-overlay-at-a-time
+  guard.
+- **The synthetic route is a privacy and side-effect boundary, not a demo switch.** Clipboard
+  writes (including eyedropper hex), save/save-as, uploads/network access, persisted custom
+  colours, and native colour/font dialogs must remain disabled there. Its optional test-only
+  controls may expose deterministic state through the window title, but must not alter normal
+  capture behavior.
+- **The toolbar is owner-drawn, so automation has no semantic child buttons to query.** Drive the
+  synthetic editor with its keyboard shortcuts and client coordinates after selecting exactly
+  one matching class/title/process. Run the window-contract smoke test explicitly with
+  `cargo test --test screenshot_automation -- --ignored --test-threads=1`; it is ignored during
+  ordinary test runs because it intentionally opens an opaque topmost window over the virtual
+  desktop.

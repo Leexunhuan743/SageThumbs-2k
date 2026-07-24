@@ -24,6 +24,42 @@ pub fn pick_cover(entries: &[Entry]) -> Option<usize> {
 /// order). `want = 1` reproduces [`pick_cover`] exactly; the contact-sheet thumbnail
 /// asks for 4. Empty when nothing qualifies.
 pub fn pick_covers(entries: &[Entry], want: usize) -> Vec<usize> {
+    let candidates = cover_candidates(entries);
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    // Split off images whose filename contains "cover" (default on) — they lead the
+    // result. With `want = 1` a non-empty cover group IS the pool, so behavior
+    // matches the historical single-cover pick; the rest only matter for `want > 1`.
+    let (mut covers, mut rest): (Vec<usize>, Vec<usize>) =
+        if crate::settings::container_prefer_cover() {
+            candidates
+                .into_iter()
+                .partition(|&i| filename(&entries[i].name).contains("cover"))
+        } else {
+            (Vec::new(), candidates)
+        };
+
+    // Natural sort (default on) each group; else keep archive order.
+    if crate::settings::container_sort() {
+        natural_sort(&mut covers, entries);
+        natural_sort(&mut rest, entries);
+    }
+    covers.extend(rest);
+    covers.truncate(want);
+    covers
+}
+
+/// Cover-eligible entry indices in PHYSICAL/archive order, after the same junk,
+/// scanlation and native-format filtering as [`pick_covers`] but before its
+/// preference groups and natural sort.
+///
+/// Solid 7z scanning needs membership plus physical order: sorting tens of
+/// thousands of project-archive paths only to throw that order away made header-only
+/// misses needlessly CPU-heavy. Keeping the filtering in one helper prevents the
+/// cheap solid path from drifting from the normal name-ranked picker.
+pub fn cover_candidates(entries: &[Entry]) -> Vec<usize> {
     let candidates: Vec<usize> = (0..entries.len())
         .filter(|&i| {
             let e = &entries[i];
@@ -48,7 +84,11 @@ pub fn pick_covers(entries: &[Entry], want: usize) -> Vec<usize> {
             .copied()
             .filter(|&i| !is_scanlation_junk(&entries[i].name))
             .collect();
-        if clean.is_empty() { candidates } else { clean }
+        if clean.is_empty() {
+            candidates
+        } else {
+            clean
+        }
     } else {
         candidates
     };
@@ -57,29 +97,19 @@ pub fn pick_covers(entries: &[Entry], want: usize) -> Vec<usize> {
     // JPEG-2000 cover renders only on the full build, so fall back to it only when no
     // natively-decodable image exists — never let a .jp2 shadow a sibling .jpg (#94).
     let candidates = {
-        let native: Vec<usize> =
-            candidates.iter().copied().filter(|&i| !is_exotic_cover(&entries[i].name)).collect();
-        if native.is_empty() { candidates } else { native }
+        let native: Vec<usize> = candidates
+            .iter()
+            .copied()
+            .filter(|&i| !is_exotic_cover(&entries[i].name))
+            .collect();
+        if native.is_empty() {
+            candidates
+        } else {
+            native
+        }
     };
 
-    // Split off images whose filename contains "cover" (default on) — they lead the
-    // result. With `want = 1` a non-empty cover group IS the pool, so behavior
-    // matches the historical single-cover pick; the rest only matter for `want > 1`.
-    let (mut covers, mut rest): (Vec<usize>, Vec<usize>) = if crate::settings::container_prefer_cover()
-    {
-        candidates.into_iter().partition(|&i| filename(&entries[i].name).contains("cover"))
-    } else {
-        (Vec::new(), candidates)
-    };
-
-    // Natural sort (default on) each group; else keep archive order.
-    if crate::settings::container_sort() {
-        natural_sort(&mut covers, entries);
-        natural_sort(&mut rest, entries);
-    }
-    covers.extend(rest);
-    covers.truncate(want);
-    covers
+    candidates
 }
 
 /// Natural-sort candidate indices by entry name via `StrCmpLogicalW` (page2 before
@@ -88,8 +118,10 @@ pub fn pick_covers(entries: &[Entry], want: usize) -> Vec<usize> {
 /// wide buffers per comparison (mirrors verbs::fileops::natural_sort_key). Matters
 /// on large comic archives with many image entries.
 fn natural_sort(pool: &mut Vec<usize>, entries: &[Entry]) {
-    let mut keyed: Vec<(Vec<u16>, usize)> =
-        pool.iter().map(|&i| (wide(&demote_brackets(&entries[i].name)), i)).collect();
+    let mut keyed: Vec<(Vec<u16>, usize)> = pool
+        .iter()
+        .map(|&i| (wide(&demote_brackets(&entries[i].name)), i))
+        .collect();
     keyed.sort_by(|a, b| {
         unsafe { StrCmpLogicalW(PCWSTR(a.0.as_ptr()), PCWSTR(b.0.as_ptr())) }.cmp(&0)
     });
@@ -105,7 +137,10 @@ fn natural_sort(pool: &mut Vec<usize>, entries: &[Entry]) {
 /// and doesn't need this.
 pub fn dedupe_by_name(picks: Vec<usize>, entries: &[Entry]) -> Vec<usize> {
     let mut seen = std::collections::HashSet::new();
-    picks.into_iter().filter(|&i| seen.insert(entries[i].name.as_str())).collect()
+    picks
+        .into_iter()
+        .filter(|&i| seen.insert(entries[i].name.as_str()))
+        .collect()
 }
 
 /// Archive cruft that is never a cover.
@@ -118,7 +153,9 @@ fn is_junk(name: &str) -> bool {
 /// false-matches "footnote"/"notes"/real titles like "Death Note").
 fn is_scanlation_junk(name: &str) -> bool {
     let f = filename(name);
-    ["credit", "logo", "recruit", "invite"].iter().any(|w| f.contains(w))
+    ["credit", "logo", "recruit", "invite"]
+        .iter()
+        .any(|w| f.contains(w))
 }
 
 /// Cover image types that decode ONLY on the full (ImageMagick/openjpeg) install
@@ -131,7 +168,10 @@ fn is_exotic_cover(name: &str) -> bool {
 
 /// Lowercased final path component.
 fn filename(path: &str) -> String {
-    path.rsplit(['/', '\\']).next().unwrap_or(path).to_ascii_lowercase()
+    path.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase()
 }
 
 /// Demote '[' past 'z' so bracketed "[extras]/[credits]" pages sort after real

@@ -73,7 +73,7 @@ The original **SageThumbs** was a Windows legend. It made Explorer show thumbnai
 |  |  |
 |---|---|
 | 🖼️ **326 formats** | Camera RAW (Canon/Nikon/Sony/Fuji/…), PSD, GIMP XCF, DICOM, OpenEXR, FITS, HEIC/AVIF, JPEG-2000/XL/**XR**, Targa, SGI, and more |
-| 📚 **Ebooks & comics** | EPUB, MOBI/AZW (Kindle), FB2, CBZ/CB7/CBR/CBT: real covers in Explorer (a native-Rust [DarkThumbs](https://github.com/fire-eggs/DarkThumbs) port). Plain ZIP/RAR/7Z archives get a contact-sheet thumbnail of the images inside, too |
+| 📚 **Ebooks & comics** | EPUB, MOBI/AZW (Kindle), FB2, CBZ/CB7/CBR/CBT: real covers in Explorer (a native-Rust [DarkThumbs](https://github.com/fire-eggs/DarkThumbs) port). Plain ZIP/RAR/7Z archives within the configured file-size limit get a contact-sheet thumbnail of the images inside, too |
 | 🎨 **Art / CAD / 3D / design** | PSD/PSB, Affinity, Clip Studio, Krita, OpenRaster, Blender, 3MF, FreeCAD, G-code, **SketchUp, Rhino, AutoCAD DWG, 3ds Max, Adobe XD, InDesign, Visio, CorelDRAW, Fusion 360 (.f3d)**: preview pulled straight from inside the file (no host app needed) |
 | 📄 **DjVu** | Pure-Rust, zero-GPL decode via [`djvu-rs`](https://crates.io/crates/djvu-rs); scanned books show their text |
 | 🔊 **Docs & audio** | PDF first page, Microsoft Office (Word/Excel/PowerPoint) & OpenDocument, and album art for MP3/FLAC/Ogg/Opus/M4A/**WMA**/**DSF (DSD)**/… (WMA/ASF and DSD/.dsf via hand-rolled parsers; `lofty` can't read either) |

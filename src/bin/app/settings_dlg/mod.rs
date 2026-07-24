@@ -799,8 +799,8 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 GDIP_TOKEN.with(|t| t.set(crate::gdip::startup()));
                 let hinst: HINSTANCE = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap().into();
                 build_controls(hwnd, hinst);
-                // Keep the hotkey-service status line live (so a self-heal on open, or a
-                // watchdog restart, flips "Stopped" → "Running" without reopening).
+                // Keep the hotkey-service status line live (so a self-heal on open,
+                // or a later stop, is reflected without reopening).
                 let _ = SetTimer(Some(hwnd), TIMER_SHOT_STATUS, 1000, None);
                 // Lazy, throttled, background update check: it never blocks this window
                 // opening, hits GitHub at most once a day (cached on disk in between), and

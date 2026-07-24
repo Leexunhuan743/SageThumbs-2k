@@ -200,6 +200,12 @@ webp-lossy = ["dep:webp"]
 # full table. NEVER use on the default build — it would strip the app's dialog strings.
 dll-i18n-subset = []
 
+[dev-dependencies]
+# Test-only 7z writer: build non-solid/duplicate-name archives in memory so the
+# exact-index, aggregate-budget extraction path has end-to-end coverage. The
+# shipped dependency above remains decode-only (`compress` is not in release).
+sevenz-rust2 = { version = "0.21", default-features = false, features = ["compress"] }
+
 [build-dependencies]
 # Embeds the app manifest (Common-Controls v6 + DPI awareness) into the EXE so
 # the Options dialog renders with the native Win11 control theme.
@@ -230,7 +236,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation", # GetLocalTime for screenshot filenames
     "Win32_System_RemoteDesktop", # WTSRegisterSessionNotification: re-arm the screenshot hotkeys on session lock/unlock + RDP reconnect (they get silently dropped otherwise)
-    "Win32_System_Threading", # CreateMutexW: TOCTOU-safe single-instance for the screenshot daemon + watchdog (FindWindow alone races at logon)
+    "Win32_System_Threading", # CreateMutexW: TOCTOU-safe single-instance guards (FindWindow alone races at logon/double-click)
     "Win32_Security", # GetTokenInformation(TokenElevation): the install-time heal must NOT spawn the hotkey daemon elevated (UIPI would deafen it to Settings)
     "Win32_System_Time", # SystemTimeToFileTime: EXIF DateTaken (YYYY:MM:DD…) -> FILETIME for the property handler
     "Win32_System_WindowsProgramming", # MulDiv for the app dialogs' DPI scaling

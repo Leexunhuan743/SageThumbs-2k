@@ -128,7 +128,7 @@ const CF_DIB: u32 = 8;
 /// The clipboard is ONE globally-owned resource: `OpenClipboard` fails (typically
 /// `ERROR_ACCESS_DENIED`) whenever any other process has it open, and collisions are
 /// millisecond-scale and constant — clipboard managers, browsers, the Win+V history poller,
-/// and on this machine `SageThumbs2K.exe --screenshot-daemon`/`--screenshot-watchdog`.
+/// and on this machine `SageThumbs2K.exe --screenshot-daemon`.
 /// `src/clipboard.rs` retries for exactly this reason on the WRITE side; a single-attempt
 /// READ here is what made `clipboard_verb_copies_image_to_clipboard` flake.
 unsafe fn open_clipboard_retrying(timeout: std::time::Duration) -> bool {

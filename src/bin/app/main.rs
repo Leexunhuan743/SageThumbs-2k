@@ -193,6 +193,14 @@ fn main() {
         // Convert… mode: `--convert <listfile>` (spawned by the DLL verb) shows
         // the batch-convert dialog instead of the Options window.
         let args: Vec<String> = std::env::args().collect();
+        // Hidden, side-effect-free UI integration route. It takes precedence over
+        // every output-capable mode even in a malformed mixed invocation, preserving
+        // its privacy/safety contract: synthetic full-screen pixels only, with
+        // clipboard, file, dialog, and upload paths fenced inside the overlay.
+        if args.iter().any(|a| a == "--screenshot-automation") {
+            crate::screenshot::run_capture_automation(hinst);
+            return;
+        }
         if let Some(pos) = args.iter().position(|a| a == "--convert") {
             if let Some(listfile) = args.get(pos + 1) {
                 run_convert_dialog(hinst, listfile);
@@ -308,13 +316,6 @@ fn main() {
             crate::screenshot::run_daemon(hinst);
             return;
         }
-        // Screenshot watchdog: `--screenshot-watchdog` runs the tiny supervisor that
-        // restarts the daemon if it ever dies while still wanted. Spawned by the daemon
-        // itself; kept a separate mode so it survives a daemon crash.
-        if args.iter().any(|a| a == "--screenshot-watchdog") {
-            crate::screenshot::run_watchdog(hinst);
-            return;
-        }
         // Custom action hotkey: `--hotkey-action` (spawned by the daemon when the user's
         // assigned chord fires) runs whichever action they bound in Settings ▸ Screenshots —
         // colour picker, screenshot, or a file verb over the Explorer selection / a picker.
@@ -388,8 +389,8 @@ fn main() {
         }
 
         // Opening the Settings window is the natural moment to self-heal the hotkey service:
-        // if it's enabled (or a custom hotkey is bound) but not running — e.g. it and its
-        // watchdog were both killed, or a prior logon never brought it up — restart it now so
+        // if it's enabled (or a custom hotkey is bound) but not running — e.g. it was
+        // killed, or a prior logon never brought it up — restart it now so
         // the user doesn't have to click "Restart". No-op when it's already running / not wanted.
         crate::screenshot::heal_if_wanted();
 

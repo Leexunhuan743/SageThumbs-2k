@@ -188,6 +188,6 @@ pub(super) unsafe fn set_column_text(list: HWND, idx: i32, s: &str) {
 }
 
 /// Repeating timer that keeps the hotkey-service status line live while Settings is open, so
-/// it reflects a self-heal / watchdog restart (or the daemon dying) without reopening the
-/// dialog. IDs 1–2 are the sponsor banner timers (see [`crate::sponsors`]); this is the third.
+/// it reflects a self-heal or the helper stopping without reopening the dialog.
+/// IDs 1–2 are the sponsor banner timers (see [`crate::sponsors`]); this is the third.
 pub(super) const TIMER_SHOT_STATUS: usize = 3;
