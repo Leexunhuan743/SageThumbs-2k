@@ -2,7 +2,7 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
-## Unreleased
+## 1.3.5
 
 - **Screenshot lines and arrows now snap cleanly while Shift is held.** The live
   preview and saved annotation use the same nearest-45° endpoint, even when Shift is
