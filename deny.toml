@@ -103,8 +103,10 @@ skip = [
 
 # ----------------------------------------------------------------------------
 [sources]
-# Only crates.io is expected. A git or alternate-registry dependency sneaking in
-# should be noticed.
+# Registry dependencies must come from crates.io, and git dependencies are not
+# expected. `exr` 1.74.2 is intentionally overridden by the reviewed local path
+# in `[patch.crates-io]`; cargo-deny treats workspace/path sources separately, so
+# these rules still catch an unexpected alternate registry or git dependency.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

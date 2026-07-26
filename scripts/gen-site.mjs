@@ -2,9 +2,9 @@
 // never drift from the shipping software again. It rewrites:
 //   * the format wall  (bar + per-category chip lists) from `st2k formats --json`
 //   * the version pills (softwareVersion, download meta, footer) from Cargo.toml
-// The format COUNT and install SIZE are deliberately vague in the copy ("hundreds of
-// formats", "tiny install") so they never go stale as the app grows; only the
-// auto-generated wall below carries exact, self-updating per-category counts.
+// The prose deliberately avoids hard-coded format counts and installer byte claims.
+// Only the auto-generated wall below carries exact, self-updating category counts;
+// release notes carry each published installer's exact bytes and digest.
 //
 // Run before deploying the site (the site lives at sagethumbs2k.github.io):
 //   node scripts/gen-site.mjs [path\to\st2k.exe]
@@ -38,7 +38,7 @@ const ST2K = findSt2k();
 const formats = JSON.parse(execFileSync(ST2K, ['formats', '--json'], { encoding: 'utf8' }));
 const TOTAL = formats.length;
 
-// ---- version (Cargo.toml) + installer size (dist) --------------------------
+// ---- version (Cargo.toml) --------------------------------------------------
 const cargo = fs.readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8');
 const VERSION = (cargo.match(/^version\s*=\s*"([^"]+)"/m) || [])[1];
 if (!VERSION) throw new Error('could not read version from Cargo.toml');
@@ -75,8 +75,8 @@ const region = html.slice(startIdx, endIdx);
 if (!region.includes('fmtwall')) throw new Error('safety: located region does not look like the format wall');
 html = html.slice(0, startIdx) + block + html.slice(endIdx);
 
-// version pills + schema softwareVersion (the only scalar kept current; count + size
-// are intentionally vague in the copy so they never drift as the app grows).
+// version pills + schema softwareVersion (the only scalar kept current; format count and
+// exact installer bytes are intentionally not hard-coded so they cannot drift).
 // NOTE: these are only the build-time FALLBACK. index.html also ships a small script
 // (the `.js-app-version` updater) that fetches the latest GitHub release tag at load
 // and overrides the pills + softwareVersion at runtime, so a new release does NOT need

@@ -188,7 +188,14 @@ exit `$code
         # daemon is deaf to Settings per UIPI) and only if its autostart entry exists.
         $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
         if ($run -and $run.SageThumbs2KScreenshot) {
-            Start-Process cmd -WindowStyle Hidden -ArgumentList '/c', $run.SageThumbs2KScreenshot
+            # Launch our known Run entry directly. `cmd /c <resident process>` keeps
+            # cmd.exe alive for the daemon's entire lifetime, which misleadingly
+            # creates a second background executable after verification.
+            $daemonCommand = [string]$run.SageThumbs2KScreenshot
+            if ($daemonCommand -notmatch '^\s*"([^"]+)"\s+--screenshot-daemon\s*$') {
+                throw "Unexpected SageThumbs2KScreenshot Run entry: $daemonCommand"
+            }
+            Start-Process -FilePath $Matches[1] -ArgumentList '--screenshot-daemon' -WindowStyle Hidden
         }
         if ($p.ExitCode -ne 0) {
             Write-Host "[verify] elevated install exited $($p.ExitCode) — log:" -ForegroundColor Red

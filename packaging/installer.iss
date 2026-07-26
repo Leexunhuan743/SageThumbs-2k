@@ -33,7 +33,13 @@ UninstallDisplayIcon={app}\app.ico
 SetupIconFile=stage\app.ico
 OutputDir=..\dist
 OutputBaseFilename=SageThumbs2K-Setup-{#AppVer}
-Compression=lzma2/max
+; The full payload contains three closely related Rust binaries plus a curated
+; native codec tree. A 64 MiB dictionary keeps those repeated code regions in one
+; solid window; /max's 8 MiB window evicts them and adds several megabytes without
+; changing the installed files. 64 MiB is modest on supported Windows 10/11.
+Compression=lzma2/ultra64
+; Spend compile time, not runtime compatibility, on a denser match search.
+LZMANumFastBytes=273
 SolidCompression=yes
 WizardStyle=modern
 ; Rich VERSIONINFO on Setup.exe - a metadata-less installer is heuristic-AV
@@ -59,10 +65,40 @@ Name: "custom"; Description: "Custom"; Flags: iscustom
 Name: "core"; Description: "SageThumbs 2K shell extension + Options"; Types: full compact custom; Flags: fixed
 Name: "magick"; Description: "ImageMagick engine - 100+ extra formats"; Types: full custom
 
+[InstallDelete]
+; ImageMagick is a curated, flattened payload. Inno upgrades in place and does
+; not remove old files merely because a newer [Files] list omits them, so clear
+; only the basenames/directories SageThumbs manages before repopulating a Full
+; install. These entries intentionally have no Components condition: switching
+; from Full to Compact must remove the complete prior engine as well.
+Type: filesandordirs; Name: "{app}\modules"
+Type: files; Name: "{app}\magick.exe"
+Type: files; Name: "{app}\CORE_RL_*.dll"
+Type: files; Name: "{app}\mfc140u.dll"
+Type: files; Name: "{app}\msvcp140*.dll"
+Type: files; Name: "{app}\vcomp140.dll"
+Type: files; Name: "{app}\vcruntime140*.dll"
+Type: files; Name: "{app}\colors.xml"
+Type: files; Name: "{app}\configure.xml"
+Type: files; Name: "{app}\delegates.xml"
+Type: files; Name: "{app}\english.xml"
+Type: files; Name: "{app}\locale.xml"
+Type: files; Name: "{app}\log.xml"
+Type: files; Name: "{app}\mime.xml"
+Type: files; Name: "{app}\policy.xml"
+Type: files; Name: "{app}\thresholds.xml"
+Type: files; Name: "{app}\type-ghostscript.xml"
+Type: files; Name: "{app}\type.xml"
+Type: files; Name: "{app}\License.txt"
+Type: files; Name: "{app}\NOTICE.txt"
+
 [Files]
+; Keep the DLL and CLI adjacent in the solid stream. Both are mostly the shared
+; core, so adjacency also helps lower-memory tooling and keeps their repeated
+; regions close in the solid stream.
 Source: "stage\{#AppDll}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
-Source: "stage\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
 Source: "stage\st2k.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: core
+Source: "stage\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
 ; Signed sparse package + its public cert -> the Windows 11 modern context menu.
 ; Built by packaging\make-msix.ps1 (self-signed; skipped with -NoModernMenu).
 Source: "stage\SageThumbs2K.msix"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: core
@@ -73,8 +109,12 @@ Source: "stage\logo.png"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoe
 Source: "stage\banner.png"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: core
 Source: "stage\README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: core
 Source: "stage\LICENSE*"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: core
-; Bundled ImageMagick (magick.exe + DLLs + modules\ + hardened policy.xml).
-Source: "stage\magick\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: magick
+; The hardened policy is core: Compact can deliberately fall back to a Program
+; Files ImageMagick and must constrain it too. The full bundle's duplicate copy
+; exists for exact staged testing but is excluded from this second installer row.
+Source: "stage\policy.xml"; DestDir: "{app}"; Flags: ignoreversion; Components: core
+; Bundled ImageMagick (magick.exe + DLLs + modules\).
+Source: "stage\magick\*"; DestDir: "{app}"; Excludes: "policy.xml"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: magick
 
 [Icons]
 Name: "{group}\SageThumbs 2K"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\app.ico"

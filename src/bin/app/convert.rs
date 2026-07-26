@@ -86,6 +86,10 @@ const CV_FORMATS: &[(&str, Option<ImageFormat>, &str)] = &[
     ("TGA  \u{2014}  Truevision Targa", Some(ImageFormat::Tga), "tga"),
     ("QOI  \u{2014}  Quite OK Image", Some(ImageFormat::Qoi), "qoi"),
     ("PNM  \u{2014}  Portable Pixmap (PPM)", Some(ImageFormat::Pnm), "ppm"),
+    ("PAM  \u{2014}  Portable Arbitrary Map", Some(ImageFormat::Pnm), "pam"),
+    ("EXR  \u{2014}  OpenEXR (HDR)", Some(ImageFormat::OpenExr), "exr"),
+    ("HDR  \u{2014}  Radiance RGBE (HDR)", Some(ImageFormat::Hdr), "hdr"),
+    ("FF  \u{2014}  Farbfeld", Some(ImageFormat::Farbfeld), "ff"),
     ("PDF  \u{2014}  Portable Document Format", None, "pdf"),
 ];
 
@@ -102,10 +106,6 @@ const CV_MAGICK_FORMATS: &[(&str, &str)] = &[
     ("JP2  \u{2014}  JPEG 2000", "jp2"),
     ("PCX  \u{2014}  PC Paintbrush", "pcx"),
     ("SGI  \u{2014}  Silicon Graphics", "sgi"),
-    ("EXR  \u{2014}  OpenEXR (HDR)", "exr"),
-    ("HDR  \u{2014}  Radiance RGBE (HDR)", "hdr"),
-    ("FF  \u{2014}  Farbfeld", "ff"),
-    ("PAM  \u{2014}  Portable Arbitrary Map", "pam"),
     ("PFM  \u{2014}  Portable Float Map", "pfm"),
     ("DPX  \u{2014}  Digital Picture Exchange", "dpx"),
     ("FITS  \u{2014}  Flexible Image Transport", "fits"),

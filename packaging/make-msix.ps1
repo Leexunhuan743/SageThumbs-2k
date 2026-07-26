@@ -66,12 +66,13 @@ Copy-Item (Join-Path $pkgdir 'Assets') $stage -Recurse -Force
 # version — this was a manual, forgettable bump before. The checked-in manifest is
 # left untouched; only the packed copy is rewritten.
 $cargoVer = ([regex]::Match((Get-Content (Join-Path $pkgdir '..\Cargo.toml') -Raw), '(?m)^\s*version\s*=\s*"([^"]+)"')).Groups[1].Value
-if ($cargoVer) {
-    $mf = Join-Path $stage 'AppxManifest.xml'
-    (Get-Content $mf -Raw) -replace '(<Identity\b[^>]*\bVersion=")[^"]+(")', "`${1}$cargoVer.0`${2}" |
-        Set-Content $mf -Encoding utf8
-    Write-Host "      manifest Identity Version -> $cargoVer.0 (from Cargo.toml)" -ForegroundColor DarkGray
+if ($cargoVer -notmatch '^\d+\.\d+\.\d+$') {
+    throw "could not read an MSIX-compatible version from Cargo.toml: '$cargoVer'"
 }
+$mf = Join-Path $stage 'AppxManifest.xml'
+(Get-Content $mf -Raw) -replace '(<Identity\b[^>]*\bVersion=")[^"]+(")', "`${1}$cargoVer.0`${2}" |
+    Set-Content $mf -Encoding utf8
+Write-Host "      manifest Identity Version -> $cargoVer.0 (from Cargo.toml)" -ForegroundColor DarkGray
 
 & $makeappx pack /d $stage /p $msix /o /nv
 if ($LASTEXITCODE) { throw "makeappx pack failed ($LASTEXITCODE)" }
@@ -79,6 +80,16 @@ if ($LASTEXITCODE) { throw "makeappx pack failed ($LASTEXITCODE)" }
 # 4) Sign with the cert (matched by thumbprint, so it's unambiguous). ---------
 & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint $msix
 if ($LASTEXITCODE) { throw "signtool sign failed ($LASTEXITCODE)" }
+
+# Fail immediately if signing produced an invalid package, used a different
+# certificate, or packed stale Identity metadata. The same assertion is repeated
+# by the release-manifest writer and publication validator.
+. (Join-Path $pkgdir '..\scripts\release-manifest-lib.ps1')
+Assert-ReleaseMsixPackage `
+    -Path $msix `
+    -CertificatePath $cer `
+    -Version $cargoVer `
+    -SignToolPath $signtool
 
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("      signed sparse package: {0} ({1} bytes) + {2}" -f (Split-Path $msix -Leaf), (Get-Item $msix).Length, (Split-Path $cer -Leaf)) -ForegroundColor DarkGray

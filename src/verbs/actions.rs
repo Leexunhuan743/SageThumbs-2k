@@ -85,8 +85,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::encode::{
-    predict_unique_suffix, read_capped, reserve_unique_suffix, resize_file, shrink_for_email,
-    transform_file, with_tmp_suffix, Resize, Target,
+    edit_output_ext, predict_unique_suffix, read_capped, reserve_unique_suffix, resize_file,
+    shrink_for_email, transform_file, with_tmp_suffix, Resize, Target,
 };
 use super::fileops::{
     combine_to_cbz, combined_path, files_to_folder, reserve_dest, sanitize_component,
@@ -233,7 +233,7 @@ fn transform_one(exe: Option<&Path>, p: &str, t: Transform) -> Option<PathBuf> {
             // still free) so it matches what st2k picks — recomputing afterwards
             // would see the new file and pick `(edited 2)` instead.
             let src = Path::new(p);
-            let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
+            let ext = routed_edit_output_ext(src);
             // PREDICT (read-only) the name `st2k rotate` will auto-pick — do NOT
             // reserve it, or st2k's own picker would see our placeholder and bump to
             // `(edited 2)`. Rotate names derive from the distinct source stem, so
@@ -259,7 +259,7 @@ fn resize_one(exe: Option<&Path>, p: &str, r: Resize) -> Option<PathBuf> {
     match exe {
         Some(exe) => {
             let src = Path::new(p);
-            let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
+            let ext = routed_edit_output_ext(src);
             let slot = reserve_unique_suffix(src, "resized", &ext);
             let (Some(out_s), Some(rs)) = (slot.path().to_str(), resize_arg(r)) else {
                 return resize_one(None, p, r);
@@ -282,6 +282,15 @@ fn resize_one(exe: Option<&Path>, p: &str, r: Resize) -> Option<PathBuf> {
             }
         },
     }
+}
+
+fn routed_edit_output_ext(src: &Path) -> String {
+    let source_ext = src
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    edit_output_ext(&source_ext).to_string()
 }
 
 /// Shrink one file for email. Routes to `st2k convert <in> <out> --resize ExE`
@@ -1235,7 +1244,7 @@ fn add_attrs(path: &Path, add: FILE_FLAGS_AND_ATTRIBUTES) {
 
 #[cfg(test)]
 mod tests {
-    use super::reveal_is_noise;
+    use super::{reveal_is_noise, routed_edit_output_ext};
 
     #[test]
     fn reveal_skips_in_place_sibling_only() {
@@ -1273,5 +1282,27 @@ mod tests {
         assert!(!reveal_is_noise(&dir.join("ghost.webp"), &sources));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn routed_edits_use_the_same_honest_extension_as_in_process_edits() {
+        for source in ["drawing.svg", "photo.heic", "bitmap.pbm", "mystery.unknown"] {
+            assert_eq!(
+                routed_edit_output_ext(std::path::Path::new(source)),
+                "png",
+                "{source}"
+            );
+        }
+        for source in ["layered.psd", "texture.dds", "picture.jp2"] {
+            assert_eq!(
+                routed_edit_output_ext(std::path::Path::new(source)),
+                source.rsplit_once('.').unwrap().1,
+                "{source}"
+            );
+        }
+        assert_eq!(
+            routed_edit_output_ext(std::path::Path::new("photo.JPEG")),
+            "jpeg"
+        );
     }
 }

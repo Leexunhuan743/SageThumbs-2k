@@ -188,7 +188,7 @@ pub unsafe fn stream_source(
     // before reading into memory. The effective cap is the user's MaxSize but
     // never above the hard MAX_BYTES ceiling ("0 = unlimited" means "up to
     // MAX_BYTES").
-    let max = max_file_bytes.min(MAX_BYTES as u64);
+    let max = decode::effective_input_cap(max_file_bytes);
     let size = stream_size(stream);
     match size {
         // Oversized: the whole-file read is a DoS risk, so we skip it —
@@ -215,19 +215,46 @@ pub unsafe fn stream_source(
             safety::log_debug(&format!("{who}: skip, {size} bytes over limit"));
             Err(Error::from(E_FAIL))
         }
+        None if peek_is_7z(stream) => {
+            // A provider stream with neither a recoverable name nor a Stat size
+            // cannot prove this is a bounded CB7 rather than a huge project 7z.
+            // Do not pull up to hundreds of MiB over a marshaled/network stream
+            // merely to discover that after the fact.
+            safety::log_debug(&format!(
+                "{who}: refusing name-less 7z with unavailable stream size"
+            ));
+            Err(Error::from(E_FAIL))
+        }
         _ => {
             let _ = stream.Seek(0, STREAM_SEEK_SET, None);
-            Ok(StreamSource::Bytes(read_all(stream, MAX_BYTES, size)?))
+            Ok(StreamSource::Bytes(read_all(stream, max as usize, size)?))
         }
     }
 }
 
 /// The stream's total size in bytes via `IStream::Stat`, or None if the stream
-/// doesn't support it (then we just read up to the hard `MAX_BYTES` cap).
+/// doesn't support it (then the general read is bounded by the effective user +
+/// hard cap, while expensive name-less 7z input fails closed).
 unsafe fn stream_size(stream: &IStream) -> Option<u64> {
     let mut stat = STATSTG::default();
     stream.Stat(&mut stat, STATFLAG_NONAME).ok()?;
     Some(stat.cbSize)
+}
+
+/// Read just enough to recognize a 7z signature and rewind. Used only for the
+/// unknown-size fail-closed gate; ZIP remains eligible for its deliberate
+/// seek-only CBZ cover rescue.
+unsafe fn peek_is_7z(stream: &IStream) -> bool {
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    let mut signature = [0u8; 6];
+    let mut got = 0u32;
+    let result = stream.Read(
+        signature.as_mut_ptr() as *mut c_void,
+        signature.len() as u32,
+        Some(&mut got),
+    );
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    result.is_ok() && got as usize == signature.len() && signature == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]
 }
 
 /// Sniff the stream head for a video container we can frame-grab (Matroska/WebM, MP4/MOV,
@@ -519,6 +546,15 @@ enum ArchiveProbe {
     Found(StreamSource),
 }
 
+/// A generic project archive is parsed only when its total size is known and
+/// inside both the user's preference and the hard decoder ceiling. Unlike a
+/// dedicated comic/ebook cover, there is no safe reason to probe an unbounded
+/// ZIP/7z directory over an opaque provider stream.
+fn checked_generic_archive_size(size: Option<u64>, max_file_bytes: u64) -> Option<u64> {
+    let size = size?;
+    (size <= decode::effective_input_cap(max_file_bytes)).then_some(size)
+}
+
 /// The generic-archive (.zip/.rar/.7z) branch of [`stream_source`]. Fires only
 /// when BOTH the magic is an archive signature AND the Stat-recovered file name
 /// carries a generic-archive extension — cbz/epub/office/kra packages share the
@@ -557,14 +593,20 @@ unsafe fn generic_archive(stream: &IStream, max_file_bytes: u64, who: &str) -> A
     // This gate is intentionally before ArchiveReader/ZipArchive/RAR parsing.
     // A real 909 MB solid 7z on an SMB share had 18,037 entries and a 235 KB
     // encoded header; despite the decompression budget, merely parsing it issued
-    // thousands of tiny remote reads and blocked the shell for minutes.
-    let size = stream_size(stream);
-    if let Some(n) = size.filter(|&n| n > max_file_bytes) {
+    // thousands of tiny remote reads and blocked the shell for minutes. Apply
+    // the hard decoder ceiling as well as the user's MaxSize: Settings represents
+    // "0 / unlimited" as u64::MAX, but it is only unlimited within that ceiling.
+    let max = decode::effective_input_cap(max_file_bytes);
+    let reported_size = stream_size(stream);
+    let Some(size) = checked_generic_archive_size(reported_size, max_file_bytes) else {
+        let detail = reported_size
+            .map(|n| format!("{n} > {max} bytes"))
+            .unwrap_or_else(|| "stream size unavailable".to_string());
         safety::log_debug(&format!(
-            "{who}: generic archive over MaxSize ({n} > {max_file_bytes} bytes)"
+            "{who}: refusing generic archive before parse ({detail})"
         ));
         return ArchiveProbe::NoCover;
-    }
+    };
 
     // Contact sheet (up to 4 images) or classic single cover, per Settings.
     let want = if crate::settings::archive_collage() {
@@ -576,13 +618,8 @@ unsafe fn generic_archive(stream: &IStream, max_file_bytes: u64, who: &str) -> A
     let covers = if crate::container::archive_needs_buffer(&head) {
         // RAR: same bounded whole-file read as the normal path, then the one-pass
         // multi-target extraction over the buffer.
-        let max = max_file_bytes.min(MAX_BYTES as u64);
-        if size.is_some_and(|n| n > max) {
-            safety::log_debug(&format!("{who}: generic .rar over the read cap"));
-            return ArchiveProbe::NoCover;
-        }
         let _ = stream.Seek(0, STREAM_SEEK_SET, None);
-        let Ok(bytes) = read_all(stream, MAX_BYTES, size) else {
+        let Ok(bytes) = read_all(stream, MAX_BYTES, Some(size)) else {
             return ArchiveProbe::NoCover;
         };
         crate::container::archive_covers(&bytes, want)
@@ -781,6 +818,57 @@ mod tests {
                 }
             ),
         }
+    }
+
+    #[test]
+    fn unlimited_setting_still_obeys_the_hard_archive_cap() {
+        assert_eq!(decode::effective_input_cap(u64::MAX), MAX_BYTES as u64);
+        assert_eq!(
+            decode::effective_input_cap((MAX_BYTES as u64) + 1),
+            MAX_BYTES as u64
+        );
+        assert_eq!(decode::effective_input_cap(1 << 20), 1 << 20);
+    }
+
+    #[test]
+    fn generic_archive_requires_a_known_size_before_parse() {
+        assert_eq!(checked_generic_archive_size(None, u64::MAX), None);
+        assert_eq!(
+            checked_generic_archive_size(
+                Some(decode::limits::MAX_INPUT_BYTES + 1),
+                u64::MAX
+            ),
+            None
+        );
+        assert_eq!(checked_generic_archive_size(Some(4096), u64::MAX), Some(4096));
+        assert_eq!(checked_generic_archive_size(Some(4096), 1024), None);
+    }
+
+    #[test]
+    fn sevenz_unknown_size_probe_is_signature_exact_and_rewinds() {
+        const SIGNATURE: &[u8] = &[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C];
+        let mut bytes = SIGNATURE.to_vec();
+        bytes.extend_from_slice(b"payload");
+        let stream = unsafe { SHCreateMemStream(Some(&bytes)) }.expect("SHCreateMemStream");
+
+        assert!(unsafe { peek_is_7z(&stream) });
+        let mut first = [0u8; 6];
+        let mut got = 0u32;
+        unsafe {
+            stream
+                .Read(
+                    first.as_mut_ptr() as *mut c_void,
+                    first.len() as u32,
+                    Some(&mut got),
+                )
+                .unwrap();
+        }
+        assert_eq!(got as usize, first.len());
+        assert_eq!(first, SIGNATURE);
+
+        let not_7z = unsafe { SHCreateMemStream(Some(b"PK\x03\x04zip")) }
+            .expect("SHCreateMemStream");
+        assert!(!unsafe { peek_is_7z(&not_7z) });
     }
 
     #[test]

@@ -48,24 +48,52 @@ fn find_magick() -> Option<PathBuf> {
     None
 }
 
-/// Point ImageMagick at OUR hardened `policy.xml` via `MAGICK_CONFIGURE_PATH`, so
-/// the policy applies even when `find_magick` falls back to a *system* ImageMagick
-/// (whose own `policy.xml` is permissive — without this, every hostile-input block
-/// in our policy is silently inert on such machines). No-op when our `policy.xml`
-/// isn't next to the DLL (e.g. a build tree): magick then uses whatever policy sits
-/// beside it, which for the bundled installer is already our hardened copy.
-fn apply_magick_policy(cmd: &mut Command) {
-    static DIR: OnceLock<Option<std::ffi::OsString>> = OnceLock::new();
-    let dir = DIR.get_or_init(|| {
-        let dll = crate::module_path().ok()?;
-        let parent = std::path::Path::new(&dll).parent()?;
-        parent
-            .join("policy.xml")
-            .exists()
-            .then(|| parent.as_os_str().to_os_string())
-    });
-    if let Some(dir) = dir {
-        cmd.env("MAGICK_CONFIGURE_PATH", dir);
+/// Constrain ImageMagick to the tree that contains the exact executable we found.
+/// Setting only `MAGICK_CONFIGURE_PATH` is insufficient on Windows: an installed
+/// ImageMagick registry entry can otherwise supply coder modules, making a broken
+/// bundle appear healthy on a developer PC and fail on clean Windows.
+///
+/// The hardened app-local policy wins when present; a development fallback to a
+/// Program Files executable otherwise uses that executable's own configuration.
+fn apply_magick_environment(cmd: &mut Command, exe: &std::path::Path) {
+    let Some(home) = exe.parent() else {
+        return;
+    };
+    let coder_path = home.join("modules").join("coders");
+    let filter_path = home.join("modules").join("filters");
+
+    cmd.env("MAGICK_HOME", home);
+    // Set these even if a damaged installation is missing the directories:
+    // falling back to registry-discovered modules would hide the damage and
+    // reintroduce cross-install module loading. A missing tree must fail closed.
+    cmd.env("MAGICK_CODER_MODULE_PATH", &coder_path);
+    cmd.env("MAGICK_FILTER_MODULE_PATH", &filter_path);
+
+    let app_policy_dir = crate::module_path()
+        .ok()
+        .and_then(|module| {
+            std::path::Path::new(&module)
+                .parent()
+                .map(std::path::Path::to_path_buf)
+        })
+        .filter(|dir| dir.join("policy.xml").is_file());
+    let configure_path = app_policy_dir
+        .as_deref()
+        .or_else(|| home.join("policy.xml").is_file().then_some(home));
+    if let Some(configure_path) = configure_path {
+        cmd.env("MAGICK_CONFIGURE_PATH", configure_path);
+    }
+
+    // Keep PATH from reintroducing a second ImageMagick/MinGW tree. The Windows
+    // loader searches the executable directory first; these entries retain only
+    // inbox DLL discovery for the remainder.
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        let mut path = home.as_os_str().to_os_string();
+        path.push(";");
+        path.push(std::path::Path::new(&system_root).join("System32"));
+        path.push(";");
+        path.push(system_root);
+        cmd.env("PATH", path);
     }
 }
 
@@ -260,7 +288,7 @@ fn decode_via_magick_spec_alloc(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW);
-    apply_magick_policy(&mut cmd);
+    apply_magick_environment(&mut cmd, exe);
     // Bound concurrent magick children (memory) across in-process + st2k fan-out.
     // Held until this function returns (after the child is reaped).
     let _permit = magick_gate::acquire();
@@ -359,8 +387,41 @@ pub fn magick_available() -> bool {
     magick_exe().is_some()
 }
 
-/// ENCODE `img` to `out` via ImageMagick (the output format is taken from `out`'s
-/// extension). We feed magick a PNG on stdin and let it write the exotic target
+/// Return the explicit ImageMagick coder for every Magick-backed output exposed
+/// by the Convert dialog. Never let ImageMagick infer these from a filename:
+/// when a module is absent, it can otherwise preserve the input encoding and
+/// still exit successfully, producing (for example) PNG bytes in an `.avif` file.
+fn output_coder(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "avif" => Some("AVIF"),
+        "jxl" => Some("JXL"),
+        "psd" => Some("PSD"),
+        "dds" => Some("DDS"),
+        "jp2" => Some("JP2"),
+        "pcx" => Some("PCX"),
+        "sgi" => Some("SGI"),
+        "pfm" => Some("PFM"),
+        "dpx" => Some("DPX"),
+        "fits" => Some("FITS"),
+        "xpm" => Some("XPM"),
+        "pict" => Some("PICT"),
+        "ras" => Some("RAS"),
+        "palm" => Some("PALM"),
+        _ => None,
+    }
+}
+
+/// Whether `extension` has an explicit, tested ImageMagick output coder.
+///
+/// Keep every caller routed through this predicate instead of duplicating the
+/// writer list. An extension merely being decodable does not mean either
+/// `image` or ImageMagick can safely encode it.
+pub fn magick_output_supported(extension: &str) -> bool {
+    output_coder(extension).is_some()
+}
+
+/// ENCODE `img` to `out` via ImageMagick using the explicit `target_ext` coder.
+/// We feed magick a PNG on stdin and let it write the exotic target
 /// (PSD/DDS/JP2/…) to the file — so OUR decode pipeline handles every input
 /// format and magick is only the output coder. Same isolation as the decode
 /// path: child process, `-limit`s, and an external kill-timeout. None of our
@@ -368,6 +429,7 @@ pub fn magick_available() -> bool {
 pub fn encode_via_magick(
     img: &DynamicImage,
     out: &std::path::Path,
+    target_ext: &str,
     quality: Option<u8>,
 ) -> Result<()> {
     use std::io::{Read, Write};
@@ -380,7 +442,12 @@ pub fn encode_via_magick(
         crate::safety::log_debug("encode_via_magick: ImageMagick not available for this target");
         return Err(Error::from(E_FAIL));
     };
+    let coder = output_coder(target_ext).ok_or_else(|| {
+        crate::safety::log_debug("encode_via_magick: unsupported output extension");
+        Error::from(E_FAIL)
+    })?;
     let out_str = out.to_str().ok_or_else(|| Error::from(E_FAIL))?;
+    let output_spec = format!("{coder}:{out_str}");
 
     let mut png = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
@@ -388,22 +455,23 @@ pub fn encode_via_magick(
 
     let mut cmd = Command::new(exe);
     add_magick_limits(&mut cmd);
-    // `png:-` (our own re-encode on stdin) → the target file (format inferred from the
-    // extension). When a quality is given (lossy magick targets like AVIF/JXL), pass it
-    // through as `-quality N`; lossless targets (PSD/DDS/…) pass `None` and get magick's
-    // default. Owned Strings so the optional `-quality N` slots in without lifetime games.
+    // `png:-` (our own re-encode on stdin) → an EXPLICIT coder + target path.
+    // The prefix is load-bearing: without it, a missing output module can make
+    // ImageMagick silently preserve the PNG input while naming it `.avif`, `.jxl`,
+    // etc. When a quality is given (lossy AVIF/JXL), pass it through as
+    // `-quality N`; lossless targets use ImageMagick's default.
     let mut args: Vec<String> = vec!["png:-".to_string()];
     if let Some(q) = quality {
         args.push("-quality".to_string());
         args.push(q.clamp(1, 100).to_string());
     }
-    args.push(out_str.to_string());
+    args.push(output_spec);
     cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW);
-    apply_magick_policy(&mut cmd);
+    apply_magick_environment(&mut cmd, exe);
     // Bound concurrent magick children (memory) across in-process + st2k fan-out.
     let _permit = magick_gate::acquire();
     let mut child = cmd.spawn().map_err(|_| Error::from(E_FAIL))?;
@@ -428,42 +496,65 @@ pub fn encode_via_magick(
     let stderr = child.stderr.take();
     let errdrain = stderr.map(|s| std::thread::spawn(move || drain_capped(s)));
 
-    let timed_out = rx.recv_timeout(MAGICK_TIMEOUT).is_err();
-    // Capture magick's REAL exit status BEFORE the kill() safety net, if it has
-    // already exited — the common case, since it closes stdout (our EOF signal) as
-    // it exits after writing the file. If it hasn't exited yet, `try_wait` is None
-    // and we keep the original output-file heuristic: we can't block on wait() here
-    // because kill() must run before writer.join() to avoid a stdin-pipe deadlock.
-    let exited = if timed_out {
-        None
-    } else {
-        child.try_wait().ok().flatten()
-    };
-    let _ = child.kill();
+    let deadline = std::time::Instant::now() + MAGICK_TIMEOUT;
+    let mut timed_out = rx.recv_timeout(MAGICK_TIMEOUT).is_err();
+    let mut wait_failed = false;
+    let mut status = None;
+
+    // EOF on stdout normally means the process is about to exit, but it is not
+    // proof: a hostile/broken child can close stdout early, stop reading stdin,
+    // and stay alive. Poll the real process through the SAME wall-clock deadline
+    // while the writer continues independently. Never join that writer until the
+    // child has exited or been killed, or a full stdin pipe can hang us forever.
+    while !timed_out && status.is_none() {
+        match child.try_wait() {
+            Ok(Some(value)) => status = Some(value),
+            Ok(None) => {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    timed_out = true;
+                } else {
+                    std::thread::sleep(
+                        std::time::Duration::from_millis(10).min(deadline - now),
+                    );
+                }
+            }
+            Err(_) => wait_failed = true,
+        }
+        if wait_failed {
+            break;
+        }
+    }
+    if timed_out || wait_failed {
+        let _ = child.kill();
+    }
+    if status.is_none() {
+        status = child.wait().ok();
+    }
     let _ = writer.join();
     let _ = reader.join();
     let err = errdrain.and_then(|h| h.join().ok()).unwrap_or_default();
-    let status = exited.or_else(|| child.wait().ok());
 
     if timed_out {
         log_magick_failure("encode timed out", status, &err);
         let _ = std::fs::remove_file(out);
         return Err(Error::from(E_FAIL));
     }
+    if wait_failed {
+        log_magick_failure("could not observe encode process", status, &err);
+        let _ = std::fs::remove_file(out);
+        return Err(Error::from(E_FAIL));
+    }
     let wrote = std::fs::metadata(out).map(|m| m.len() > 0).unwrap_or(false);
-    // Unlike the decode path, there is NO re-decode safety net here (magick writes
-    // exotic PSD/DDS/JP2 we can't cheaply read back), so a magick that errored but
-    // left a partial file must NOT be reported as a successful convert. Require a
-    // non-empty file AND — when we observed the real exit code — a clean exit.
-    // `exited == Some(non-zero)` is a known failure; `None` (status from the kill,
-    // or not yet exited) keeps the original lenient behavior.
-    let known_bad_exit = exited.is_some_and(|s| !s.success());
-    if wrote && !known_bad_exit {
+    // A partial file or an unavailable coder must never be reported as a successful
+    // convert. Requiring an observed clean exit complements the explicit coder prefix.
+    let clean_exit = status.is_some_and(|value| value.success());
+    if wrote && clean_exit {
         Ok(())
     } else {
         log_magick_failure(
             if wrote {
-                "encode exited non-zero (partial output)"
+                "encode did not exit successfully (partial output)"
             } else {
                 "encode produced no file"
             },
@@ -472,5 +563,98 @@ pub fn encode_via_magick(
         );
         let _ = std::fs::remove_file(out);
         Err(Error::from(E_FAIL))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_magick_environment, magick_output_supported, output_coder};
+    use std::collections::HashMap;
+    use std::process::Command;
+
+    #[test]
+    fn every_advertised_magick_output_uses_an_explicit_coder() {
+        let expected = [
+            ("avif", "AVIF"),
+            ("jxl", "JXL"),
+            ("psd", "PSD"),
+            ("dds", "DDS"),
+            ("jp2", "JP2"),
+            ("pcx", "PCX"),
+            ("sgi", "SGI"),
+            ("pfm", "PFM"),
+            ("dpx", "DPX"),
+            ("fits", "FITS"),
+            ("xpm", "XPM"),
+            ("pict", "PICT"),
+            ("ras", "RAS"),
+            ("palm", "PALM"),
+        ];
+
+        for (extension, coder) in expected {
+            assert_eq!(output_coder(extension), Some(coder));
+            assert_eq!(output_coder(&extension.to_ascii_uppercase()), Some(coder));
+            assert!(magick_output_supported(extension));
+            assert!(magick_output_supported(&extension.to_ascii_uppercase()));
+        }
+
+        assert_eq!(output_coder(""), None);
+        assert_eq!(output_coder("png"), None);
+        assert_eq!(output_coder("not-a-real-format"), None);
+        assert!(!magick_output_supported(""));
+        assert!(!magick_output_supported("png"));
+        assert!(!magick_output_supported("not-a-real-format"));
+    }
+
+    #[test]
+    fn magick_command_is_pinned_to_its_own_module_tree() {
+        let root = std::env::temp_dir().join(format!(
+            "st2k-magick-env-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("modules").join("coders")).unwrap();
+        std::fs::create_dir_all(root.join("modules").join("filters")).unwrap();
+        std::fs::write(root.join("policy.xml"), b"<policymap/>").unwrap();
+        let exe = root.join("magick.exe");
+        let coders = root.join("modules").join("coders");
+        let filters = root.join("modules").join("filters");
+
+        let mut command = Command::new(&exe);
+        apply_magick_environment(&mut command, &exe);
+        let environment: HashMap<_, _> = command
+            .get_envs()
+            .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+            .collect();
+
+        assert_eq!(
+            environment
+                .get(std::ffi::OsStr::new("MAGICK_HOME"))
+                .map(std::ffi::OsString::as_os_str),
+            Some(root.as_os_str())
+        );
+        assert_eq!(
+            environment
+                .get(std::ffi::OsStr::new("MAGICK_CODER_MODULE_PATH"))
+                .map(std::ffi::OsString::as_os_str),
+            Some(coders.as_os_str())
+        );
+        assert_eq!(
+            environment
+                .get(std::ffi::OsStr::new("MAGICK_FILTER_MODULE_PATH"))
+                .map(std::ffi::OsString::as_os_str),
+            Some(filters.as_os_str())
+        );
+        assert_eq!(
+            environment
+                .get(std::ffi::OsStr::new("MAGICK_CONFIGURE_PATH"))
+                .map(std::ffi::OsString::as_os_str),
+            Some(root.as_os_str())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

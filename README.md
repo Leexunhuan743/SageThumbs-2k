@@ -54,7 +54,7 @@ A modern, **crash-isolated** Rust shell extension for **Windows 11**: the clean-
 
 > I'm a huge fan of SageThumbs. There are 4 things I always install on a new build, Chrome, XnShell, Everything and SageThumbs. Having noticed multiple system crashes from SageThumbs recently and no update in almost a decade, I decided it was time to right this injustice...
 >
-> After about a week, and an embarrassing amount of tokens, we now have a ground-up, rust native, alternative that now supports hundreds of formats, has no external dependencies, extensive red teaming, obsessively optimized for speed and install size, dozens of iterations through UI/UX for simplicity, menu editors, a color picker, screenshot tool, etc.
+> After about a week, and an embarrassing amount of tokens, we now have a ground-up, rust native, alternative that now supports hundreds of formats, has no external dependencies, extensive red teaming, obsessively optimized for speed with carefully audited packaging, dozens of iterations through UI/UX for simplicity, menu editors, a color picker, screenshot tool, etc.
 >
 > Please tell your friends, star the repo and if you find anything broken, please let me know.
 
@@ -97,7 +97,7 @@ The original **SageThumbs** was a Windows legend. It made Explorer show thumbnai
 
 ## 🧹 One install, a whole stack gone
 
-There's a checklist of little utilities people reinstall on every new Windows box: a thumbnail/codec pack, a converter, a color picker, a screenshot tool, an EXIF viewer. SageThumbs 2K is one tiny shell extension (plus a single `st2k.exe`) that quietly does all of their jobs, with no accounts to create and no cloud service to sign into.
+There's a checklist of little utilities people reinstall on every new Windows box: a thumbnail/codec pack, a converter, a color picker, a screenshot tool, an EXIF viewer. SageThumbs 2K is one shell extension (plus a single `st2k.exe`) that quietly does all of their jobs, with no accounts to create and no cloud service to sign into.
 
 | Instead of installing... | You already have it |
 |---|---|

@@ -65,7 +65,7 @@ pub use actions::{
 #[cfg(test)]
 pub(crate) use actions::{rename_one, set_folder_icon, tag_base};
 #[cfg(test)]
-pub(crate) use encode::apply_resize;
+pub(crate) use encode::{apply_resize, with_tmp_suffix, write_atomic};
 #[cfg(test)]
 pub(crate) use fileops::{combined_path, expand_template, sanitize_component};
 
@@ -741,34 +741,47 @@ mod tests {
     }
 
     #[test]
-    fn converts_to_native_pnm() {
+    fn converts_to_native_long_tail_formats_with_correct_signatures() {
         let dir = std::env::temp_dir().join(format!("st2k_pnm_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let png = dir.join("s.png");
-        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
             20,
             16,
-            image::Rgb([180, 90, 40]),
+            image::Rgba([180, 90, 40, 200]),
         ))
         .save(&png)
         .unwrap();
-        let opts = ConvertOpts {
-            target: Target {
-                format: ImageFormat::Pnm,
-                ext: "ppm",
+
+        for (format, ext, signature) in [
+            (ImageFormat::Pnm, "ppm", b"P6".as_slice()),
+            (ImageFormat::Pnm, "pam", b"P7".as_slice()),
+            (ImageFormat::OpenExr, "exr", &[0x76, 0x2f, 0x31, 0x01]),
+            (ImageFormat::Hdr, "hdr", b"#?RADIANCE".as_slice()),
+            (ImageFormat::Farbfeld, "ff", b"farbfeld".as_slice()),
+        ] {
+            let opts = ConvertOpts {
+                target: Target {
+                    format,
+                    ext,
+                    webp_quality: None,
+                },
+                jpeg_quality: 90,
+                png_level: 6,
                 webp_quality: None,
-            },
-            jpeg_quality: 90,
-            png_level: 6,
-            webp_quality: None,
-            resize: Resize::None,
-        };
-        let out = convert_file_opts(png.to_str().unwrap(), opts, &dir).expect("PNM should encode");
-        assert!(
-            out.exists() && image::open(&out).is_ok(),
-            "PPM should reopen"
-        );
+                resize: Resize::None,
+            };
+            let out = convert_file_opts(png.to_str().unwrap(), opts, &dir)
+                .unwrap_or_else(|error| panic!("native {ext} encode failed: {error:?}"));
+            let bytes = std::fs::read(&out).unwrap();
+            assert!(
+                bytes.starts_with(signature),
+                "{ext} output has the wrong signature: {:02X?}",
+                &bytes[..bytes.len().min(12)]
+            );
+            assert!(image::open(&out).is_ok(), "{ext} should reopen");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -800,6 +813,60 @@ mod tests {
                 "{ext} should be written"
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_magick_conversion_preserves_an_existing_destination() {
+        let dir = std::env::temp_dir().join(format!("st2k_magatomic_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("source.png");
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            4,
+            3,
+            image::Rgb([30, 160, 90]),
+        ))
+        .save(&png)
+        .unwrap();
+
+        let out = dir.join("existing.unsupported-magick-target");
+        let original = b"keep this existing destination";
+        std::fs::write(&out, original).unwrap();
+
+        assert!(
+            convert_to_magick(png.to_str().unwrap(), &out, Resize::None, None).is_err(),
+            "an unsupported Magick target must fail"
+        );
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            original,
+            "a failed conversion must not truncate or delete the old destination"
+        );
+        assert!(
+            !with_tmp_suffix(&out).exists(),
+            "a failed conversion must clean up its temporary file"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_replaces_an_existing_destination_without_temp_debris() {
+        let dir = std::env::temp_dir().join(format!("st2k_atomic_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("existing.bin");
+        std::fs::write(&out, b"old bytes").unwrap();
+
+        write_atomic(&out, |tmp| {
+            std::fs::write(tmp, b"finished new bytes")
+                .map_err(|_| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read(&out).unwrap(), b"finished new bytes");
+        assert!(!with_tmp_suffix(&out).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

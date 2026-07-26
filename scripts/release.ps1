@@ -1,20 +1,24 @@
 <#
-  release.ps1 - a GATED release: it never tags or publishes a commit until CI is GREEN
-  on that exact commit. This is the fix for "tagged/released a broken commit" (the 0.7.0
-  missing-asset incident): the tag is created by `gh release create` at the very end, only
-  after `gh run watch` confirms CI passed.
+  release.ps1 - a GATED release: it never creates a release/tag until CI is GREEN
+  on that exact commit and the full artifact provenance gate passes. The GitHub
+  release starts as a draft; it becomes public only after the uploaded installer
+  and provenance-manifest digests match the locally validated bytes.
 
   Prereqs: the version is already bumped in Cargo.toml and the release commit is on `main`
   (committed, not pushed). Run from anywhere:  pwsh scripts\release.ps1
 
-  Flow:  consistency check  ->  clean-main guard  ->  push  ->  WAIT for CI green
-         ->  build installer with signed MSIX  ->  gh release create (creates the tag)
-         ->  winget auto-publishes.
+  Flow:  curated-notes + consistency check  ->  clean-main guard  ->  push
+         ->  WAIT for CI green  ->  build + provenance-validate the full installer
+         ->  create a draft, verify the uploaded digest, publish -> winget.
+
+  -SkipBuild is safe only after a full build of this exact clean commit: the
+  ignored installer, stage, and provenance manifest are all re-hashed before use.
 #>
 [CmdletBinding()]
 param([switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+. (Join-Path $PSScriptRoot 'release-manifest-lib.ps1')
 Push-Location $root
 try {
     $ver = ([regex]::Match((Get-Content "$root\Cargo.toml" -Raw), '(?m)^\s*version\s*=\s*"([^"]+)"')).Groups[1].Value
@@ -22,8 +26,11 @@ try {
     $tag = "v$ver"
     Write-Host "== Releasing $tag ==" -ForegroundColor Cyan
 
-    # 0) consistency: referenced assets tracked, format count + version aligned.
-    Write-Host "[1/6] consistency check" -ForegroundColor Green
+    # 0) Curated notes + consistency. The release body is derived from this exact
+    # tracked changelog section; there is deliberately no generated-notes fallback.
+    Write-Host "[1/6] curated notes + consistency check" -ForegroundColor Green
+    $changelog = Join-Path $root 'docs\CHANGELOG.md'
+    $null = Get-ReleaseChangelogSection -ChangelogPath $changelog -Version $ver
     pwsh "$root\scripts\check-consistency.ps1"; if ($LASTEXITCODE) { throw "consistency check failed - fix before releasing" }
 
     # 1) must be on main with a clean tree (so we release exactly what's committed).
@@ -74,8 +81,20 @@ try {
     if (-not $SkipBuild) {
         Write-Host "[4/6] build installer" -ForegroundColor Green
         pwsh "$root\scripts\build-release.ps1"; if ($LASTEXITCODE) { throw "installer build failed" }
+    } else {
+        Write-Host "[4/6] -SkipBuild: require exact full-build provenance" -ForegroundColor Yellow
     }
-    $setup = Get-ChildItem "$root\dist\SageThumbs2K-Setup-$ver.exe" -EA Stop
+    $setupPath = Join-Path $root "dist\SageThumbs2K-Setup-$ver.exe"
+    $setup = Get-Item -LiteralPath $setupPath -EA Stop
+    $manifest = Join-Path $root "dist\SageThumbs2K-Setup-$ver.release.json"
+    $stage = Join-Path $root 'packaging\stage'
+    pwsh "$root\scripts\check-release-manifest.ps1" `
+        -InstallerPath $setup.FullName `
+        -StagePath $stage `
+        -ManifestPath $manifest `
+        -ExpectedVersion $ver `
+        -ExpectedCommitSha $sha
+    if ($LASTEXITCODE) { throw "release provenance/integrity gate failed - NOT publishing" }
 
     # 4b) VirusTotal the EXACT artifact we are about to publish, BEFORE publishing it.
     # Added 2026-07-18: nothing scanned releases up to and including v1.2.0, so ESET's
@@ -99,8 +118,8 @@ try {
     }
 
     # The build must not move HEAD or rewrite tracked inputs after we captured + validated $sha.
-    # build-release.ps1 refreshes the generated marketing site, so this also catches a release
-    # prep that forgot to commit that refresh instead of silently tagging a dirty worktree.
+    # The optional local marketing-site refresh is ignored and is deliberately not an
+    # installer/provenance input.
     $headAfterBuild = (git rev-parse HEAD).Trim()
     if ($headAfterBuild -ne $sha) {
         throw "HEAD moved from validated commit $sha to $headAfterBuild during the release - NOT publishing."
@@ -109,14 +128,41 @@ try {
         throw "working tree changed during the release build - commit the generated changes, then re-run."
     }
 
-    # 5) create the GitHub release - this creates + pushes the tag, ONLY now that CI is green.
+    # Produce the release body from the reviewed changelog and the now-validated
+    # artifact. This keeps its displayed digest coupled to the uploaded bytes.
+    $notes = Join-Path $root "dist\RELEASE-NOTES-$tag.md"
+    pwsh "$root\scripts\export-release-notes.ps1" `
+        -Version $ver `
+        -InstallerPath $setup.FullName `
+        -OutputPath $notes
+    if ($LASTEXITCODE) { throw "curated release-note export failed - NOT publishing" }
+
+    # 5) Create a DRAFT first. Verify GitHub received the exact local bytes before
+    # publishing, so an upload anomaly never briefly exposes a corrupt public build.
     # Target the immutable SHA we actually checked, not the moving `main` ref: another push while
     # this script waits/builds must never make the release tag point at an unvalidated commit.
-    Write-Host "[5/6] gh release create $tag" -ForegroundColor Green
-    $notes = "$root\dist\RELEASE-NOTES-$tag.md"
-    $notesArg = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
-    gh release create $tag $setup.FullName --title "SageThumbs 2K $ver" --target $sha @notesArg
-    if ($LASTEXITCODE) { throw "gh release create failed" }
+    Write-Host "[5/6] create + verify draft release $tag" -ForegroundColor Green
+    gh release create $tag $setup.FullName $manifest `
+        --draft `
+        --title "SageThumbs 2K $ver" `
+        --target $sha `
+        --notes-file $notes
+    if ($LASTEXITCODE) { throw "gh draft release create failed" }
+
+    foreach ($asset in @($setup, (Get-Item -LiteralPath $manifest -ErrorAction Stop))) {
+        $localDigest = 'sha256:' + (Get-ReleaseSha256 -Path $asset.FullName)
+        $remoteDigest = gh release view $tag --json assets `
+            --jq ".assets[] | select(.name == `"$($asset.Name)`") | .digest"
+        if ($LASTEXITCODE -ne 0 -or -not $remoteDigest) {
+            throw "could not verify uploaded digest for $($asset.Name); $tag remains a draft"
+        }
+        $remoteDigest = ([string]$remoteDigest).Trim().ToLowerInvariant()
+        if ($remoteDigest -cne $localDigest) {
+            throw "uploaded digest mismatch for $($asset.Name) (local $localDigest, GitHub $remoteDigest); $tag remains a draft"
+        }
+    }
+    gh release edit $tag --draft=false
+    if ($LASTEXITCODE) { throw "draft verified but publication failed; $tag remains a draft" }
 
     Write-Host "[6/6] DONE - $tag released." -ForegroundColor Cyan
 

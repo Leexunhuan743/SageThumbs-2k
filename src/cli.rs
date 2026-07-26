@@ -37,15 +37,7 @@ pub fn devmode(sub: &str) -> Result<String, String> {
 pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, String> {
     let archive_ext = Path::new(input).extension().and_then(|e| e.to_str()).unwrap_or("");
     if crate::formats::is_archive(archive_ext) {
-        let max = crate::settings::max_file_size_bytes();
-        if let Ok(meta) = std::fs::metadata(input) {
-            if meta.len() > max {
-                return Err(format!(
-                    "input is {} bytes, over the configured archive limit of {max} bytes",
-                    meta.len()
-                ));
-            }
-        }
+        reject_oversized_archive(input, crate::settings::max_file_size_bytes())?;
     }
     // Generic archive (.zip/.rar/.7z): the same list-then-extract path Explorer
     // uses — including the user's MaxSize gate before archive parsing — and the
@@ -68,6 +60,22 @@ pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, Stri
     let out = if max_dim > 0 { img.thumbnail(max_dim, max_dim) } else { img };
     out.save(output).map_err(|e| e.to_string())?;
     Ok(output.to_string())
+}
+
+/// Fail before opening or parsing a generic archive when either the user's
+/// MaxSize preference or the shared hard input ceiling rejects its metadata
+/// length. `configured_max == u64::MAX` is Settings' "Unlimited" representation.
+fn reject_oversized_archive(input: &str, configured_max: u64) -> Result<(), String> {
+    let max = decode::effective_input_cap(configured_max);
+    if let Ok(meta) = std::fs::metadata(input) {
+        if meta.len() > max {
+            return Err(format!(
+                "input is {} bytes, over the effective archive limit of {max} bytes",
+                meta.len()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The generic-archive cover/contact-sheet for a `.zip`/`.rar`/`.7z` PATH, or None
@@ -407,6 +415,7 @@ pub fn list_formats(json: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn cli_thumbnail_and_info_and_formats() {
@@ -429,5 +438,29 @@ mod tests {
         assert!(list_formats(false).contains(".png"));
         assert!(list_formats(true).starts_with('['));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unlimited_archive_setting_still_rejects_before_parse_at_hard_cap() {
+        let path = std::env::temp_dir().join(format!(
+            "st2k_cli_oversized_{}_{}.7z",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = std::fs::File::create(&path).unwrap();
+        // A real 7z signature makes this representative if a future refactor
+        // accidentally moves the gate after format probing. set_len keeps the
+        // test sparse/fast instead of writing 256 MiB.
+        file.write_all(b"7z\xBC\xAF\x27\x1C").unwrap();
+        file.set_len(decode::limits::MAX_INPUT_BYTES + 1).unwrap();
+        drop(file);
+
+        let err = reject_oversized_archive(path.to_str().unwrap(), u64::MAX).unwrap_err();
+        assert!(err.contains(&decode::limits::MAX_INPUT_BYTES.to_string()));
+
+        let _ = std::fs::remove_file(path);
     }
 }

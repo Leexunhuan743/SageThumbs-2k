@@ -17,6 +17,10 @@ jobs:
   build-test:
     name: build · clippy · test (windows-msvc)
     runs-on: windows-latest
+    # .cargo/config.toml is intentionally local-only. Keep production binaries
+    # self-contained on a clean runner instead of silently depending on that file.
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -24,6 +28,36 @@ jobs:
       # which rustup installs on first cargo invocation. No setup action needed.
       - name: Toolchain
         run: rustup show
+
+      # build.rs embeds the exact product/version metadata that the payload gate
+      # validates. GitHub's Windows image includes GNU binutils, but its exact
+      # MinGW/MSYS2 location is runner-image-specific.
+      - name: Release resource compiler
+        shell: pwsh
+        run: |
+          $windresCommand = Get-Command windres.exe -CommandType Application `
+            -ErrorAction SilentlyContinue | Select-Object -First 1
+          $windres = if ($windresCommand) { $windresCommand.Source } else { $null }
+          if (-not $windres) {
+            $windres = @(
+              'C:\mingw64\bin\windres.exe'
+              'C:\msys64\mingw64\bin\windres.exe'
+              'C:\msys64\ucrt64\bin\windres.exe'
+              'C:\msys64\clang64\bin\windres.exe'
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+              Select-Object -First 1
+          }
+          if (-not $windres -and (Test-Path -LiteralPath 'C:\msys64')) {
+            $windres = Get-ChildItem -LiteralPath 'C:\msys64' -Filter windres.exe `
+              -File -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $windres) {
+            throw 'GitHub Windows runner did not provide windres; refusing metadata-free release binaries.'
+          }
+          Split-Path -Parent $windres |
+            Out-File -LiteralPath $env:GITHUB_PATH -Append -Encoding utf8
+          & $windres --version
 
       # Swatinem/rust-cache keys on the rustc version + Cargo.lock + job AND prunes
       # stale build artifacts before saving. The old hashFiles(Cargo.lock)-only
@@ -33,10 +67,19 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      # RAR/CBR is the pure-Rust `rars` crate (always on, no feature gate), so this
-      # default build already covers it — the whole dependency graph is permissive.
-      - name: Build
-        run: cargo build --release
+      # Build the exact two production feature sets in the same order as
+      # build-release.ps1: full EXEs first, then the menu-translation-subset DLL.
+      # This makes the raw payload budget a real PR gate rather than a synthetic
+      # unit test of the checker.
+      - name: Build production EXEs
+        run: cargo build --release --locked -p sagethumbs2k --features webp-lossy,html-preview
+      - name: Build production slim DLL
+        run: cargo build --release --locked -p sagethumbs2k-dll --features webp-lossy,dll-i18n-subset
+      - name: Production Rust payload size
+        shell: pwsh
+        run: |
+          $target = Join-Path (& ./scripts/_targetdir.ps1) 'release'
+          ./scripts/check-release-rust-payload.ps1 -ArtifactDirectory $target
 
       # Integration tests (tests/) drive the built shell-extension DLL in-process the
       # way Explorer does: the COM thumbnail handshake (com_roundtrip) and the
@@ -55,13 +98,13 @@ jobs:
       # workspace: library unit tests, both binary unit-test targets, and tests/.
       # Keep the single invocation here so all of them share the freshly built DLL.
       - name: Unit and integration tests
-        run: cargo test --release --tests
+        run: cargo test --release --locked --tests
 
       # Gates on ALL clippy lints across every target (bins, lib, tests): any new
       # warning is promoted to an error and fails the build. The tree is kept
       # warning-clean; intentional exceptions carry a local #[allow] with a reason.
       - name: Clippy
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: cargo clippy --release --locked --all-targets -- -D warnings
 
   # Cargo.toml publishes 1.93 as the minimum supported Rust version. The main job
   # intentionally follows current stable, so exercise the lower bound separately
@@ -89,6 +132,40 @@ jobs:
       - name: check-consistency
         shell: pwsh
         run: ./scripts/check-consistency.ps1
+      - name: release-size policy tests
+        shell: pwsh
+        run: ./scripts/test-release-size.ps1
+      - name: release provenance and curated-notes tests
+        shell: pwsh
+        run: ./scripts/test-release-pipeline.ps1
+      - name: installer cleanup and uninstaller-safety tests
+        shell: pwsh
+        run: ./scripts/test-installer-lint.ps1
+      - name: MSIX signature, signer, and identity tests
+        shell: pwsh
+        run: ./scripts/test-msix-integrity.ps1
+      - name: vendored exr provenance and local-resolution check
+        shell: pwsh
+        run: ./scripts/check-vendored-exr.ps1
+
+  # The patched dependency is excluded from the application workspace, so its
+  # own tests do not run under `cargo test --workspace`. Keep the focused,
+  # asset-free DWA suite explicit until the patch is removed after upstreaming.
+  # Upstream's standalone library intentionally excludes Cargo.lock; application
+  # resolution and the root DWA integration test remain locked in build-test.
+  vendored-exr:
+    name: vendored exr (DWA patch)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Toolchain
+        run: rustup show
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: DWA library tests
+        run: 'cargo test --manifest-path vendor/exr/Cargo.toml --no-default-features --lib compression::dwa::'
+      - name: DWAA and DWAB roundtrips
+        run: cargo test --manifest-path vendor/exr/Cargo.toml --no-default-features --test roundtrip roundtrip_dwa
 
   # License + advisory + source/ban audit. The whole dependency graph is now
   # 100% permissive (RAR/CBR via the pure-Rust `rars` crate — no proprietary

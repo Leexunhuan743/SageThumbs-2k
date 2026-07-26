@@ -1,16 +1,29 @@
 [workspace]
 members = ["dll"]
+exclude = ["vendor/exr"]
 # Build BOTH the core package (rlib + the two EXEs) AND the cdylib wrapper on a bare
 # `cargo build` — so `cargo build --release` still produces sagethumbs2k.dll + the EXEs.
 # CI + the integration tests rely on the DLL existing.
 default-members = [".", "dll"]
 resolver = "2"
 
+# exr 1.74.2 added DWAA/DWAB encode/decode support, but stores two lazily-filled
+# 128 KiB lookup tables inline in OnceLock statics. MSVC consequently embeds both
+# zero-filled tables in every Rust artifact (DLL + GUI + CLI), adding hundreds of
+# KiB of duplicated raw payload. The exact installer effect is compression-dependent.
+#
+# Keep the new DWA support while moving only the table storage to loader-zeroed
+# module memory, so it remains leak-free when Explorer unloads the shell extension.
+# The vendored crate is the exact crates.io 1.74.2 source plus the documented patch
+# in vendor/exr/SAGETHUMBS-PATCH.md. Remove this override after upstream ships the fix.
+[patch.crates-io]
+exr = { path = "vendor/exr" }
+
 # Shared version for the rlib (`sagethumbs2k`) + the cdylib wrapper (`sagethumbs2k-dll`),
 # build-release.ps1 reads this line; keep it in sync with
 # packaging/AppxManifest.xml's <Identity Version> when bumping a release.
 [workspace.package]
-version = "1.3.5"
+version = "1.3.6"
 rust-version = "1.93"   # sevenz-rust2 0.21.3 is the highest MSRV in the locked default graph
 
 [package]
@@ -68,6 +81,10 @@ path = "src/bin/cli.rs"
 image = { version = "0.25", default-features = false, features = [
     "png", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "pnm", "tga", "dds", "hdr", "exr", "ff", "qoi",
 ] }
+# Direct access to the already-vendored EXR writer lets the Convert path stream
+# f32 tiles from DynamicImage without allocating a second full-size RGBA32F frame.
+# Keep Rayon off: the non-parallel writer has a fixed, bounded working set.
+exr = { version = "=1.74.2", default-features = false }
 # Color management: apply an embedded ICC profile to bring wide-gamut (Display-P3 /
 # Adobe RGB) thumbnails into sRGB so they aren't over-saturated (and don't get cached
 # wrong). NOT a new dependency — `image` (and `jxl-oxide`) ALREADY pull moxcms 0.8

@@ -406,17 +406,15 @@ long scroll is gone.)
 - **Use the OS, bundle nothing extra, where possible:** PDF rendering and OCR both
   use in-box WinRT APIs (`Windows.Data.Pdf`, `Windows.Media.Ocr`); zero added
   bytes. PDF *writing* (Combine-to-PDF) is a hand-rolled minimal `/DCTDecode` PDF;
-  no PDF library. HEIC/AVIF decode via WIC: that means the OS codecs: on machines
-  where they aren't preinstalled, install Microsoft's free **HEIF Image Extensions**
-  (+ **HEVC Video Extensions** for iPhone HEIC) and **AV1 Video Extension** from the
-  Store. There is deliberately NO bundled fallback for these two: the trimmed
-  ImageMagick drops its HEIF stack (a 7 MB delegate DLL; decided 2026-07-08, size
-  over edge-case coverage; revisit only if users actually report missing HEIC
-  thumbnails on codec-less machines).
+  no PDF library. HEIC/AVIF normally decode through WIC: Microsoft's free **HEIF Image
+  Extensions** (+ **HEVC Video Extensions** for iPhone HEIC) and **AV1 Video Extension**
+  provide that path. The Full installer also retains ImageMagick's HEIF engine because
+  the advertised AVIF writer requires it and it provides a long-tail fallback. Compact
+  installs omit ImageMagick and therefore still rely on the applicable OS codec.
 - **Trimmed ImageMagick** is bundled for the long tail of formats (RAW, DICOM, PCX,
-  J2K, …); the installer's "compact" mode omits it, so nothing must-have depends on
-  it. The measured magick-only set (things that DON'T thumbnail on a compact
-  install): the JPEG-2000 family (j2c/j2k/jp2/jpc/jpf/jpm/jpx), film/print scans
+  J2K, …); the installer's "compact" mode omits it along with Magick-backed long-tail
+  decoding and export. The measured magick-only set (things that DON'T thumbnail on
+  a compact install): the JPEG-2000 family (j2c/j2k/jp2/jpc/jpf/jpm/jpx), film/print scans
   (cin/dpx/cal/cals/fits/fts/pcd), Windows metafiles (wmf/emf/emz/wmz), Visio
   (vsd/vsdx/vsdm), legacy-Office OLE previews (max), classic bitmaps
   (pcx/dcx/dib/ras/sun/sgi/xbm/xpm/xv/wpg/pdb), scientific floats
@@ -447,9 +445,10 @@ long scroll is gone.)
 
 ## 6. Packaging
 
-- Inno Setup installer (`full` / `compact` / `custom`). The full build stays lean because the
-  trimmed ImageMagick's text-shaping stack (glib / harfbuzz / freetype / fribidi / raqm) is
-  stubbed out; we only ever decode raster, never render text.
+- Inno Setup installer (`full` / `compact` / `custom`). The Full build includes a
+  dependency-closed, security-trimmed ImageMagick runtime. Its unused text-shaping stack
+  (glib / harfbuzz / freetype / fribidi / raqm) is stubbed because SageThumbs never
+  invokes ImageMagick's text, caption or font-rendering surfaces.
 - Registers the thumbnail provider + context-menu handlers under HKLM (admin);
   cleanly unregisters on uninstall.
 - App/installer/shortcut icon embedded from the logo.

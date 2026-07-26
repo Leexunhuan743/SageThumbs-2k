@@ -24,7 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
     GetWindowThreadProcessId, IsWindowVisible, PostMessageW, GWL_EXSTYLE, GW_OWNER,
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_CLOSE,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST,
 };
 
 const TITLE_PREFIX: &str = "SageThumbs 2K Screenshot Automation";
@@ -73,6 +74,11 @@ unsafe fn window_title(hwnd: windows::Win32::Foundation::HWND) -> String {
     String::from_utf16_lossy(&buf[..n.max(0) as usize])
 }
 
+fn point_lparam(x: i32, y: i32) -> LPARAM {
+    let packed = u32::from(x as u16) | (u32::from(y as u16) << 16);
+    LPARAM(packed as isize)
+}
+
 #[test]
 #[ignore = "opens the synthetic full-screen screenshot automation overlay"]
 fn synthetic_overlay_is_discoverable_by_windows_automation() {
@@ -80,8 +86,7 @@ fn synthetic_overlay_is_discoverable_by_windows_automation() {
     // bounds. Without this, Windows may DPI-virtualize the test caller and make an
     // exact full-screen window look smaller on mixed-DPI desktops.
     unsafe {
-        let _ =
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 
     unsafe {
@@ -116,8 +121,7 @@ fn synthetic_overlay_is_discoverable_by_windows_automation() {
             // telemetry title proves the first real WM_PAINT completed, rather than
             // accepting a merely-visible but unpainted popup.
             if unsafe {
-                IsWindowVisible(hwnd).as_bool()
-                    && window_title(hwnd) == INITIAL_PAINTED_TITLE
+                IsWindowVisible(hwnd).as_bool() && window_title(hwnd) == INITIAL_PAINTED_TITLE
             } {
                 break hwnd;
             }
@@ -190,6 +194,92 @@ fn synthetic_overlay_is_discoverable_by_windows_automation() {
             actual, expected,
             "automation canvas must cover the complete virtual desktop"
         );
+
+        // Exercise the real editor message path after proving the window is exposed:
+        // select a region, choose Line, latch the automation-only Shift surrogate,
+        // and drag at a non-45-degree angle. The post-paint title reports both raw
+        // and committed geometry, so this checks the visible preview/commit pipeline
+        // rather than only the pure snap helper.
+        let width = actual.right - actual.left;
+        let height = actual.bottom - actual.top;
+        assert!(
+            width >= 500 && height >= 400,
+            "automation snap test needs a virtual desktop of at least 500x400; got {width}x{height}"
+        );
+
+        let selection_start = (40, 40);
+        let selection_end = (width - 40, height - 40);
+        PostMessageW(
+            Some(hwnd),
+            WM_LBUTTONDOWN,
+            WPARAM(1),
+            point_lparam(selection_start.0, selection_start.1),
+        )
+        .expect("start automation selection");
+        PostMessageW(
+            Some(hwnd),
+            WM_MOUSEMOVE,
+            WPARAM(1),
+            point_lparam(selection_end.0, selection_end.1),
+        )
+        .expect("drag automation selection");
+        PostMessageW(
+            Some(hwnd),
+            WM_LBUTTONUP,
+            WPARAM(0),
+            point_lparam(selection_end.0, selection_end.1),
+        )
+        .expect("finish automation selection");
+
+        PostMessageW(Some(hwnd), WM_KEYDOWN, WPARAM(b'L' as usize), LPARAM(1))
+            .expect("select Line tool");
+        PostMessageW(Some(hwnd), WM_KEYDOWN, WPARAM(0x77), LPARAM(1))
+            .expect("latch synthetic Shift with F8");
+
+        let anchor = (width / 3, height / 2);
+        // sqrt(150^2 + 80^2) is exactly 170; nearest 45 degrees therefore
+        // commits a rounded (120,120) delta while preserving drag length.
+        let raw = (anchor.0 + 150, anchor.1 + 80);
+        let final_point = (anchor.0 + 120, anchor.1 + 120);
+        PostMessageW(
+            Some(hwnd),
+            WM_LBUTTONDOWN,
+            WPARAM(1),
+            point_lparam(anchor.0, anchor.1),
+        )
+        .expect("start snapped line");
+        PostMessageW(
+            Some(hwnd),
+            WM_MOUSEMOVE,
+            WPARAM(1),
+            point_lparam(raw.0, raw.1),
+        )
+        .expect("preview snapped line");
+        PostMessageW(
+            Some(hwnd),
+            WM_LBUTTONUP,
+            WPARAM(0),
+            point_lparam(raw.0, raw.1),
+        )
+        .expect("commit snapped line");
+
+        let expected_title = format!(
+            "{TITLE_PREFIX} | snap=1 | commit=1 | painted=1 | status=ready | \
+             tool=Line | anchor={},{} | raw={},{} | final={},{} | shifted=1",
+            anchor.0, anchor.1, raw.0, raw.1, final_point.0, final_point.1
+        );
+        let paint_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let title = window_title(hwnd);
+            if title == expected_title {
+                break;
+            }
+            assert!(
+                Instant::now() < paint_deadline,
+                "snapped line was not committed and painted; expected {expected_title:?}, got {title:?}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     child.close_and_wait(hwnd);

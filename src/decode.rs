@@ -128,6 +128,13 @@ pub(crate) mod limits {
 
 use limits::{MAX_ALLOC, MAX_DIM, MAX_PIXELS};
 
+/// Resolve a user-configured whole-file limit against the non-negotiable decode
+/// ceiling. Settings represents "Unlimited" as `u64::MAX`; that removes the
+/// smaller user preference, not this process-wide allocation/parse safety cap.
+pub(crate) fn effective_input_cap(configured_max: u64) -> u64 {
+    configured_max.min(limits::MAX_INPUT_BYTES)
+}
+
 /// Read a whole file into memory, refusing anything past [`limits::MAX_INPUT_BYTES`]
 /// (checked via metadata BEFORE allocating). The Explorer thumbnail path (its
 /// stream cap) and the path-reading verbs (`verbs::encode::read_capped`) already
@@ -650,7 +657,7 @@ pub(crate) use magick::looks_like_metafile;
 #[cfg(test)]
 use magick::metafile_min_density;
 use magick::{decode_psd_composite, decode_via_magick};
-pub use magick::{encode_via_magick, magick_available};
+pub use magick::{encode_via_magick, magick_available, magick_output_supported};
 
 /// FULL-FIDELITY decode — what the Convert/Resize/Copy/Image-info verbs (and
 /// the eyedropper) use. Differs from [`decode_preview`] only for PSD/PSB: the

@@ -1,57 +1,226 @@
-# Bundled ImageMagick — what we ship and why it's small
+# Bundled ImageMagick: pinned, trimmed, and dependency-closed
 
-SageThumbs 2K bundles a **trimmed, hardened ImageMagick** as the tier-3 long-tail decoder
-(the obscure formats the pure-Rust `image` crate and Windows WIC can't read). It runs **only
-as an isolated subprocess** (`decode.rs` — `magick - … PNG:-`), never linked in-process, so a
-crash/OOM/CVE in magick's C code can't take down Explorer.
+SageThumbs 2K uses ImageMagick as its tier-3 long-tail decoder and for the Convert
+dialog's exotic output encoders. It runs out of process with resource limits and a kill
+timeout; ImageMagick is never loaded into Explorer. The installer maps the contents of
+`packaging/stage/magick` directly into the application directory, so that staging
+directory is also the final flattened runtime layout.
 
-The bundle is produced by `scripts/build-release.ps1` from the **official ImageMagick Windows
-install** in `C:\Program Files\ImageMagick*` (an MSVC build). With the current
-ImageMagick 7.1.2-25 Q16-HDRI package, these two steps shrink the installed tree from about
-60.8 MiB to 14.7 MiB raw. The trimmed bundle contributes roughly 3.5 MB to the solid-compressed
-installer; exact sizes vary with the upstream ImageMagick build:
+Correctness on a clean Windows installation is more important than shaving a few bytes.
+In particular, an installed developer copy of ImageMagick or the VC++ Redistributable
+must never hide a missing release dependency.
 
-## 1. Dropped delegates + coders
-We only decode **raster → PNG**, so the GUI/MFC runtime, the HEIF/AVIF/JPEG-XL/EXR/WebP coders
-(handled by earlier tiers before magick is ever reached), and the cairo/pango/rsvg SVG stack
-(we use `resvg`) are deleted. Regression-verified to lose zero decodable formats. See the
-`$dropDll` / `$dropCoder` lists in `build-release.ps1`.
+## Pinned production input
 
-## 2. Stubbed text-shaping stack (~5 MB) — the interesting one
-MagickCore **hard-links** the complex-text-shaping chain at load:
+Production builds accept exactly:
 
-| DLL | stock size | why it exists |
-|---|---|---|
-| `CORE_RL_glib_` | ~2.65 MB | glib (used by harfbuzz/pango) |
-| `CORE_RL_harfbuzz_` | ~1.48 MB | text shaping |
-| `CORE_RL_freetype_` | ~0.72 MB | font rasterization |
-| `CORE_RL_fribidi_` | ~0.13 MB | bidirectional text |
-| `CORE_RL_raqm_` | ~0.04 MB | complex-script layout |
+`ImageMagick 7.1.2-25 Q16-HDRI x64 (2026-06-04)`
 
-It exists purely for caption/label/annotate rendering — which **we never do** (we decode
-images, we don't draw text). But you can't just delete the DLLs: they're in MagickCore's
-*static import table*, so `magick.exe` won't even start without them (a runtime delete looks
-fine in a one-off test, then fails on a cold process start).
+[`imagemagick-source.json`](imagemagick-source.json) pins its runtime identity and a
+deterministic SHA-256 inventory of every source file eligible to enter the bundle:
 
-**The fix: replace each with a tiny stub DLL** that exports the *same symbols* as no-ops
-(`int name(void){return 0;}`, data exports as zeroed). The import table resolves at load, magick
-starts, and the text functions are simply never called on the decode path. This drops ~5 MB raw
-→ ~0.6 MB of stubs (**~4.4 MB saved**, ~1.5–2 MB off the compressed installer) with **zero
-decode regression** — verified with the full corpus including the glib-stubbed build.
+- `magick.exe`
+- every root DLL and XML file
+- every file under `modules`
+- `License.txt` and `NOTICE.txt`
 
-### How it stays permanent / no-hassle
-`build-release.ps1` regenerates the stubs **on every build** straight from the installed
-ImageMagick's own export tables (`gendef` → no-op `stub.c` + `build.def` → `gcc -shared
--nostdlib`). So an **ImageMagick upgrade just works** — the new export set is picked up
-automatically; nothing to hand-maintain. It needs `gendef` + `gcc` from the same mingw toolchain
-that already provides `windres` for the build; if they're missing, the build **warns and ships
-the full text stack** rather than failing.
+[`check-magick-source.ps1`](../scripts/check-magick-source.ps1) checks all 195 files,
+47,615,949 bytes, and the aggregate inventory digest before copying anything. Selecting
+the first `C:\Program Files\ImageMagick*` directory is deliberately forbidden.
 
-### If you ever need to verify after an IM upgrade
-```powershell
-pwsh scripts/build-release.ps1      # produces dist\SageThumbs2K-Setup-<ver>.exe with stubs
-pwsh scripts/regression.ps1          # must stay PASS — all baseline extensions render
+An ImageMagick upgrade is therefore an explicit source change: review the new upstream
+package, update the pin, regenerate and inspect the stubs, run the full format regression
+corpus, and review the final dependency inventory.
+
+## Exact root payload
+
+The pinned build currently leaves these files at the flattened bundle root:
+
+```text
+colors.xml
+configure.xml
+CORE_RL_bzip2_.dll
+CORE_RL_brotli_.dll
+CORE_RL_freetype_.dll       (generated no-op stub)
+CORE_RL_glib_.dll           (generated no-op stub)
+CORE_RL_heif_.dll
+CORE_RL_jpeg-turbo_.dll
+CORE_RL_jpeg-xl_.dll
+CORE_RL_lcms_.dll
+CORE_RL_lqr_.dll
+CORE_RL_lzma_.dll
+CORE_RL_MagickCore_.dll
+CORE_RL_MagickWand_.dll
+CORE_RL_openjpeg_.dll
+CORE_RL_png_.dll
+CORE_RL_raqm_.dll           (generated no-op stub)
+CORE_RL_raw_.dll
+CORE_RL_tiff_.dll
+CORE_RL_webp_.dll
+CORE_RL_xml_.dll
+CORE_RL_zip_.dll
+CORE_RL_zlib_.dll
+delegates.xml
+english.xml
+License.txt
+locale.xml
+log.xml
+magick.exe
+mime.xml
+msvcp140.dll
+NOTICE.txt
+policy.xml                  (the SageThumbs hardened policy)
+thresholds.xml
+type-ghostscript.xml
+type.xml
+vcomp140.dll
+vcruntime140.dll
+vcruntime140_1.dll
 ```
-If `regression.ps1` ever drops a magick-tier format after a stub regen (e.g. a future IM build
-that genuinely uses glib for raster I/O), narrow the stub list in `build-release.ps1` to exclude
-`glib` (keep the 4 pure-text DLLs stubbed — still ~2.4 MB saved, zero risk).
+
+All retained coder and filter modules remain below `modules`. `msvcp140.dll`,
+`vcomp140.dll`, and both VCRuntime DLLs are load-bearing app-local dependencies.
+Clean Windows does not promise the MSVC/OpenMP runtimes.
+`CORE_RL_webp_.dll` is also load-bearing even
+though the standalone WebP coder is omitted: the retained TIFF DLL hard-imports WebP
+support and will not load without it.
+
+HEIF/AVIF and JPEG XL decoding normally happens in earlier SageThumbs tiers, but
+their ImageMagick delegates and coder modules remain load-bearing for the Convert
+dialog's advertised AVIF and JXL **writers**. Removing them does not cause a clean
+error in stock ImageMagick: it can exit successfully while writing input-format bytes
+under the requested extension. The final output smoke prevents that regression. EXR,
+HDR, Farbfeld, and PAM output use the already-shipped native Rust encoders instead.
+
+The upstream `License.txt` and `NOTICE.txt` are required payload, not optional
+documentation.
+
+## Reviewed omissions
+
+These source root DLLs are intentionally absent:
+
+```text
+CORE_RL_cairo_.dll
+CORE_RL_croco_.dll
+CORE_RL_exr_.dll
+CORE_RL_fribidi_.dll
+CORE_RL_gdk-pixbuf_.dll
+CORE_RL_harfbuzz_.dll
+CORE_RL_Magick++_.dll
+CORE_RL_pango_.dll
+CORE_RL_rsvg_.dll
+mfc140u.dll
+msvcp140_1.dll
+msvcp140_2.dll
+msvcp140_atomic_wait.dll
+msvcp140_codecvt_ids.dll
+vcruntime140_threads.dll
+```
+
+The SVG stack is handled by resvg; Magick++ and MFC are not used by the command-line
+raster decoder. The following actual coder modules in the pinned package are omitted:
+
+```text
+IM_MOD_RL_clipboard_.dll
+IM_MOD_RL_caption_.dll
+IM_MOD_RL_ept_.dll
+IM_MOD_RL_exr_.dll
+IM_MOD_RL_farbfeld_.dll
+IM_MOD_RL_hdr_.dll
+IM_MOD_RL_html_.dll
+IM_MOD_RL_inline_.dll
+IM_MOD_RL_label_.dll
+IM_MOD_RL_msl_.dll
+IM_MOD_RL_mvg_.dll
+IM_MOD_RL_pango_.dll
+IM_MOD_RL_pdf_.dll
+IM_MOD_RL_ps_.dll
+IM_MOD_RL_ps2_.dll
+IM_MOD_RL_ps3_.dll
+IM_MOD_RL_screenshot_.dll
+IM_MOD_RL_svg_.dll
+IM_MOD_RL_ttf_.dll
+IM_MOD_RL_txt_.dll
+IM_MOD_RL_url_.dll
+IM_MOD_RL_video_.dll
+IM_MOD_RL_webp_.dll
+IM_MOD_RL_xps_.dll
+```
+
+PANGO is a synthetic text-render input, not an advertised file extension, and the
+hardened policy denies it. The build proves both facts before removing that module.
+This lets the unused Cairo/Pango delegate DLLs stay out without leaving an unresolved
+import. The other omitted coders are handled earlier or are network/interactive/external
+inputs denied by the product's security model. Caption, EPT, label, MSL, MVG,
+PostScript/PDF, HTML/data-URI, font/text, screenshot, and XPS modules expose only
+aliases explicitly denied by the policy; the build refuses their removal if any
+mapped alias is ever re-enabled.
+
+No generic “delete every unreferenced DLL” sweep is allowed because ImageMagick discovers
+coder modules dynamically. After the reviewed trim and stubbing,
+[`prune-magick-unreferenced.ps1`](../scripts/prune-magick-unreferenced.ps1) removes only
+six explicit candidates:
+
+```text
+msvcp140_1.dll
+msvcp140_atomic_wait.dll
+msvcp140_codecvt_ids.dll
+vcruntime140_threads.dll
+CORE_RL_fribidi_.dll
+CORE_RL_harfbuzz_.dll
+```
+
+For each candidate it proves that no staged PE imports the basename and no staged file
+contains an ASCII or UTF-16 `LoadLibrary`/configuration literal. Any reference aborts the
+build. The last two become orphaned only because the retained RAQM DLL is itself stubbed.
+
+## Deterministic text-stack stubs
+
+MagickCore hard-imports GLib, FreeType, and RAQM even though SageThumbs never asks
+ImageMagick to render text. The production build replaces those DLLs—and initially
+generates the related HarfBuzz/Fribidi stubs for export verification—with tiny no-op
+DLLs. Each generated DLL:
+
+1. derives its export list from the pinned upstream DLL with `gendef`;
+2. preserves function-versus-data export shape;
+3. receives version metadata with `windres`;
+4. is linked without a CRT by `gcc -nostdlib`; and
+5. has its finished export inventory extracted and compared exactly with upstream.
+
+`gendef`, `gcc`, `windres`, and `objdump` from WinLibs/MinGW are mandatory for a full
+production bundle. There is no fallback that silently ships the stock text stack and
+changes installer size/hash by build machine.
+
+## Final release gates
+
+[`check-magick-bundle.ps1`](../scripts/check-magick-bundle.ps1) performs three independent
+checks after every trim:
+
+1. It recursively inspects every staged EXE/DLL import. An import must resolve to another
+   bundled basename or a reviewed Windows-inbox DLL/API-set contract. MSVC runtime names
+   are intentionally not on the Windows allowlist.
+2. It runs the exact flattened staged `magick.exe` with bundle-local configure and module
+   paths and a sanitized `PATH`. The smoke probe performs BMP→PNG and
+   BMP→TIFF→PNG, exercising module discovery and the TIFF/WebP dependency.
+3. It parses the Convert dialog's live `CV_MAGICK_FORMATS` list, produces every one of
+   its 14 advertised Magick-backed outputs with the same explicit coder mapping as runtime,
+   asks staged ImageMagick to identify the result, and independently validates each
+   binary signature/header. Exit status and a nonempty file are not sufficient.
+
+For the pinned build after reviewed orphan pruning, the gate reports 143 PE files and
+844 import edges. The raw Magick payload is 29,827,612 bytes, including the required
+writer delegates, upstream legal files, and clean-machine runtimes.
+
+Focused fail-closed tests:
+
+```powershell
+pwsh scripts/test-magick-packaging.ps1 -BundlePath packaging/stage/magick
+pwsh scripts/test-staged-regression.ps1
+```
+
+The tests prove that source-inventory drift, a missing `VCOMP140.dll`, a missing
+`NOTICE.txt`, a missing dynamically loaded JXL writer, and an attempt to prune a
+referenced runtime all stop the build. The staged regression wrapper additionally
+recreates the installer's flattened directory in a disposable location and runs the
+full real-sample corpus plus DICOM pixel checks against that exact runtime, so an
+untrimmed ImageMagick in Program Files cannot hide a packaging regression.

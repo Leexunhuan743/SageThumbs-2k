@@ -4,6 +4,7 @@
 
       pwsh scripts\regression.ps1                 # check against the baseline
       pwsh scripts\regression.ps1 -UpdateBaseline # accept the current pass set as the new baseline
+      pwsh scripts\test-staged-regression.ps1      # test the exact staged runtime
 
   EXIT CODES (so this can fail a pipeline):
     0  no regression  — every extension in the baseline still renders.
@@ -42,6 +43,13 @@
 param(
     [string]$Corpus = "$PSScriptRoot\..\..\test-corpus",
     [int]$Size = 96,
+    # Override the executable under test. ImageMagick must be flattened beside
+    # this EXE, just as the installer lays it out; test-staged-regression.ps1
+    # constructs that isolated runtime from packaging\stage.
+    [string]$St2kPath,
+    # Used only for the contact sheet and DICOM pixel assertions. Defaults to
+    # the staged copy adjacent to St2kPath, then the installed ImageMagick.
+    [string]$MagickPath,
     # Persist the current pass set as the new baseline instead of diffing.
     [switch]$UpdateBaseline
 )
@@ -49,9 +57,30 @@ $ErrorActionPreference = 'Continue'
 
 $baselineFile = "$PSScriptRoot\regression-baseline.txt"
 
-$st2k = Join-Path (& "$PSScriptRoot\_targetdir.ps1") 'release\st2k.exe'
-if (-not (Test-Path $st2k)) { throw "st2k.exe not built (cargo build --release --bin st2k)" }
-$magick = (Get-ChildItem 'C:\Program Files\ImageMagick*\magick.exe' -EA SilentlyContinue | Select-Object -First 1).FullName
+if (-not $St2kPath) {
+    $St2kPath = Join-Path (& "$PSScriptRoot\_targetdir.ps1") 'release\st2k.exe'
+}
+if (-not (Test-Path -LiteralPath $St2kPath -PathType Leaf)) {
+    throw "st2k.exe not found: $St2kPath"
+}
+$st2k = (Resolve-Path -LiteralPath $St2kPath).Path
+
+if (-not $MagickPath) {
+    $adjacentMagick = Join-Path (Split-Path $st2k -Parent) 'magick.exe'
+    if (Test-Path -LiteralPath $adjacentMagick -PathType Leaf) {
+        $MagickPath = $adjacentMagick
+    } else {
+        $MagickPath = (
+            Get-ChildItem 'C:\Program Files\ImageMagick*\magick.exe' -EA SilentlyContinue |
+                Select-Object -First 1
+        ).FullName
+    }
+}
+$magick = if ($MagickPath -and (Test-Path -LiteralPath $MagickPath -PathType Leaf)) {
+    (Resolve-Path -LiteralPath $MagickPath).Path
+} else {
+    $null
+}
 
 $render = "$Corpus\_render"
 if (Test-Path $render) { Remove-Item $render -Recurse -Force }
@@ -232,7 +261,15 @@ if ($regressed.Count) {
 # just produce a non-empty thumbnail — the render sweep above can't see a hue or
 # contrast regression. Run isolated (child pwsh) so its `exit` can't short-circuit
 # us; it self-skips (exit 0) when ImageMagick is absent. See check-dicom.ps1.
-& pwsh -NoProfile -File "$PSScriptRoot\check-dicom.ps1" | Out-Host
+$dicomArgs = @(
+    '-NoProfile',
+    '-File', "$PSScriptRoot\check-dicom.ps1",
+    '-St2kPath', $st2k
+)
+if ($magick) {
+    $dicomArgs += @('-MagickPath', $magick)
+}
+& pwsh @dicomArgs | Out-Host
 if ($LASTEXITCODE) {
     Write-Host "[regression] FAIL — DICOM content check failed (colour/contrast regressed)." -ForegroundColor Red
     exit 1

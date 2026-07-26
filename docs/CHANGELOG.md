@@ -2,6 +2,31 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
+## 1.3.6
+
+- **Huge archives now return immediately instead of tying up Explorer.** The archive limit
+  is enforced before 7z parsing on every shell-stream path—even when Max file size is set
+  to Unlimited or a provider omits the filename or length. The reported 909,208,825-byte
+  project archive was tested directly and rejected before parsing; network-share timing
+  is allowed to vary.
+- **Conversions are exact, atomic and memory-bounded.** EXR, HDR, Farbfeld, PAM and PPM
+  use native streaming writers with high-bit-depth data preserved where the format allows.
+  Every other advertised target uses an explicit bundled writer; unsupported targets fail
+  before reading the source, and a failed conversion cannot replace an existing file or
+  leave PNG data under the wrong extension.
+- **AVIF and JPEG XL export now include their real writer engines.** Earlier Full
+  packages advertised these conversions but removed load-bearing ImageMagick
+  delegates, which could leave PNG bytes under the requested extension on a clean PC.
+  This build retains the required writers, runtimes and legal files, independently
+  verifies all 14 Magick-backed output signatures, and rejects incomplete bundles.
+- **Screenshot and Quick preview background handling is down to one resident helper.**
+  The removed watchdog stays removed, and install/verification restarts the shared daemon
+  directly instead of leaving a second command-shell process behind. Full-screen editor
+  automation now also exercises Shift-snapped line drawing through the real window.
+- **Release builds now fail closed.** Staged contents, exact upgrade-cleanup rules, package
+  signatures, source inputs, version, artifact digest, size budget and reviewed release
+  notes are all verified before a build can be published.
+
 ## 1.3.5
 
 - **Screenshot lines and arrows now snap cleanly while Shift is held.** The live
@@ -552,9 +577,9 @@ A bug-fix release centered on a serious file-dialog problem, plus a sweep for an
 - **MCP `view` and `compress` tools.** The AI/agent server gained a `view` tool that decodes
   any of the 314 formats to a PNG image block so an agent can actually *see* the file, plus a
   `compress` tool.
-- **Smaller installer (~1.5 MB lighter).** The bundled ImageMagick text-shaping stack
-  (glib/harfbuzz/freetype/fribidi/raqm) is stubbed out; we only decode raster images, never
-  render text.
+- **Unused ImageMagick text shaping was removed.** The bundled
+  glib/harfbuzz/freetype/fribidi/raqm stack is stubbed because SageThumbs does not invoke
+  ImageMagick's text, caption or font-rendering surfaces.
 - **Hardening.** Fuzzing and Miri over the untrusted-input parsers, COM round-trip tests for
   the preview and property handlers, dead-code cleanup, and the test corpus extended to cover
   all 314 formats.

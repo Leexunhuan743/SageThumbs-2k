@@ -9,7 +9,7 @@
     5. prints the resulting SageThumbs2K-Setup-<ver>.exe and its size
 
   Usage:  pwsh scripts\build-release.ps1            # full build + installer
-          pwsh scripts\build-release.ps1 -NoImageMagick   # skip the IM bundle (small installer)
+          pwsh scripts\build-release.ps1 -NoImageMagick   # Compact-style payload without bundled ImageMagick
   Output: dist\SageThumbs2K-Setup-<ver>.exe
 #>
 [CmdletBinding()]
@@ -37,6 +37,8 @@ Write-Host "SageThumbs 2K release pipeline - version $ver" -ForegroundColor Cyan
 # fresh clone; the machine-local .cargo/config.toml carries the same flag for dev
 # builds. (RUSTFLAGS overrides config [target] rustflags — keep them identical.)
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
+$exeBuildArgs = @('--release', '--locked', '-p', 'sagethumbs2k', '--features', 'webp-lossy,html-preview')
+$dllBuildArgs = @('--release', '--locked', '-p', 'sagethumbs2k-dll', '--features', 'webp-lossy,dll-i18n-subset')
 if (-not $SkipBuild) {
     # Version metadata + app manifest + icon are embedded into the binaries via windres
     # in build.rs, which SILENTLY falls back to NO metadata if windres isn't on PATH.
@@ -61,10 +63,9 @@ if (-not $SkipBuild) {
     # the whole workspace at once (cargo rejects `--features` across >1 package).
     # `html-preview` links webview2-com into the EXEs only (the slim DLL build never requests it,
     # so the shell-extension cdylib stays free of it — verify with `cargo tree -p sagethumbs2k-dll`).
-    $feat = @('-p', 'sagethumbs2k', '--features', 'webp-lossy,html-preview')
-    Write-Host "[1/4] cargo build --release $($feat -join ' ')  (rlib + EXEs)" -ForegroundColor Green
+    Write-Host "[1/4] cargo build $($exeBuildArgs -join ' ')  (rlib + EXEs)" -ForegroundColor Green
     Push-Location $root
-    try { cargo build --release @feat; if ($LASTEXITCODE) { throw "cargo build failed" } } finally { Pop-Location }
+    try { cargo build @exeBuildArgs; if ($LASTEXITCODE) { throw "cargo build failed" } } finally { Pop-Location }
 
     # --- Slim shell-extension DLL ------------------------------------------------
     # The DLL (`sagethumbs2k-dll` cdylib) is built SEPARATELY with `dll-i18n-subset`
@@ -73,10 +74,9 @@ if (-not $SkipBuild) {
     # (built above, full 36-language table) are a DIFFERENT package, so there's no
     # feature-unification clash — the two `-p` builds key their core-crate artifacts by
     # feature set independently. Same `webp-lossy` so the slim DLL is otherwise identical.
-    $featSlim = @('-p', 'sagethumbs2k-dll', '--features', 'webp-lossy,dll-i18n-subset')
-    Write-Host "[1b/4] cargo build --release $($featSlim -join ' ')  (slim DLL)" -ForegroundColor Green
+    Write-Host "[1b/4] cargo build $($dllBuildArgs -join ' ')  (slim DLL)" -ForegroundColor Green
     Push-Location $root
-    try { cargo build --release @featSlim; if ($LASTEXITCODE) { throw "slim DLL build failed" } } finally { Pop-Location }
+    try { cargo build @dllBuildArgs; if ($LASTEXITCODE) { throw "slim DLL build failed" } } finally { Pop-Location }
 }
 
 # 3) Stage -------------------------------------------------------------------
@@ -98,6 +98,10 @@ Copy-Item "$targetRel\st2k.exe" $stage  # the command-line / AI-agent tool
 foreach ($doc in 'README.md','LICENSE','LICENSE-MIT','LICENSE-APACHE') {
     if (Test-Path "$root\$doc") { Copy-Item "$root\$doc" $stage }
 }
+# Always ship the hardened policy with the core app. Compact installs can still
+# use an explicitly installed Program Files ImageMagick fallback; it must receive
+# the same restrictions even when the curated engine component is not selected.
+Copy-Item "$root\packaging\imagemagick-policy.xml" "$stage\policy.xml" -Force
 # Branding: the app icon (installer + shortcut) and swappable logo/banner art
 # (dropping these next to the EXE overrides the embedded defaults at runtime).
 foreach ($asset in 'app.ico','logo.png','banner.png') {
@@ -106,33 +110,137 @@ foreach ($asset in 'app.ico','logo.png','banner.png') {
 
 $bundleMagick = -not $NoImageMagick
 if ($bundleMagick) {
-    $im = (Get-ChildItem 'C:\Program Files\ImageMagick*' -Directory -EA SilentlyContinue | Select-Object -First 1)
-    if (-not $im) { throw "ImageMagick not found in Program Files. Install it or pass -NoImageMagick." }
-    Write-Host "      bundling a TRIMMED ImageMagick from $($im.Name)" -ForegroundColor DarkGray
-    # We only ever decode a raster image -> PNG. ImageMagick's engine is tiny
-    # (MagickCore+MagickWand ~3.5 MB) but the stock install ships ~25 MB of LAZY
-    # delegates we never use: the GUI's MFC runtime, HEIF/AVIF + JPEG-XL + EXR +
-    # WebP (handled by the image crate / WIC tiers BEFORE ImageMagick is reached),
-    # and the cairo/pango/rsvg SVG-render stack (we use resvg; SVG is policy-off).
-    # Dropping them was regression-verified to lose ZERO decodable formats. The
+    # Release input is PINNED. Never package whichever ImageMagick directory happens to
+    # sort first: patch releases change imports/exports and can make a previously safe trim
+    # silently incomplete. check-magick-source verifies the reported identity plus a
+    # deterministic inventory hash of all 195 files eligible to enter this bundle.
+    $magickPinPath = Join-Path $root 'packaging\imagemagick-source.json'
+    $magickPin = Get-Content -LiteralPath $magickPinPath -Raw | ConvertFrom-Json
+    $imPath = Join-Path $env:ProgramFiles ([string]$magickPin.identity.installDirectoryName)
+    if (-not (Test-Path -LiteralPath $imPath -PathType Container)) {
+        throw "Pinned ImageMagick '$($magickPin.identity.displayName)' not found at '$imPath'. " +
+              "Install that exact x64 Q16-HDRI build or pass -NoImageMagick."
+    }
+    & "$PSScriptRoot\check-magick-source.ps1" -SourcePath $imPath -PinPath $magickPinPath
+    if ($LASTEXITCODE) { throw "Pinned ImageMagick source validation failed" }
+    $im = Get-Item -LiteralPath $imPath
+    Write-Host "      bundling a TRIMMED, PINNED ImageMagick from $($im.Name)" -ForegroundColor DarkGray
+
+    # A full production build always emits the same stubbed payload. Falling back to the
+    # stock +5 MiB text stack made installer size and hashes depend on the build machine.
+    # The same MinGW distribution provides all four tools.
+    $mingwBin = $null
+    $wr = Get-Command windres, x86_64-w64-mingw32-windres -EA SilentlyContinue | Select-Object -First 1
+    if ($wr) { $mingwBin = Split-Path $wr.Source }
+    if (-not $mingwBin -or -not (Test-Path (Join-Path $mingwBin 'gendef.exe'))) {
+        $candidate = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*WinLibs*\mingw64\bin\gendef.exe" -EA SilentlyContinue |
+            Select-Object -First 1
+        if ($candidate) { $mingwBin = Split-Path $candidate.FullName }
+    }
+    $gendef = if ($mingwBin) { Join-Path $mingwBin 'gendef.exe' } else { $null }
+    $gcc = if ($mingwBin) { Join-Path $mingwBin 'gcc.exe' } else { $null }
+    $windresStub = if ($mingwBin) { Join-Path $mingwBin 'windres.exe' } else { $null }
+    $objdump = if ($mingwBin) { Join-Path $mingwBin 'objdump.exe' } else { $null }
+    $missingStubTools = @(
+        @{ Name = 'gendef'; Path = $gendef },
+        @{ Name = 'gcc'; Path = $gcc },
+        @{ Name = 'windres'; Path = $windresStub },
+        @{ Name = 'objdump'; Path = $objdump }
+    ) | Where-Object { -not $_.Path -or -not (Test-Path -LiteralPath $_.Path -PathType Leaf) }
+    if ($missingStubTools) {
+        throw "Production ImageMagick packaging requires gendef, gcc, windres, and objdump " +
+              "from WinLibs/MinGW; missing: $(($missingStubTools.Name) -join ', '). " +
+              "Install with 'winget install BrechtSanders.WinLibs.POSIX.UCRT' or use -NoImageMagick."
+    }
+
+    # SageThumbs uses ImageMagick only for bounded raster decoding and explicit
+    # image-output writers. Its core engine (MagickCore+MagickWand) is small, but
+    # the stock install ships ~25 MB of LAZY
+    # delegates we never use: the GUI's MFC runtime, the WebP CODER (handled by
+    # the image crate), and the cairo/pango/rsvg SVG-render stack (we use resvg;
+    # SVG is policy-off). HEIF/AVIF and JPEG-XL MUST stay even though earlier tiers
+    # decode them: the Convert dialog advertises those ImageMagick-backed OUTPUT
+    # formats and needs their encoders. EXR output is now native via `image`.
+    # CORE_RL_webp_.dll itself stays: the retained TIFF delegate hard-imports it, even
+    # when decoding a non-WebP TIFF. Dropping it made TIFF fail on a clean machine.
+    # Dropping the other entries was regression-verified to lose ZERO decodable formats.
     # glib/harfbuzz/freetype/fribidi/raqm text-shaping stack (~5 MB) is HARD-linked by
     # MagickCore at load (magick.exe won't start without it) but is pure dead weight - we
-    # only decode raster -> PNG, never render text/captions - so we STUB it below.
+    # only process raster pixels and never render text/captions - so we STUB it below.
     Copy-Item "$($im.FullName)\magick.exe" "$stage\magick"
     Copy-Item "$($im.FullName)\*.dll" "$stage\magick"
     Copy-Item "$($im.FullName)\*.xml" "$stage\magick"
-    if (Test-Path "$($im.FullName)\modules") { Copy-Item "$($im.FullName)\modules" "$stage\magick" -Recurse }
+    Copy-Item "$($im.FullName)\License.txt" "$stage\magick"
+    Copy-Item "$($im.FullName)\NOTICE.txt" "$stage\magick"
+    Copy-Item "$($im.FullName)\modules" "$stage\magick" -Recurse
 
     # Prune the verified-unneeded delegate DLLs (~24 MB) + their dead coders.
+    # msvcp140.dll and vcomp140.dll are LOAD-BEARING dependencies of RAW/MagickCore;
+    # keep them app-local because neither is guaranteed on clean Windows.
     $dropDll = @(
-        'mfc140u.dll','msvcp140.dll','msvcp140_2.dll','vcomp140.dll',           # GUI/C++ runtimes magick.exe doesn't use
-        'CORE_RL_heif_.dll','CORE_RL_jpeg-xl_.dll','CORE_RL_exr_.dll',          # handled by image crate / WIC
-        'CORE_RL_webp_.dll','CORE_RL_Magick++_.dll','CORE_RL_brotli_.dll',
+        'mfc140u.dll','msvcp140_2.dll',                                        # unreferenced GUI/C++ runtime pieces
+        'CORE_RL_Magick++_.dll','CORE_RL_exr_.dll',                            # EXR encode/decode is native Rust
         'CORE_RL_cairo_.dll','CORE_RL_pango_.dll','CORE_RL_rsvg_.dll',          # SVG/vector render (we use resvg)
         'CORE_RL_croco_.dll','CORE_RL_gdk-pixbuf_.dll'
     )
     foreach ($d in $dropDll) { [System.IO.File]::Delete("$stage\magick\$d") }
-    $dropCoder = 'heic','heif','avif','jxl','exr','webp','svg','msvg','video','mpeg','url','clipboard'
+
+    # PANGO is not an advertised file extension and the shipped security policy denies
+    # the synthetic PANGO text-render input coder. Prove both invariants before removing
+    # its module; this is what allows the otherwise-unused cairo/pango delegate DLLs above
+    # to stay out without leaving an unresolved import.
+    [xml]$magickPolicy = Get-Content -LiteralPath "$root\packaging\imagemagick-policy.xml" -Raw
+    $deniedCoderAliases = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($policy in $magickPolicy.policymap.policy) {
+        if ($policy.domain -ne 'coder' -or $policy.rights -ne 'none') { continue }
+        $tokens = ([string]$policy.pattern).Trim('{}').Split(',') | ForEach-Object { $_.Trim() }
+        foreach ($token in $tokens) { [void]$deniedCoderAliases.Add($token) }
+    }
+    if (-not $deniedCoderAliases.Contains('PANGO')) {
+        throw 'Refusing to prune the PANGO coder: packaging/imagemagick-policy.xml no longer denies PANGO'
+    }
+    $advertisedFormats = @(& "$targetRel\st2k.exe" formats 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not query st2k formats before ImageMagick pruning' }
+    if (($advertisedFormats -join "`n") -match '(?im)^\s*\.pango\s') {
+        throw 'Refusing to prune the PANGO coder: .pango is now an advertised SageThumbs input format'
+    }
+
+    # These modules expose only coder aliases that our policy already disables.
+    # Removing them physically makes that security boundary independent of an
+    # additive Program Files policy search and trims dead code. Fail closed if a
+    # future policy edit re-enables even one alias.
+    $policyOnlyCoderModules = [ordered]@{
+        'caption'    = @('CAPTION')
+        'ept'        = @('EPT','EPT2','EPT3')
+        'html'       = @('HTM','HTML','SHTML')
+        'inline'     = @('DATA','INLINE')
+        'label'      = @('LABEL')
+        'msl'        = @('MSL')
+        'mvg'        = @('MVG')
+        'pdf'        = @('AI','EPDF','PDF','PDFA','POCKETMOD')
+        'ps'         = @('PS','EPI','EPS','EPSF','EPSI')
+        'ps2'        = @('EPS2','PS2')
+        'ps3'        = @('EPS3','PS3')
+        'screenshot' = @('SCREENSHOT')
+        'ttf'        = @('DFONT','OTF','PFA','PFB','TTC','TTF')
+        'txt'        = @('SPARSE-COLOR','TEXT','TXT')
+        'xps'        = @('XPS')
+    }
+    foreach ($module in $policyOnlyCoderModules.GetEnumerator()) {
+        foreach ($alias in $module.Value) {
+            if (-not $deniedCoderAliases.Contains($alias)) {
+                throw "Refusing to prune the $($module.Key) coder: policy no longer denies alias $alias"
+            }
+        }
+    }
+
+    # EXR/HDR/Farbfeld input + output are native Rust tiers now. PAM itself is
+    # native too, but PFM shares ImageMagick's PNM module, so that module must stay.
+    $dropCoder = @(
+        'exr','hdr','farbfeld','webp','svg','msvg','video','mpeg','url','clipboard','pango'
+    ) + @($policyOnlyCoderModules.Keys)
     foreach ($c in $dropCoder) { [System.IO.File]::Delete("$stage\magick\modules\coders\IM_MOD_RL_$($c)_.dll") }
 
     # STUB the text-shaping stack (~5 MB raw). MagickCore hard-links glib/harfbuzz/freetype/
@@ -140,29 +248,25 @@ if ($bundleMagick) {
     # render text, so we replace each with a tiny stub DLL exporting the same symbols as no-ops:
     # the import table resolves at load, the text functions are simply never called on the
     # raster-decode path. Regenerated from the installed ImageMagick's own exports on every build,
-    # so an IM upgrade adapts automatically. Regression-verified to lose ZERO decodable formats
-    # (glib included). See packaging/MAGICK.md. Needs gendef + gcc (the same mingw that provides
-    # windres); if they're absent we warn and ship the full stack rather than fail the release.
-    $mingwBin = $null
-    $wr = Get-Command windres, x86_64-w64-mingw32-windres -EA SilentlyContinue | Select-Object -First 1
-    if ($wr) { $mingwBin = Split-Path $wr.Source }
-    if (-not $mingwBin -or -not (Test-Path (Join-Path $mingwBin 'gendef.exe'))) {
-        $c = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*WinLibs*\mingw64\bin\gendef.exe" -EA SilentlyContinue | Select-Object -First 1
-        if ($c) { $mingwBin = Split-Path $c.FullName }
-    }
-    $gendef = if ($mingwBin) { Join-Path $mingwBin 'gendef.exe' } else { $null }
-    $gcc = if ($mingwBin) { Join-Path $mingwBin 'gcc.exe' } else { $null }
-    $windresStub = if ($mingwBin) { Join-Path $mingwBin 'windres.exe' } else { $null }
-    if ($gendef -and $gcc -and (Test-Path $gendef) -and (Test-Path $gcc)) {
-        $stubWork = Join-Path $stage 'magick\_stubwork'
-        New-Item -ItemType Directory $stubWork -Force | Out-Null
+    # so an IM upgrade adapts automatically after the source pin + regression corpus are
+    # deliberately updated. We compare the generated stub's export inventory to upstream
+    # before accepting it. See packaging/MAGICK.md.
+    $stubWork = Join-Path $stage 'magick\_stubwork'
+    New-Item -ItemType Directory $stubWork -Force | Out-Null
+    try {
         foreach ($t in 'glib','harfbuzz','freetype','fribidi','raqm') {
             $dll = "CORE_RL_$($t)_.dll"
             $src = Join-Path $im.FullName $dll
-            if (-not (Test-Path $src)) { continue }
+            if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+                throw "Pinned ImageMagick is missing required stub source: $src"
+            }
             Push-Location $stubWork
             try {
+                Remove-Item -LiteralPath "CORE_RL_$($t)_.def" -Force -ErrorAction SilentlyContinue
                 & $gendef $src 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "CORE_RL_$($t)_.def")) {
+                    throw "gendef failed for $src"
+                }
                 $stubC = @('int __stdcall DllMainCRTStartup(void* h,unsigned r,void* x){(void)h;(void)r;(void)x;return 1;}')
                 $buildDef = @('EXPORTS'); $inExports = $false
                 foreach ($l in (Get-Content "CORE_RL_$($t)_.def")) {
@@ -174,56 +278,99 @@ if ($bundleMagick) {
                         else { $stubC += "int $n(void){return 0;}"; $buildDef += "$n" }
                     }
                 }
+                if ($buildDef.Count -le 1) { throw "gendef found no exports in $src" }
+                $expectedExports = @($buildDef | Select-Object -Skip 1 | Sort-Object -CaseSensitive)
                 Set-Content 'stub.c' $stubC -Encoding ascii
                 Set-Content 'build.def' $buildDef -Encoding ascii
                 # Embed a VERSIONINFO resource so the stub looks like a legit (versioned) DLL,
                 # NOT a hollow metadata-less one — hollow DLLs are heuristic-AV false-positive
                 # bait (verified: a stub WITHOUT this scored 6/64 on VirusTotal, WITH it 1/69).
                 # Same principle the Rust binaries already follow via build.rs/windres.
-                $rcObj = $null
-                if ($windresStub -and (Test-Path $windresStub)) {
-                    $rc = @(
-                        '1 VERSIONINFO',
-                        'FILEVERSION 7,1,2,0', 'PRODUCTVERSION 7,1,2,0',
-                        'FILEFLAGSMASK 0x3fL', 'FILEOS 0x40004L', 'FILETYPE 0x2L',
-                        'BEGIN',
-                        '  BLOCK "StringFileInfo"', '  BEGIN', '    BLOCK "040904b0"', '    BEGIN',
-                        '      VALUE "CompanyName", "SageThumbs 2K"',
-                        '      VALUE "FileDescription", "ImageMagick text-shaping shim (no-op; raster-only build)"',
-                        '      VALUE "FileVersion", "7.1.2.0"',
-                        "      VALUE ""InternalName"", ""CORE_RL_$($t)_""",
-                        "      VALUE ""OriginalFilename"", ""$dll""",
-                        '      VALUE "ProductName", "SageThumbs 2K"',
-                        '      VALUE "ProductVersion", "7.1.2.0"',
-                        '      VALUE "LegalCopyright", "Shipped with SageThumbs 2K"',
-                        '    END', '  END',
-                        '  BLOCK "VarFileInfo"', '  BEGIN', '    VALUE "Translation", 0x409, 1200', '  END',
-                        'END'
-                    )
-                    Set-Content 'version.rc' $rc -Encoding ascii
-                    & $windresStub 'version.rc' -O coff -o 'version.o' 2>$null
-                    if (Test-Path 'version.o') { $rcObj = 'version.o' }
+                $rc = @(
+                    '1 VERSIONINFO',
+                    'FILEVERSION 7,1,2,25', 'PRODUCTVERSION 7,1,2,25',
+                    'FILEFLAGSMASK 0x3fL', 'FILEOS 0x40004L', 'FILETYPE 0x2L',
+                    'BEGIN',
+                    '  BLOCK "StringFileInfo"', '  BEGIN', '    BLOCK "040904b0"', '    BEGIN',
+                    '      VALUE "CompanyName", "SageThumbs 2K"',
+                    '      VALUE "FileDescription", "ImageMagick text-shaping shim (no-op; raster-only build)"',
+                    '      VALUE "FileVersion", "7.1.2-25"',
+                    "      VALUE ""InternalName"", ""CORE_RL_$($t)_""",
+                    "      VALUE ""OriginalFilename"", ""$dll""",
+                    '      VALUE "ProductName", "SageThumbs 2K"',
+                    '      VALUE "ProductVersion", "7.1.2-25"',
+                    '      VALUE "LegalCopyright", "Shipped with SageThumbs 2K"',
+                    '    END', '  END',
+                    '  BLOCK "VarFileInfo"', '  BEGIN', '    VALUE "Translation", 0x409, 1200', '  END',
+                    'END'
+                )
+                Set-Content 'version.rc' $rc -Encoding ascii
+                & $windresStub 'version.rc' -O coff -o 'version.o' 2>$null
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath 'version.o')) {
+                    throw "windres failed while versioning $dll"
                 }
-                $gccArgs = @('-O2', '-shared', '-nostdlib', '-o', (Join-Path "$stage\magick" $dll), 'stub.c', 'build.def', '-e', 'DllMainCRTStartup')
-                if ($rcObj) { $gccArgs += $rcObj }
+
+                $stubPath = Join-Path "$stage\magick" $dll
+                $gccArgs = @('-O2', '-shared', '-nostdlib', '-o', $stubPath, 'stub.c', 'build.def', '-e', 'DllMainCRTStartup', 'version.o')
                 & $gcc @gccArgs 2>$null
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $stubPath -PathType Leaf)) {
+                    throw "gcc failed while building $dll"
+                }
+
+                # Re-extract from the finished stub and compare exact name/DATA shape.
+                Remove-Item -LiteralPath "CORE_RL_$($t)_.def" -Force
+                & $gendef $stubPath 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "CORE_RL_$($t)_.def")) {
+                    throw "gendef could not inspect generated stub $stubPath"
+                }
+                $actualExports = [System.Collections.Generic.List[string]]::new()
+                $inActualExports = $false
+                foreach ($line in (Get-Content "CORE_RL_$($t)_.def")) {
+                    if ($line -match '^EXPORTS') { $inActualExports = $true; continue }
+                    if (-not $inActualExports) { continue }
+                    if ($line -match '^([A-Za-z_]\S*)') {
+                        $entry = $Matches[1]
+                        if ($line -match '\bDATA\b') { $entry += ' DATA' }
+                        $actualExports.Add($entry)
+                    }
+                }
+                $actualSorted = @($actualExports | Sort-Object -CaseSensitive)
+                if ([string]::Join("`n", $actualSorted) -cne [string]::Join("`n", $expectedExports)) {
+                    throw "Generated stub export inventory does not exactly match upstream $dll"
+                }
             } finally { Pop-Location }
         }
+    } finally {
         Remove-Item $stubWork -Recurse -Force -EA SilentlyContinue
-        Write-Host "      stubbed the magick text stack (glib/harfbuzz/freetype/fribidi/raqm, ~5 MB)" -ForegroundColor DarkGray
-    } else {
-        Write-Host "      WARNING: gendef/gcc not found (need mingw); shipping the FULL magick text stack (+5 MB)" -ForegroundColor Yellow
     }
+    Write-Host "      stubbed + export-verified the magick text stack (glib/harfbuzz/freetype/fribidi/raqm)" -ForegroundColor DarkGray
 
-    # magick.exe (and our MSVC binaries) need the VC++ runtime - bundle it app-local
-    # so the long-tail tier works even on machines without the VC++ redist installed.
-    foreach ($vc in 'vcruntime140.dll','vcruntime140_1.dll') {
-        $src = Join-Path $env:SystemRoot "System32\$vc"
-        if (Test-Path $src) { Copy-Item $src "$stage\magick" -Force }
-    }
+    # These pinned-build companions become unreachable after pruning/stubbing above.
+    # The helper refuses each deletion unless no staged PE import and no ASCII/UTF-16
+    # LoadLibrary/configuration literal refers to it. Keep this an explicit reviewed list;
+    # never turn it into a broad "delete every zero-indegree DLL" sweep because Magick
+    # discovers coder modules dynamically.
+    $unreferencedRuntime = @(
+        'msvcp140_1.dll',
+        'msvcp140_atomic_wait.dll',
+        'msvcp140_codecvt_ids.dll',
+        'vcruntime140_threads.dll',
+        'CORE_RL_fribidi_.dll',
+        'CORE_RL_harfbuzz_.dll'
+    )
+    & "$PSScriptRoot\prune-magick-unreferenced.ps1" -BundlePath "$stage\magick" -ObjdumpPath $objdump -Candidate $unreferencedRuntime
+    if ($LASTEXITCODE) { throw "Mechanically verified ImageMagick runtime pruning failed" }
 
     # Overwrite the stock policy.xml with our hardened one.
     Copy-Item "$root\packaging\imagemagick-policy.xml" "$stage\magick\policy.xml" -Force
+
+    # Authoritative final gate: reject any third-party PE import not present in the
+    # bundle, then execute the exact flattened layout with bundle-local modules/config.
+    & "$PSScriptRoot\check-magick-bundle.ps1" -BundlePath "$stage\magick" -ObjdumpPath $objdump
+    if ($LASTEXITCODE) { throw "Staged ImageMagick dependency/smoke validation failed" }
+    & "$PSScriptRoot\test-staged-regression.ps1" -StagePath $stage
+    if ($LASTEXITCODE) { throw "Exact staged full-corpus regression failed" }
+
     $magickSize = [math]::Round((Get-ChildItem "$stage\magick" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
     Write-Host "      trimmed ImageMagick bundle: $magickSize MB (raw)" -ForegroundColor DarkGray
 } else {
@@ -247,7 +394,14 @@ Write-Host "[3/4] compiling installer (Inno Setup)" -ForegroundColor Green
 # happily (they only fire in unins000.exe, a path our dev loop never runs), so a green
 # compile can still ship a broken uninstaller - that's how issue #3 (TSetupForm.Create ->
 # "Resource TSetupForm not found") escaped. Fail the build before wasting a compile on it.
-& "$PSScriptRoot\check-installer.ps1" -IssPath "$root\packaging\installer.iss"
+$installerCheckArgs = @{
+    IssPath = "$root\packaging\installer.iss"
+    CorePolicyPath = "$stage\policy.xml"
+}
+if ($bundleMagick) {
+    $installerCheckArgs.ManagedPayloadPath = "$stage\magick"
+}
+& "$PSScriptRoot\check-installer.ps1" @installerCheckArgs
 if ($LASTEXITCODE) { throw "installer.iss [Code] lint failed (see above)" }
 $iscc = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
@@ -274,22 +428,49 @@ $fmtCount = ''
 $fmtLine = & "$targetRel\st2k.exe" formats 2>$null | Select-Object -First 1
 if ($fmtLine -match '^(\d+)\s') { $fmtCount = $Matches[1] }
 $isccArgs = @("/DAppVer=$ver"); if ($fmtCount) { $isccArgs += "/DFmtCount=$fmtCount" }
+$expectedSetupPath = "$root\dist\SageThumbs2K-Setup-$ver.exe"
+# A stale same-version artifact must not survive an odd ISCC "success" and then be
+# mistaken for the installer produced from this stage.
+Remove-Item -LiteralPath $expectedSetupPath -Force -ErrorAction SilentlyContinue
 & $iscc @isccArgs "$root\packaging\installer.iss"
 if ($LASTEXITCODE) { throw "Inno Setup compile failed" }
+if (-not (Test-Path -LiteralPath $expectedSetupPath -PathType Leaf)) {
+    throw "Inno Setup exited successfully but did not create the expected installer: $expectedSetupPath"
+}
 
 # 5) Report ------------------------------------------------------------------
 # Report the artifact for THIS version explicitly. A stale/newer installer left in dist must
 # never be mistaken for the file this invocation just produced.
-$setup = Get-Item "$root\dist\SageThumbs2K-Setup-$ver.exe" -EA Stop
-Write-Host "[4/4] done" -ForegroundColor Green
-Write-Host ("  -> {0}  ({1} MB)" -f $setup.FullName, [math]::Round($setup.Length / 1MB, 1)) -ForegroundColor Cyan
+$setup = Get-Item -LiteralPath $expectedSetupPath -EA Stop
+$sizeCheck = Join-Path $PSScriptRoot 'check-release-size.ps1'
+& $sizeCheck -InstallerPath $setup.FullName -StagePath $stage
+if ($LASTEXITCODE) { throw "release size budget check failed" }
 
-# 6) Refresh the marketing site (site/index.html) from the just-built truth: the format
-# wall + per-category counts from st2k.exe, and the version pills from Cargo.toml, so
-# sagethumbs2k.github.io never drifts. Non-fatal (a site-gen hiccup must not fail a release).
+# 6) Optionally refresh the local marketing-site checkout from the just-built truth.
+# `site/` is deliberately local/ignored and is not an installer input or release-provenance
+# source. Non-fatal: a missing checkout or site-generation hiccup must not fail a release.
 $genSite = Join-Path $root 'scripts\gen-site.mjs'
-if ((Get-Command node -EA SilentlyContinue) -and (Test-Path $genSite)) {
+if ((Get-Command node -EA SilentlyContinue) -and
+    (Test-Path -LiteralPath $genSite -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $root 'site\index.html') -PathType Leaf)) {
     Write-Host "[site] regenerating site\index.html from live formats" -ForegroundColor Green
     try { & node $genSite "$targetRel\st2k.exe" }
     catch { Write-Host "  (site regen skipped: $_)" -ForegroundColor DarkYellow }
 }
+
+# Last successful build action: bind installer, exact stage, source tree, build recipe,
+# and feature switches into a release manifest. Publishing revalidates this rather than
+# trusting a same-named artifact or a -SkipBuild invocation.
+& "$PSScriptRoot\write-release-manifest.ps1" `
+    -InstallerPath $setup.FullName `
+    -StagePath $stage `
+    -Version $ver `
+    -ImageMagickBundled:$bundleMagick `
+    -ModernMenuBundled:$(-not $NoModernMenu) `
+    -RustBuildPerformed:$(-not $SkipBuild) `
+    -ExeCargoArguments $exeBuildArgs `
+    -DllCargoArguments $dllBuildArgs
+if ($LASTEXITCODE) { throw "release manifest generation failed" }
+
+Write-Host "[4/4] done" -ForegroundColor Green
+Write-Host ("  -> {0}  ({1} MB)" -f $setup.FullName, [math]::Round($setup.Length / 1MB, 1)) -ForegroundColor Cyan

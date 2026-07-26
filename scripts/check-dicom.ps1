@@ -17,13 +17,40 @@
 
   EXIT 0 all checks pass · 1 a check failed (or st2k/magick missing).
       pwsh scripts\check-dicom.ps1
+      pwsh scripts\test-staged-regression.ps1
 #>
-param([int]$Size = 120)
+param(
+    [int]$Size = 120,
+    [string]$St2kPath,
+    [string]$MagickPath
+)
 $ErrorActionPreference = 'Stop'
 
-$st2k = Join-Path (& "$PSScriptRoot\_targetdir.ps1") 'release\st2k.exe'
-if (-not (Test-Path $st2k)) { Write-Host "[dicom] st2k.exe not built" -ForegroundColor Red; exit 1 }
-$magick = (Get-ChildItem 'C:\Program Files\ImageMagick*\magick.exe' -EA SilentlyContinue | Select-Object -First 1).FullName
+if (-not $St2kPath) {
+    $St2kPath = Join-Path (& "$PSScriptRoot\_targetdir.ps1") 'release\st2k.exe'
+}
+if (-not (Test-Path -LiteralPath $St2kPath -PathType Leaf)) {
+    Write-Host "[dicom] st2k.exe not found: $St2kPath" -ForegroundColor Red
+    exit 1
+}
+$st2k = (Resolve-Path -LiteralPath $St2kPath).Path
+
+if (-not $MagickPath) {
+    $adjacentMagick = Join-Path (Split-Path $st2k -Parent) 'magick.exe'
+    if (Test-Path -LiteralPath $adjacentMagick -PathType Leaf) {
+        $MagickPath = $adjacentMagick
+    } else {
+        $MagickPath = (
+            Get-ChildItem 'C:\Program Files\ImageMagick*\magick.exe' -EA SilentlyContinue |
+                Select-Object -First 1
+        ).FullName
+    }
+}
+$magick = if ($MagickPath -and (Test-Path -LiteralPath $MagickPath -PathType Leaf)) {
+    (Resolve-Path -LiteralPath $MagickPath).Path
+} else {
+    $null
+}
 if (-not $magick) { Write-Host "[dicom] ImageMagick not found — .dcm needs the magick tier; skipping check." -ForegroundColor Yellow; exit 0 }
 
 $fix = Join-Path $PSScriptRoot '..\tests\fixtures\dicom'
