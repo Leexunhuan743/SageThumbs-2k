@@ -140,9 +140,7 @@ pub fn extract(bytes: &[u8]) -> Option<DynamicImage> {
     // Per-scanline HAM palettes (SHAM), if present. Only meaningful for HAM.
     let sham_pals = if ham { parse_sham(sham) } else { Vec::new() };
     // EHB: 6 planes with a 32-entry palette (flag, or the classic heuristic).
-    let ehb = !ham
-        && !direct_rgb
-        && ((camg & CAMG_EHB != 0) || (planes == 6 && cmap.len() == 32));
+    let ehb = !ham && !direct_rgb && ((camg & CAMG_EHB != 0) || (planes == 6 && cmap.len() == 32));
 
     let mut img = RgbaImage::new(w, h);
     let mut idx_row = vec![0u32; w as usize]; // colour index per pixel for this row
@@ -163,7 +161,9 @@ pub fn extract(bytes: &[u8]) -> Option<DynamicImage> {
             for plane in 0..planes as usize {
                 let plane_off = row_base + plane * row_bytes;
                 let plane_bytes = raw.get(plane_off..plane_off + row_bytes);
-                let Some(plane_bytes) = plane_bytes else { continue };
+                let Some(plane_bytes) = plane_bytes else {
+                    continue;
+                };
                 for x in 0..w as usize {
                     let bit = (plane_bytes[x >> 3] >> (7 - (x & 7))) & 1;
                     idx_row[x] |= (bit as u32) << plane;
@@ -200,7 +200,11 @@ pub fn extract(bytes: &[u8]) -> Option<DynamicImage> {
         let mut prev = line_pal.first().copied().unwrap_or([0, 0, 0]); // HAM running colour
         for (x, &v) in idx_row.iter().enumerate() {
             let [r, g, b] = if direct_rgb {
-                [(v & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, ((v >> 16) & 0xFF) as u8]
+                [
+                    (v & 0xFF) as u8,
+                    ((v >> 8) & 0xFF) as u8,
+                    ((v >> 16) & 0xFF) as u8,
+                ]
             } else if ham {
                 ham_pixel(v, planes, line_pal, &mut prev)
             } else if ehb {
@@ -263,7 +267,11 @@ fn parse_sham(chunk: Option<&[u8]>) -> Vec<Vec<[u8; 3]>> {
             line.chunks_exact(2)
                 .map(|c| {
                     let v = u16::from_be_bytes([c[0], c[1]]);
-                    let (r, g, b) = (((v >> 8) & 0xF) as u8, ((v >> 4) & 0xF) as u8, (v & 0xF) as u8);
+                    let (r, g, b) = (
+                        ((v >> 8) & 0xF) as u8,
+                        ((v >> 4) & 0xF) as u8,
+                        (v & 0xF) as u8,
+                    );
                     [(r << 4) | r, (g << 4) | g, (b << 4) | b]
                 })
                 .collect()
@@ -343,8 +351,16 @@ mod tests {
     fn decodes_indexed_ilbm() {
         let img = extract(&tiny_ilbm()).expect("decode").to_rgba8();
         assert_eq!((img.width(), img.height()), (2, 1));
-        assert_eq!(img.get_pixel(0, 0).0, [255, 0, 0, 255], "pixel 0 = red (colour 1)");
-        assert_eq!(img.get_pixel(1, 0).0, [0, 0, 0, 255], "pixel 1 = black (colour 0)");
+        assert_eq!(
+            img.get_pixel(0, 0).0,
+            [255, 0, 0, 255],
+            "pixel 0 = red (colour 1)"
+        );
+        assert_eq!(
+            img.get_pixel(1, 0).0,
+            [0, 0, 0, 255],
+            "pixel 1 = black (colour 0)"
+        );
     }
 
     #[test]

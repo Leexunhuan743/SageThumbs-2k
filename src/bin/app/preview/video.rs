@@ -11,8 +11,9 @@ use windows::core::{implement, Result, BSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Media::MediaFoundation::{
     IMFAttributes, IMFMediaEngine, IMFMediaEngineClassFactory, IMFMediaEngineNotify,
-    IMFMediaEngineNotify_Impl, MFCreateAttributes, MFStartup, MFSTARTUP_LITE, MF_MEDIA_ENGINE_CALLBACK,
-    MF_MEDIA_ENGINE_EVENT_CANPLAY, MF_MEDIA_ENGINE_PLAYBACK_HWND, MF_VERSION,
+    IMFMediaEngineNotify_Impl, MFCreateAttributes, MFStartup, MFSTARTUP_LITE,
+    MF_MEDIA_ENGINE_CALLBACK, MF_MEDIA_ENGINE_EVENT_CANPLAY, MF_MEDIA_ENGINE_PLAYBACK_HWND,
+    MF_VERSION,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -66,7 +67,13 @@ fn ensure_mf() {
 /// Create a player for `path`: a `WS_CHILD` render window over `rc` (client coords of `parent`),
 /// with the engine set to render into it. Events post to `viewer` (WM_APP_VIDEO). Autoplay
 /// happens on the CANPLAY event (see [`VideoPlayer::on_event`]).
-pub(super) unsafe fn create(parent: HWND, viewer: HWND, rc: &RECT, hinst: windows::Win32::Foundation::HINSTANCE, path: &str) -> Option<VideoPlayer> {
+pub(super) unsafe fn create(
+    parent: HWND,
+    viewer: HWND,
+    rc: &RECT,
+    hinst: windows::Win32::Foundation::HINSTANCE,
+    path: &str,
+) -> Option<VideoPlayer> {
     // mfplat is delay-loaded (see the build scripts): on a Windows edition without Media
     // Foundation, calling MFStartup would raise a structured exception under `panic = "abort"`.
     // No player here just means the file shows as a card instead of playing.
@@ -91,16 +98,22 @@ pub(super) unsafe fn create(parent: HWND, viewer: HWND, rc: &RECT, hinst: window
     )
     .ok()?;
 
-    let factory: IMFMediaEngineClassFactory =
-        match CoCreateInstance(&CLSID_MF_MEDIA_ENGINE_CLASS_FACTORY, None, CLSCTX_INPROC_SERVER) {
-            Ok(f) => f,
-            Err(_) => {
-                let _ = DestroyWindow(child);
-                return None;
-            }
-        };
+    let factory: IMFMediaEngineClassFactory = match CoCreateInstance(
+        &CLSID_MF_MEDIA_ENGINE_CLASS_FACTORY,
+        None,
+        CLSCTX_INPROC_SERVER,
+    ) {
+        Ok(f) => f,
+        Err(_) => {
+            let _ = DestroyWindow(child);
+            return None;
+        }
+    };
 
-    let notify: IMFMediaEngineNotify = Notify { hwnd: viewer.0 as isize }.into();
+    let notify: IMFMediaEngineNotify = Notify {
+        hwnd: viewer.0 as isize,
+    }
+    .into();
     let mut attrs: Option<IMFAttributes> = None;
     if MFCreateAttributes(&mut attrs, 2).is_err() {
         let _ = DestroyWindow(child);
@@ -124,7 +137,11 @@ pub(super) unsafe fn create(parent: HWND, viewer: HWND, rc: &RECT, hinst: window
         let _ = DestroyWindow(child);
         return None;
     }
-    Some(VideoPlayer { engine, child, _notify: notify })
+    Some(VideoPlayer {
+        engine,
+        child,
+        _notify: notify,
+    })
 }
 
 impl VideoPlayer {

@@ -110,8 +110,12 @@ struct Attrs {
 /// lands mid-chunk and every subsequent field is garbage.
 fn sub_blocks(b: &[u8], content: usize, end: usize) -> Vec<(u16, usize, usize)> {
     let mut out = Vec::new();
-    let Some(chunk) = read_u32(b, content) else { return out };
-    let Some(mut p) = content.checked_add(chunk as usize) else { return out };
+    let Some(chunk) = read_u32(b, content) else {
+        return out;
+    };
+    let Some(mut p) = content.checked_add(chunk as usize) else {
+        return out;
+    };
     // A malformed chunk length could point past `end`; the loop guard catches that.
     while p + BLOCK_PREFIX <= end && out.len() < 64 {
         if b.get(p..p + 4) != Some(&BK[..]) {
@@ -120,7 +124,9 @@ fn sub_blocks(b: &[u8], content: usize, end: usize) -> Vec<(u16, usize, usize)> 
         let id = u16::from_le_bytes([b[p + 4], b[p + 5]]);
         let len = u32::from_le_bytes([b[p + 6], b[p + 7], b[p + 8], b[p + 9]]) as usize;
         let c = p + BLOCK_PREFIX;
-        let Some(next) = c.checked_add(len) else { break };
+        let Some(next) = c.checked_add(len) else {
+            break;
+        };
         if next > end {
             break;
         }
@@ -179,7 +185,12 @@ pub fn extract_best(bytes: &[u8]) -> Option<crate::container::CoverOut> {
                 else {
                     continue;
                 };
-                attrs.push(Attrs { w, h, depth, compression });
+                attrs.push(Attrs {
+                    w,
+                    h,
+                    depth,
+                    compression,
+                });
             }
             JPEG_SUBBLOCK => jpegs.push(c),
             COMPOSITE_IMAGE_BLOCK => planes.push((c, len)),
@@ -205,7 +216,11 @@ pub fn extract_best(bytes: &[u8]) -> Option<crate::container::CoverOut> {
     // `planes` are each in bank order, and attributes are too, so the Nth attributes entry of a
     // given storage kind lines up with the Nth block of that kind.
     if a.compression == COMP_JPEG {
-        let rank = attrs.iter().take(want).filter(|x| x.compression == COMP_JPEG).count();
+        let rank = attrs
+            .iter()
+            .take(want)
+            .filter(|x| x.compression == COMP_JPEG)
+            .count();
         if let Some(&c) = jpegs.get(rank) {
             // The JPEG sub-block content is chunk(4) then the JPEG stream.
             let chunk = read_u32(bytes, c)? as usize;
@@ -219,7 +234,11 @@ pub fn extract_best(bytes: &[u8]) -> Option<crate::container::CoverOut> {
         return None;
     }
 
-    let rank = attrs.iter().take(want).filter(|x| x.compression != COMP_JPEG).count();
+    let rank = attrs
+        .iter()
+        .take(want)
+        .filter(|x| x.compression != COMP_JPEG)
+        .count();
     let &(pc, plen) = planes.get(rank)?;
     decode_channels(bytes, pc, plen, &a).map(crate::container::CoverOut::Image)
 }
@@ -380,7 +399,7 @@ mod tests {
         f.extend_from_slice(&[0u8; 32 - SIG.len()]); // pad signature to 32
         f.extend_from_slice(&8u16.to_le_bytes()); // major
         f.extend_from_slice(&0u16.to_le_bytes()); // minor
-        // Decoy block (General Image Attributes, id 0) of 4 bytes.
+                                                  // Decoy block (General Image Attributes, id 0) of 4 bytes.
         f.extend_from_slice(&BK);
         f.extend_from_slice(&0u16.to_le_bytes());
         f.extend_from_slice(&4u32.to_le_bytes());
@@ -430,11 +449,22 @@ mod tests {
         let d = image::load_from_memory(&bytes).expect("valid JPEG");
         assert_eq!((d.width(), d.height()), (40, 24));
 
-        for ext in ["pspimage", "psp", "pspbrush", "pspframe", "psptube", "pspshape",
-                    "pspselection", "pspmask"] {
+        for ext in [
+            "pspimage",
+            "psp",
+            "pspbrush",
+            "pspframe",
+            "psptube",
+            "pspshape",
+            "pspselection",
+            "pspmask",
+        ] {
             assert!(crate::formats::is_known(ext), "{ext} must be registered");
             // Mixed case must match too — Explorer hands us whatever case is on disk.
-            assert!(crate::formats::is_known(&ext.to_ascii_uppercase()), "{ext} uppercase");
+            assert!(
+                crate::formats::is_known(&ext.to_ascii_uppercase()),
+                "{ext} uppercase"
+            );
         }
     }
 
@@ -455,11 +485,16 @@ mod tests {
     fn decodes_real_psp_family_samples_via_lz77() {
         let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-corpus");
         // (file, expected dimensions, expected mostly-white background)
-        let cases = [("blob.PspBrush", 300u32, 300u32), ("countdown.PspTube", 900, 900)];
+        let cases = [
+            ("blob.PspBrush", 300u32, 300u32),
+            ("countdown.PspTube", 900, 900),
+        ];
         let mut ran = 0;
         for (name, w, h) in cases {
             let p = corpus.join(name);
-            let Ok(bytes) = std::fs::read(&p) else { continue };
+            let Ok(bytes) = std::fs::read(&p) else {
+                continue;
+            };
             ran += 1;
             let cover = crate::container::extract_cover(&bytes)
                 .unwrap_or_else(|| panic!("{name}: no cover extracted"));
@@ -469,7 +504,8 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{name}: carved bytes not decodable: {e}")),
             };
             assert_eq!(
-                (img.width(), img.height()), (w, h),
+                (img.width(), img.height()),
+                (w, h),
                 "{name}: wrong dimensions - a tube regressing to 80x80 means the JPEG carve \
                  won again and the full composite was skipped",
             );
@@ -482,7 +518,10 @@ mod tests {
                 "{name}: top-left should be near-white background, got {corner:?}",
             );
             let dark = rgb.pixels().filter(|p| p.0.iter().all(|&c| c < 64)).count();
-            assert!(dark > 1000, "{name}: expected substantial dark artwork, got {dark} px");
+            assert!(
+                dark > 1000,
+                "{name}: expected substantial dark artwork, got {dark} px"
+            );
         }
         if ran == 0 {
             // Loud on purpose: a silently-skipping test is one that can rot unnoticed. This
@@ -522,6 +561,10 @@ mod tests {
         let psp = fake_psp(&both);
         let got = extract(&psp).expect("a JPEG");
         let d = image::load_from_memory(&got).unwrap();
-        assert_eq!((d.width(), d.height()), (200, 150), "should pick the larger composite");
+        assert_eq!(
+            (d.width(), d.height()),
+            (200, 150),
+            "should pick the larger composite"
+        );
     }
 }

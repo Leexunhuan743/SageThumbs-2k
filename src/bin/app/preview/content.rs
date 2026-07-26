@@ -9,8 +9,8 @@ use core::time::Duration;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, CreateSolidBrush, DeleteDC, DeleteObject, FillRect,
-    SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HALFTONE,
-    HBITMAP, HDC, SRCCOPY,
+    SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+    HALFTONE, HBITMAP, HDC, SRCCOPY,
 };
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
@@ -52,7 +52,11 @@ pub(super) fn classify(path: &str) -> ContentKind {
     if p.is_dir() {
         return ContentKind::InfoCard;
     }
-    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     // Markdown (rendered) + text/code, ahead of the image path (a `.md`/`.txt` is never an image).
     if settings::preview_markdown() && formats::is_preview_markdown(&ext) {
         return ContentKind::Markdown;
@@ -78,7 +82,10 @@ pub(super) fn classify(path: &str) -> ContentKind {
         // Video AND audio play in-viewer via the shared Media-Foundation engine + transport strip
         // (audio is a video with no picture — same seek/volume/play controls). Everything else
         // (documents, images, incl. embedded album art) takes the decoded-image path.
-        if matches!(formats::category(&ext), formats::Category::Video | formats::Category::Audio) {
+        if matches!(
+            formats::category(&ext),
+            formats::Category::Video | formats::Category::Audio
+        ) {
             return ContentKind::Video;
         }
         return ContentKind::Image;
@@ -125,8 +132,24 @@ pub(super) fn read_doc(path: &str) -> Option<String> {
 pub(super) fn is_archive_ext(ext: &str) -> bool {
     matches!(
         ext,
-        "zip" | "7z" | "rar" | "jar" | "apk" | "war" | "xpi" | "whl" | "nupkg" | "vsix" | "ipa"
-            | "aar" | "appx" | "msix" | "appxbundle" | "msixbundle" | "xapk" | "oxt"
+        "zip"
+            | "7z"
+            | "rar"
+            | "jar"
+            | "apk"
+            | "war"
+            | "xpi"
+            | "whl"
+            | "nupkg"
+            | "vsix"
+            | "ipa"
+            | "aar"
+            | "appx"
+            | "msix"
+            | "appxbundle"
+            | "msixbundle"
+            | "xapk"
+            | "oxt"
     )
 }
 
@@ -152,7 +175,10 @@ pub(super) fn archive_listing(path: &str) -> Option<String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let mut out = format!("{name}\n{files} file(s) · {} uncompressed\n\n", human_size(total));
+    let mut out = format!(
+        "{name}\n{files} file(s) · {} uncompressed\n\n",
+        human_size(total)
+    );
     for (n, sz, is_dir) in &entries {
         if *is_dir {
             out.push_str(&format!("             {}/\n", n.trim_end_matches('/')));
@@ -201,7 +227,11 @@ fn read_capped(path: &str, cap: usize) -> Option<(Vec<u8>, bool)> {
 
 /// Two consecutive NUL bytes in the first 16 KB = binary (matches the plan's sniff).
 fn is_binary(bytes: &[u8]) -> bool {
-    bytes.iter().take(16 * 1024).zip(bytes.iter().skip(1)).any(|(a, b)| *a == 0 && *b == 0)
+    bytes
+        .iter()
+        .take(16 * 1024)
+        .zip(bytes.iter().skip(1))
+        .any(|(a, b)| *a == 0 && *b == 0)
 }
 
 /// Decode bytes to a String: honor a UTF-16 LE/BE or UTF-8 BOM, otherwise UTF-8 lossy (covers
@@ -211,11 +241,17 @@ fn decode_text(bytes: &[u8]) -> String {
         return String::from_utf8_lossy(rest).into_owned();
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let u: Vec<u16> = rest.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let u: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
         return String::from_utf16_lossy(&u);
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let u: Vec<u16> = rest.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let u: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
         return String::from_utf16_lossy(&u);
     }
     String::from_utf8_lossy(bytes).into_owned()
@@ -265,7 +301,14 @@ pub(super) unsafe fn spawn_decode(hwnd: HWND, path: String, gen: u64) {
                 if let Some(frames) = super::anim::decode_animation(bytes, &ext) {
                     let payload: Box<(u64, Vec<(DecodedRgba, u32)>)> = Box::new((gen, frames));
                     let raw = Box::into_raw(payload);
-                    if PostMessageW(Some(hwnd), WM_APP_ANIM, WPARAM(gen as usize), LPARAM(raw as isize)).is_err() {
+                    if PostMessageW(
+                        Some(hwnd),
+                        WM_APP_ANIM,
+                        WPARAM(gen as usize),
+                        LPARAM(raw as isize),
+                    )
+                    .is_err()
+                    {
                         drop(Box::from_raw(raw));
                     }
                     return;
@@ -275,7 +318,14 @@ pub(super) unsafe fn spawn_decode(hwnd: HWND, path: String, gen: u64) {
         let decoded = bytes.and_then(decode_loaded);
         let payload: Box<(u64, Option<DecodedRgba>)> = Box::new((gen, decoded));
         let raw = Box::into_raw(payload);
-        if PostMessageW(Some(hwnd), WM_APP_RENDER, WPARAM(gen as usize), LPARAM(raw as isize)).is_err() {
+        if PostMessageW(
+            Some(hwnd),
+            WM_APP_RENDER,
+            WPARAM(gen as usize),
+            LPARAM(raw as isize),
+        )
+        .is_err()
+        {
             // Window died between the decode and the post — reclaim the box so it can't leak.
             drop(Box::from_raw(raw));
         }
@@ -300,22 +350,34 @@ pub(super) unsafe fn spawn_md_img(hwnd: HWND, src: String, gen: u64) {
     let hwnd_raw = hwnd.0 as isize;
     std::thread::spawn(move || {
         let hwnd = HWND(hwnd_raw as *mut c_void);
-        let decoded = crate::sponsors::http_fetch_capped(&src, false, MD_IMG_MAX_BYTES, MD_IMG_TIMEOUT_SECS)
-            .and_then(decode_preview_budgeted)
-            .map(|img| {
-                // Same display-cap policy as local markdown images (bounds the cached DIB).
-                let img = if img.width() > 2048 || img.height() > 4096 {
-                    img.thumbnail(2048, 4096)
-                } else {
-                    img
-                };
-                let rgba = img.to_rgba8();
-                let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-                DecodedRgba { w, h, rgba: rgba.into_raw() }
-            });
+        let decoded =
+            crate::sponsors::http_fetch_capped(&src, false, MD_IMG_MAX_BYTES, MD_IMG_TIMEOUT_SECS)
+                .and_then(decode_preview_budgeted)
+                .map(|img| {
+                    // Same display-cap policy as local markdown images (bounds the cached DIB).
+                    let img = if img.width() > 2048 || img.height() > 4096 {
+                        img.thumbnail(2048, 4096)
+                    } else {
+                        img
+                    };
+                    let rgba = img.to_rgba8();
+                    let (w, h) = (rgba.width() as i32, rgba.height() as i32);
+                    DecodedRgba {
+                        w,
+                        h,
+                        rgba: rgba.into_raw(),
+                    }
+                });
         let payload: Box<(u64, String, Option<DecodedRgba>)> = Box::new((gen, src, decoded));
         let raw = Box::into_raw(payload);
-        if PostMessageW(Some(hwnd), super::window::WM_APP_MDIMG, WPARAM(gen as usize), LPARAM(raw as isize)).is_err() {
+        if PostMessageW(
+            Some(hwnd),
+            super::window::WM_APP_MDIMG,
+            WPARAM(gen as usize),
+            LPARAM(raw as isize),
+        )
+        .is_err()
+        {
             drop(Box::from_raw(raw)); // window died before the post — reclaim
         }
     });
@@ -335,7 +397,11 @@ pub(super) unsafe fn spawn_decode_pdf(hwnd: HWND, path: String, page: u32, gen: 
                 let d = image::load_from_memory(&png).ok().map(|img| {
                     let rgba = img.to_rgba8();
                     let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-                    DecodedRgba { w, h, rgba: rgba.into_raw() }
+                    DecodedRgba {
+                        w,
+                        h,
+                        rgba: rgba.into_raw(),
+                    }
                 });
                 (d, Some(count))
             }
@@ -344,13 +410,27 @@ pub(super) unsafe fn spawn_decode_pdf(hwnd: HWND, path: String, page: u32, gen: 
         if let Some(c) = count {
             let cb: Box<(u64, u32)> = Box::new((gen, c));
             let raw = Box::into_raw(cb);
-            if PostMessageW(Some(hwnd), WM_APP_PDFINFO, WPARAM(gen as usize), LPARAM(raw as isize)).is_err() {
+            if PostMessageW(
+                Some(hwnd),
+                WM_APP_PDFINFO,
+                WPARAM(gen as usize),
+                LPARAM(raw as isize),
+            )
+            .is_err()
+            {
                 drop(Box::from_raw(raw));
             }
         }
         let payload: Box<(u64, Option<DecodedRgba>)> = Box::new((gen, rgba));
         let raw = Box::into_raw(payload);
-        if PostMessageW(Some(hwnd), WM_APP_RENDER, WPARAM(gen as usize), LPARAM(raw as isize)).is_err() {
+        if PostMessageW(
+            Some(hwnd),
+            WM_APP_RENDER,
+            WPARAM(gen as usize),
+            LPARAM(raw as isize),
+        )
+        .is_err()
+        {
             drop(Box::from_raw(raw));
         }
     });
@@ -368,7 +448,11 @@ fn decode_loaded(bytes: Vec<u8>) -> Option<DecodedRgba> {
     let img = decode_preview_budgeted(bytes)?;
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-    Some(DecodedRgba { w, h, rgba: rgba.into_raw() })
+    Some(DecodedRgba {
+        w,
+        h,
+        rgba: rgba.into_raw(),
+    })
 }
 
 /// Run `decode::decode_preview` on a detached sub-thread, returning its result only if it
@@ -445,7 +529,14 @@ pub(super) fn fit_scale(iw: i32, ih: i32, cw: i32, ch: i32) -> f64 {
 /// Paint the image `rd` into `rc`, letterboxed with `bg`, at `zoom`x the aspect-fit scale and
 /// offset by `pan` (device px). `zoom == 1.0`, `pan == (0,0)` is the plain aspect-fit centered
 /// draw. Ported from `previewhandler::draw` (fill = letterbox, then `HALFTONE` `StretchBlt`).
-pub(super) unsafe fn paint_image(hdc: HDC, rc: &RECT, rd: &RenderData, bg: u32, zoom: f64, pan: (i32, i32)) {
+pub(super) unsafe fn paint_image(
+    hdc: HDC,
+    rc: &RECT,
+    rd: &RenderData,
+    bg: u32,
+    zoom: f64,
+    pan: (i32, i32),
+) {
     let brush = CreateSolidBrush(COLORREF(bg));
     FillRect(hdc, rc, brush);
     let _ = DeleteObject(brush.into());
@@ -464,7 +555,19 @@ pub(super) unsafe fn paint_image(hdc: HDC, rc: &RECT, rd: &RenderData, bg: u32, 
     let memdc = CreateCompatibleDC(Some(hdc));
     let old = SelectObject(memdc, rd.hbmp.into());
     SetStretchBltMode(hdc, HALFTONE);
-    let _ = StretchBlt(hdc, dx, dy, dw, dh, Some(memdc), 0, 0, rd.iw, rd.ih, SRCCOPY);
+    let _ = StretchBlt(
+        hdc,
+        dx,
+        dy,
+        dw,
+        dh,
+        Some(memdc),
+        0,
+        0,
+        rd.iw,
+        rd.ih,
+        SRCCOPY,
+    );
     SelectObject(memdc, old);
     let _ = DeleteDC(memdc);
 }

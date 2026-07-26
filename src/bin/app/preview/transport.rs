@@ -1,18 +1,14 @@
 //! Video/audio transport strip: seek track + volume slider + time.
 
-
-use windows::Win32::Foundation::{
-    COLORREF, HWND, POINT, RECT,
-};
+use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, FillRect,
-    InvalidateRect, LineTo, MoveToEx, Polygon, Polyline, SelectObject, SetBkMode,
-    SetTextColor, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HDC, HGDIOBJ,
-    PS_SOLID, TRANSPARENT,
+    CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, FillRect, InvalidateRect,
+    LineTo, MoveToEx, Polygon, Polyline, SelectObject, SetBkMode, SetTextColor, DT_LEFT,
+    DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HDC, HGDIOBJ, PS_SOLID, TRANSPARENT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
 
-use super::window::{state, content_rect, SCRUB_H};
+use super::window::{content_rect, state, SCRUB_H};
 
 pub(super) unsafe fn video_rect(hwnd: HWND) -> RECT {
     let mut r = content_rect(hwnd);
@@ -24,7 +20,12 @@ pub(super) unsafe fn video_rect(hwnd: HWND) -> RECT {
 pub(super) unsafe fn scrub_rect(hwnd: HWND) -> RECT {
     let c = content_rect(hwnd);
     let h = crate::win::dpi_scale(hwnd, SCRUB_H);
-    RECT { left: c.left, top: c.bottom - h, right: c.right, bottom: c.bottom }
+    RECT {
+        left: c.left,
+        top: c.bottom - h,
+        right: c.right,
+        bottom: c.bottom,
+    }
 }
 
 /// The seek-track and volume-slider sub-rects inside the strip (device px). The play/pause
@@ -51,7 +52,12 @@ pub(super) unsafe fn scrub_parts(hwnd: HWND, sr: &RECT) -> (RECT, RECT, RECT) {
         right: sr.right - pad,
         bottom: midy + th / 2,
     };
-    let play = RECT { left: sr.left + pad, top: sr.top, right: sr.left + pad + btn, bottom: sr.bottom };
+    let play = RECT {
+        left: sr.left + pad,
+        top: sr.top,
+        right: sr.left + pad + btn,
+        bottom: sr.bottom,
+    };
     (play, track, vol)
 }
 
@@ -119,7 +125,12 @@ pub(super) unsafe fn draw_slider(hdc: HDC, rc: &RECT, frac: f64, accent: u32, gr
     let _ = DeleteObject(gb.into());
     let w = (rc.right - rc.left).max(1);
     let px = rc.left + (frac * w as f64) as i32;
-    let prog = RECT { left: rc.left, top: rc.top, right: px, bottom: rc.bottom };
+    let prog = RECT {
+        left: rc.left,
+        top: rc.top,
+        right: px,
+        bottom: rc.bottom,
+    };
     let ab = CreateSolidBrush(COLORREF(accent));
     FillRect(hdc, &prog, ab);
     let midy = (rc.top + rc.bottom) / 2;
@@ -132,7 +143,14 @@ pub(super) unsafe fn draw_slider(hdc: HDC, rc: &RECT, frac: f64, accent: u32, gr
 
 /// Paint the video transport strip: bg band + hairline, play/pause glyph, `m:ss / m:ss`, seek
 /// track + thumb, speaker glyph + volume slider. All GDI + existing `dark.rs` colours.
-pub(super) unsafe fn draw_scrub_strip(hwnd: HWND, hdc: HDC, sr: &RECT, v: &super::video::VideoPlayer, text: u32, subtle: u32) {
+pub(super) unsafe fn draw_scrub_strip(
+    hwnd: HWND,
+    hdc: HDC,
+    sr: &RECT,
+    v: &super::video::VideoPlayer,
+    text: u32,
+    subtle: u32,
+) {
     let sc = |val: i32| crate::win::dpi_scale(hwnd, val);
     let bg = CreateSolidBrush(COLORREF(crate::dark::DARK_BG().0));
     FillRect(hdc, sr, bg);
@@ -158,16 +176,32 @@ pub(super) unsafe fn draw_scrub_strip(hwnd: HWND, hdc: HDC, sr: &RECT, v: &super
     if v.is_paused() {
         let s = sc(6);
         let tri = [
-            POINT { x: cx - s / 2, y: midy - s },
-            POINT { x: cx - s / 2, y: midy + s },
+            POINT {
+                x: cx - s / 2,
+                y: midy - s,
+            },
+            POINT {
+                x: cx - s / 2,
+                y: midy + s,
+            },
             POINT { x: cx + s, y: midy },
         ];
         let _ = Polygon(hdc, &tri);
     } else {
         let s = sc(5);
         let b = sc(3);
-        let l = RECT { left: cx - s, top: midy - s - 1, right: cx - s + b, bottom: midy + s + 1 };
-        let r = RECT { left: cx + s - b, top: midy - s - 1, right: cx + s, bottom: midy + s + 1 };
+        let l = RECT {
+            left: cx - s,
+            top: midy - s - 1,
+            right: cx - s + b,
+            bottom: midy + s + 1,
+        };
+        let r = RECT {
+            left: cx + s - b,
+            top: midy - s - 1,
+            right: cx + s,
+            bottom: midy + s + 1,
+        };
         FillRect(hdc, &l, fill);
         FillRect(hdc, &r, fill);
     }
@@ -185,32 +219,74 @@ pub(super) unsafe fn draw_scrub_strip(hwnd: HWND, hdc: HDC, sr: &RECT, v: &super
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(subtle));
     let mut w: Vec<u16> = label.encode_utf16().collect();
-    let mut tr = RECT { left: play.right + sc(6), top: sr.top, right: track.left - sc(6), bottom: sr.bottom };
-    DrawTextW(hdc, &mut w, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    let mut tr = RECT {
+        left: play.right + sc(6),
+        top: sr.top,
+        right: track.left - sc(6),
+        bottom: sr.bottom,
+    };
+    DrawTextW(
+        hdc,
+        &mut w,
+        &mut tr,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+    );
     SelectObject(hdc, oldf);
 
     // seek track + progress + thumb
-    let frac = if dur.is_finite() && dur > 0.0 { (cur / dur).clamp(0.0, 1.0) } else { 0.0 };
+    let frac = if dur.is_finite() && dur > 0.0 {
+        (cur / dur).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     draw_slider(hdc, &track, frac, accent, border);
 
     // speaker glyph (outline) + volume slider
     let spk = sc(22);
     let sx = vol.left - spk + sc(3);
-    let spen = CreatePen(PS_SOLID, sc(2), COLORREF(if v.muted() { subtle } else { text }));
+    let spen = CreatePen(
+        PS_SOLID,
+        sc(2),
+        COLORREF(if v.muted() { subtle } else { text }),
+    );
     let sob = SelectObject(hdc, HGDIOBJ(spen.0));
     let cone = [
-        POINT { x: sx, y: midy - sc(2) },
-        POINT { x: sx + sc(4), y: midy - sc(2) },
-        POINT { x: sx + sc(8), y: midy - sc(5) },
-        POINT { x: sx + sc(8), y: midy + sc(5) },
-        POINT { x: sx + sc(4), y: midy + sc(2) },
-        POINT { x: sx, y: midy + sc(2) },
-        POINT { x: sx, y: midy - sc(2) },
+        POINT {
+            x: sx,
+            y: midy - sc(2),
+        },
+        POINT {
+            x: sx + sc(4),
+            y: midy - sc(2),
+        },
+        POINT {
+            x: sx + sc(8),
+            y: midy - sc(5),
+        },
+        POINT {
+            x: sx + sc(8),
+            y: midy + sc(5),
+        },
+        POINT {
+            x: sx + sc(4),
+            y: midy + sc(2),
+        },
+        POINT {
+            x: sx,
+            y: midy + sc(2),
+        },
+        POINT {
+            x: sx,
+            y: midy - sc(2),
+        },
     ];
     let _ = Polyline(hdc, &cone);
     SelectObject(hdc, sob);
     let _ = DeleteObject(HGDIOBJ(spen.0));
-    let vfrac = if v.muted() { 0.0 } else { v.volume().clamp(0.0, 1.0) };
+    let vfrac = if v.muted() {
+        0.0
+    } else {
+        v.volume().clamp(0.0, 1.0)
+    };
     draw_slider(hdc, &vol, vfrac, accent, border);
 }
-

@@ -78,4 +78,3 @@ pub(super) unsafe fn is_checked(list: HWND, item: i32) -> bool {
     );
     (st.0 as u32 & 0x3000) == CHECKED
 }
-

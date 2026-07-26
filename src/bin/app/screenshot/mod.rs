@@ -22,12 +22,12 @@ mod upload;
 mod window_shot;
 
 pub(crate) use daemon::run_daemon;
-pub(crate) use window_shot::{capture_hwnd_to_png, downscale_to_width, encode_gif};
 pub(crate) use enable::{
     heal_if_wanted, is_daemon_running, is_enabled, quit, reload_hotkey, set_enabled,
 };
 pub(crate) use overlay::{capture_instant, run_capture, run_capture_automation};
 pub(crate) use upload::{open_hosts_config, run_upload, run_upload_keep};
+pub(crate) use window_shot::{capture_hwnd_to_png, downscale_to_width, encode_gif};
 
 /// The folder Ctrl+S auto-saves to when the "fixed save folder" option is on: the
 /// user's configured folder, or the Desktop when unset — so the default follows the

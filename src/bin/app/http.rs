@@ -15,17 +15,18 @@ use std::ffi::c_void;
 use windows::core::PCWSTR;
 use windows::Win32::Networking::WinInet::{
     HttpOpenRequestW, HttpQueryInfoW, HttpSendRequestW, InternetCloseHandle, InternetConnectW,
-    InternetOpenW, InternetSetOptionW, HTTP_QUERY_FLAG_NUMBER, HTTP_QUERY_STATUS_CODE,
-    INTERNET_FLAG_NO_CACHE_WRITE, INTERNET_FLAG_PRAGMA_NOCACHE, INTERNET_FLAG_RELOAD,
-    INTERNET_FLAG_SECURE, INTERNET_OPTION_CONNECT_TIMEOUT, INTERNET_OPTION_RECEIVE_TIMEOUT,
-    INTERNET_OPTION_SEND_TIMEOUT, INTERNET_SERVICE_HTTP,
+    InternetOpenW, InternetSetOptionW, HTTP_QUERY_ETAG, HTTP_QUERY_FLAG_NUMBER,
+    HTTP_QUERY_STATUS_CODE, INTERNET_FLAG_NO_CACHE_WRITE, INTERNET_FLAG_PRAGMA_NOCACHE,
+    INTERNET_FLAG_RELOAD, INTERNET_FLAG_SECURE, INTERNET_OPTION_CONNECT_TIMEOUT,
+    INTERNET_OPTION_RECEIVE_TIMEOUT, INTERNET_OPTION_SEND_TIMEOUT, INTERNET_SERVICE_HTTP,
 };
 
 use crate::win::{wide, wininet_drain};
 
-/// A completed HTTPS response: the numeric status code plus the (capped) body bytes.
+/// A completed HTTPS response: status, ETag (when present), and capped body.
 pub(crate) struct Resp {
     pub status: u16,
+    pub etag: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -161,10 +162,11 @@ unsafe fn request_raw(
 
     let resp = if sent {
         let status = query_status(req).unwrap_or(0);
+        let etag = query_text_header(req, HTTP_QUERY_ETAG);
         // `wininet_drain` returns Some(empty) for a 0-byte body (e.g. 204), None only on
         // a read error or an over-cap body — either way we still hand back the status.
         let body = wininet_drain(req, max_resp).unwrap_or_default();
-        Some(Resp { status, body })
+        Some(Resp { status, etag, body })
     } else {
         None
     };
@@ -189,6 +191,27 @@ unsafe fn query_status(req: *mut c_void) -> Option<u16> {
     )
     .ok()?;
     Some(code as u16)
+}
+
+/// Read a short response header such as ETag. The locker ETag is only a quoted
+/// integer, so a fixed buffer keeps this minimal and avoids a probing call.
+unsafe fn query_text_header(req: *mut c_void, query: u32) -> Option<String> {
+    let mut buf = [0u16; 128];
+    let mut len = std::mem::size_of_val(&buf) as u32;
+    HttpQueryInfoW(
+        req,
+        query,
+        Some(buf.as_mut_ptr() as *mut c_void),
+        &mut len,
+        None,
+    )
+    .ok()?;
+    let chars = (len as usize / std::mem::size_of::<u16>()).min(buf.len());
+    let value = String::from_utf16_lossy(&buf[..chars])
+        .trim_end_matches('\0')
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 #[cfg(test)]

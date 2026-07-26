@@ -120,9 +120,7 @@ pub fn read_stream(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
         if (2..=64).contains(&name_len) {
             let chars = (name_len / 2).saturating_sub(1);
             let nm: String = (0..chars)
-                .filter_map(|c| {
-                    char::from_u32(u16::from_le_bytes([e[c * 2], e[c * 2 + 1]]) as u32)
-                })
+                .filter_map(|c| char::from_u32(u16::from_le_bytes([e[c * 2], e[c * 2 + 1]]) as u32))
                 .collect();
             if nm == name {
                 target = Some((start, size));

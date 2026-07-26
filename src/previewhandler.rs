@@ -21,9 +21,10 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
-use windows_implement::implement;
-use windows::core::{Error, Interface, Ref, Result, GUID, IUnknown};
-use windows::Win32::Foundation::{COLORREF, E_FAIL, E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::core::{Error, IUnknown, Interface, Ref, Result, GUID};
+use windows::Win32::Foundation::{
+    COLORREF, E_FAIL, E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateSolidBrush, DeleteDC, DeleteObject,
     EndPaint, FillRect, InvalidateRect, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO,
@@ -31,18 +32,20 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Com::{CoTaskMemFree, IStream, STATFLAG_DEFAULT, STATSTG};
 use windows::Win32::System::Ole::{IObjectWithSite, IObjectWithSite_Impl};
-use windows::Win32::UI::Shell::PropertiesSystem::{IInitializeWithStream, IInitializeWithStream_Impl};
+use windows::Win32::UI::Shell::PropertiesSystem::{
+    IInitializeWithStream, IInitializeWithStream_Impl,
+};
 use windows::Win32::UI::Shell::{
-    IPreviewHandler, IPreviewHandler_Impl, IPreviewHandlerVisuals, IPreviewHandlerVisuals_Impl,
+    IPreviewHandler, IPreviewHandlerVisuals, IPreviewHandlerVisuals_Impl, IPreviewHandler_Impl,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-    GetMessageW, GetWindowLongPtrW, LoadCursorW, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassW, SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-    GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_APP, WM_ERASEBKGND,
-    WM_NCDESTROY, WM_PAINT, WM_PRINTCLIENT, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
+    GetWindowLongPtrW, LoadCursorW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassW,
+    SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+    IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_APP, WM_ERASEBKGND, WM_NCDESTROY, WM_PAINT,
+    WM_PRINTCLIENT, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
+use windows_implement::implement;
 
 /// Posted to our preview window to ask its OWNING (dedicated UI) thread to destroy it on that
 /// thread — a same-thread DestroyWindow that the thread's own message loop services instantly.
@@ -106,14 +109,19 @@ struct RenderData {
     bg: u32,
 }
 
-#[implement(IInitializeWithStream, IObjectWithSite, IPreviewHandler, IPreviewHandlerVisuals)]
+#[implement(
+    IInitializeWithStream,
+    IObjectWithSite,
+    IPreviewHandler,
+    IPreviewHandlerVisuals
+)]
 pub struct PreviewHandler {
     _ref: crate::ModuleRef,
     stream: RefCell<Option<IStream>>,
     site: RefCell<Option<IUnknown>>,
     parent: Cell<isize>, // host parent HWND (as isize, so the struct stays Cell-friendly)
     rect: Cell<RECT>,
-    bg: Cell<u32>, // COLORREF value the host gave us (0x00BBGGRR)
+    bg: Cell<u32>,     // COLORREF value the host gave us (0x00BBGGRR)
     hwnd: Cell<isize>, // our child window (owned by `ui_thread`)
     /// The DEDICATED UI thread that creates, OWNS, and pumps messages for the preview window.
     /// prevhost's COM apartment thread does NOT pump window messages while idle, so a window on
@@ -152,7 +160,10 @@ impl IInitializeWithStream_Impl for PreviewHandler_Impl {
     fn Initialize(&self, pstream: Ref<'_, IStream>, _grfmode: u32) -> Result<()> {
         safety::guard(|| {
             let stream = pstream.ok()?;
-            *self.stream.try_borrow_mut().map_err(|_| Error::from(E_FAIL))? = Some(stream.clone());
+            *self
+                .stream
+                .try_borrow_mut()
+                .map_err(|_| Error::from(E_FAIL))? = Some(stream.clone());
             Ok(())
         })
     }
@@ -244,7 +255,10 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
                 // Decode bytes OFF the host thread under a wall-clock budget so a
                 // slow/exotic decode can't freeze the preview host's message pump.
                 Ok(StreamSource::Bytes(bytes)) => {
-                    safety::log_debug(&format!("DoPreview: read {} bytes from stream", bytes.len()));
+                    safety::log_debug(&format!(
+                        "DoPreview: read {} bytes from stream",
+                        bytes.len()
+                    ));
                     decode_preview_budgeted(bytes)
                 }
                 // A generic archive's contact sheet: the covers are ordinary
@@ -261,15 +275,21 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
                 Err(_) => None,
             };
             match &decoded {
-                Some(img) => {
-                    safety::log_debug(&format!("DoPreview: decoded {}x{}", img.width(), img.height()))
-                }
+                Some(img) => safety::log_debug(&format!(
+                    "DoPreview: decoded {}x{}",
+                    img.width(),
+                    img.height()
+                )),
                 None => safety::log_debug("DoPreview: decode failed/timed out -> blank pane"),
             }
             *self.pixels.borrow_mut() = decoded.map(|img| {
                 let rgba = img.to_rgba8();
                 let (w, h) = (rgba.width(), rgba.height());
-                DecodedRgba { w, h, rgba: rgba.into_raw() }
+                DecodedRgba {
+                    w,
+                    h,
+                    rgba: rgba.into_raw(),
+                }
             });
             // Hand the decoded pixels to the window-owning UI thread, which builds the DIB + paints
             // there (rendering on this COM thread would race the UI thread's WM_PAINT).
@@ -304,7 +324,10 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
         })
     }
 
-    fn TranslateAccelerator(&self, _pmsg: *const windows::Win32::UI::WindowsAndMessaging::MSG) -> Result<()> {
+    fn TranslateAccelerator(
+        &self,
+        _pmsg: *const windows::Win32::UI::WindowsAndMessaging::MSG,
+    ) -> Result<()> {
         // An image preview consumes no accelerators; S_FALSE = "not handled" so the
         // host keeps routing them (Tab out of the pane, etc.).
         Err(Error::from(windows::Win32::Foundation::S_FALSE))
@@ -427,7 +450,14 @@ impl PreviewHandler_Impl {
             // real pane size; the dedicated UI thread PUMPS, so the resulting WM_PAINT is delivered
             // and the (already-attached) image repaints at the new size. No forced UpdateWindow
             // needed any more — that was a workaround for prevhost's non-pumping COM thread.
-            _ = MoveWindow(hwnd, r.left, r.top, (r.right - r.left).max(0), (r.bottom - r.top).max(0), true);
+            _ = MoveWindow(
+                hwnd,
+                r.left,
+                r.top,
+                (r.right - r.left).max(0),
+                (r.bottom - r.top).max(0),
+                true,
+            );
             _ = InvalidateRect(Some(hwnd), None, true);
         }
     }
@@ -444,12 +474,26 @@ impl PreviewHandler_Impl {
         // Clone the pixels into a heap payload the UI thread takes ownership of (and frees). Keeping
         // `self.pixels` lets a later SetBackgroundColor re-composite without re-decoding.
         let payload = match self.pixels.borrow().as_ref() {
-            Some(px) => Box::new((DecodedRgba { w: px.w, h: px.h, rgba: px.rgba.clone() }, self.bg.get())),
+            Some(px) => Box::new((
+                DecodedRgba {
+                    w: px.w,
+                    h: px.h,
+                    rgba: px.rgba.clone(),
+                },
+                self.bg.get(),
+            )),
             None => return,
         };
         let raw = Box::into_raw(payload);
         unsafe {
-            if PostMessageW(Some(hwnd), WM_PREVIEW_RENDER, WPARAM(0), LPARAM(raw as isize)).is_err() {
+            if PostMessageW(
+                Some(hwnd),
+                WM_PREVIEW_RENDER,
+                WPARAM(0),
+                LPARAM(raw as isize),
+            )
+            .is_err()
+            {
                 // The window died between the child() check and here — the message will never be
                 // processed (and so never reclaim the Box). Free it now so it doesn't leak.
                 drop(Box::from_raw(raw));
@@ -559,7 +603,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     _ = DeleteObject(rd.hbmp.into());
                 }
                 if let Some(hbmp) = make_dib(dec.w as i32, dec.h as i32, &dec.rgba, bg) {
-                    let rd = Box::new(RenderData { hbmp, iw: dec.w as i32, ih: dec.h as i32, bg });
+                    let rd = Box::new(RenderData {
+                        hbmp,
+                        iw: dec.w as i32,
+                        ih: dec.h as i32,
+                        bg,
+                    });
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(rd) as isize);
                 }
                 _ = InvalidateRect(Some(hwnd), None, true);
@@ -587,7 +636,11 @@ unsafe fn paint(hwnd: HWND) {
 unsafe fn draw(hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC, rc: &RECT) {
     let rd = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const RenderData;
     // No image yet / decode failed: fill with the themed default rather than hardcoded white.
-    let bg = if rd.is_null() { theme_default_bg() } else { (*rd).bg };
+    let bg = if rd.is_null() {
+        theme_default_bg()
+    } else {
+        (*rd).bg
+    };
 
     // Fill the whole client with the host background colour first.
     let brush = CreateSolidBrush(COLORREF(bg));
@@ -609,7 +662,19 @@ unsafe fn draw(hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC, rc: &RECT) {
             let memdc = CreateCompatibleDC(Some(hdc));
             let old = SelectObject(memdc, rd.hbmp.into());
             SetStretchBltMode(hdc, HALFTONE);
-            _ = StretchBlt(hdc, dx, dy, dw, dh, Some(memdc), 0, 0, rd.iw, rd.ih, SRCCOPY);
+            _ = StretchBlt(
+                hdc,
+                dx,
+                dy,
+                dw,
+                dh,
+                Some(memdc),
+                0,
+                0,
+                rd.iw,
+                rd.ih,
+                SRCCOPY,
+            );
             SelectObject(memdc, old);
             _ = DeleteDC(memdc);
         }
@@ -714,7 +779,7 @@ unsafe fn stream_name(stream: &IStream) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::make_dib;
-    use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, HBITMAP, BITMAP};
+    use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, BITMAP, HBITMAP};
 
     /// Read the top-left BGRA quad out of a DIB-section HBITMAP, then free it.
     unsafe fn first_px(hbmp: HBITMAP) -> [u8; 4] {
@@ -724,7 +789,10 @@ mod tests {
             core::mem::size_of::<BITMAP>() as i32,
             Some(&mut bm as *mut _ as *mut core::ffi::c_void),
         );
-        assert!(n != 0 && !bm.bmBits.is_null(), "make_dib must produce a real DIB section");
+        assert!(
+            n != 0 && !bm.bmBits.is_null(),
+            "make_dib must produce a real DIB section"
+        );
         let px = core::slice::from_raw_parts(bm.bmBits as *const u8, 4);
         let out = [px[0], px[1], px[2], px[3]];
         let _ = DeleteObject(hbmp.into());
@@ -739,8 +807,14 @@ mod tests {
             assert!(make_dib(0, 5, &[0u8; 64], 0).is_none(), "zero width");
             assert!(make_dib(5, 0, &[0u8; 64], 0).is_none(), "zero height");
             assert!(make_dib(-3, 4, &[0u8; 64], 0).is_none(), "negative width");
-            assert!(make_dib(2, 2, &[0u8; 4], 0).is_none(), "buffer too short (2x2 needs 16 bytes)");
-            assert!(make_dib(i32::MAX, i32::MAX, &[0u8; 4], 0).is_none(), "w*h overflow guard");
+            assert!(
+                make_dib(2, 2, &[0u8; 4], 0).is_none(),
+                "buffer too short (2x2 needs 16 bytes)"
+            );
+            assert!(
+                make_dib(i32::MAX, i32::MAX, &[0u8; 4], 0).is_none(),
+                "w*h overflow guard"
+            );
         }
     }
 

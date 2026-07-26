@@ -12,7 +12,8 @@ pub(super) fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || hay.len() < needle.len() {
         return false;
     }
-    hay.windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle))
+    hay.windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
 /// First index of `needle` in `hay`, or None. Guards an empty needle (which would
@@ -86,12 +87,14 @@ pub(super) fn dib_to_bmp(dib: &[u8]) -> Option<Vec<u8>> {
 
 /// Big-endian `u32` at byte offset `o`, bounds-checked.
 pub(super) fn be32(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(o..o + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
 }
 
 /// Little-endian `u32` at byte offset `o`, bounds-checked.
 pub(super) fn le32(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(o..o + 4)
+        .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
 }
 
 /// Little-endian `u64` at byte offset `o`, bounds-checked. (ASF object sizes.)

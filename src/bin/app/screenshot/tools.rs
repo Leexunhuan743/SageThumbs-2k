@@ -66,19 +66,57 @@ impl Tool {
 
 /// A placed annotation. Coordinates are in virtual-screen client space.
 pub(super) enum Shape {
-    Rect { r: RECT, color: COLORREF, w: i32 },
-    Ellipse { r: RECT, color: COLORREF, w: i32 },
-    Arrow { a: POINT, b: POINT, color: COLORREF, w: i32 },
-    Line { a: POINT, b: POINT, color: COLORREF, w: i32 },
-    Pen { pts: Vec<POINT>, color: COLORREF, w: i32 },
-    Text { at: POINT, s: String, color: COLORREF, font: LOGFONTW },
-    Number { at: POINT, n: u32, color: COLORREF },
+    Rect {
+        r: RECT,
+        color: COLORREF,
+        w: i32,
+    },
+    Ellipse {
+        r: RECT,
+        color: COLORREF,
+        w: i32,
+    },
+    Arrow {
+        a: POINT,
+        b: POINT,
+        color: COLORREF,
+        w: i32,
+    },
+    Line {
+        a: POINT,
+        b: POINT,
+        color: COLORREF,
+        w: i32,
+    },
+    Pen {
+        pts: Vec<POINT>,
+        color: COLORREF,
+        w: i32,
+    },
+    Text {
+        at: POINT,
+        s: String,
+        color: COLORREF,
+        font: LOGFONTW,
+    },
+    Number {
+        at: POINT,
+        n: u32,
+        color: COLORREF,
+    },
     /// Translucent colour wash over a region (a marker/highlighter).
-    Highlight { r: RECT, color: COLORREF },
+    Highlight {
+        r: RECT,
+        color: COLORREF,
+    },
     /// Blockify the pixels under a region (hide sensitive content).
-    Pixelate { r: RECT },
+    Pixelate {
+        r: RECT,
+    },
     /// Invert the colours under a region.
-    Invert { r: RECT },
+    Invert {
+        r: RECT,
+    },
 }
 
 /// Colour palette cycled with `K` (Flameshot-ish defaults; red first).
@@ -93,7 +131,12 @@ pub(super) const PALETTE: &[(u8, u8, u8)] = &[
 
 /// Normalize a rect so left<=right, top<=bottom (drags go any direction).
 pub(super) fn norm(a: POINT, b: POINT) -> RECT {
-    RECT { left: a.x.min(b.x), top: a.y.min(b.y), right: a.x.max(b.x), bottom: a.y.max(b.y) }
+    RECT {
+        left: a.x.min(b.x),
+        top: a.y.min(b.y),
+        right: a.x.max(b.x),
+        bottom: a.y.max(b.y),
+    }
 }
 
 /// Constrain a line/arrow endpoint to the nearest 45-degree direction from `a`.
@@ -133,7 +176,14 @@ pub(super) fn drag_endpoint(tool: Tool, a: POINT, raw: POINT, shift: bool) -> PO
 unsafe fn outline_rect(hdc: HDC, ox: i32, oy: i32, r: RECT, color: COLORREF, w: i32) {
     gdip::with_aa(hdc, |g| {
         let p = gdip::pen(color, w);
-        gdip::rect(g, p, r.left + ox, r.top + oy, r.right - r.left, r.bottom - r.top);
+        gdip::rect(
+            g,
+            p,
+            r.left + ox,
+            r.top + oy,
+            r.right - r.left,
+            r.bottom - r.top,
+        );
         gdip::drop_pen(p);
     });
 }
@@ -142,7 +192,14 @@ unsafe fn outline_rect(hdc: HDC, ox: i32, oy: i32, r: RECT, color: COLORREF, w: 
 unsafe fn outline_ellipse(hdc: HDC, ox: i32, oy: i32, r: RECT, color: COLORREF, w: i32) {
     gdip::with_aa(hdc, |g| {
         let p = gdip::pen(color, w);
-        gdip::ellipse(g, p, r.left + ox, r.top + oy, r.right - r.left, r.bottom - r.top);
+        gdip::ellipse(
+            g,
+            p,
+            r.left + ox,
+            r.top + oy,
+            r.right - r.left,
+            r.bottom - r.top,
+        );
         gdip::drop_pen(p);
     });
 }
@@ -183,9 +240,23 @@ unsafe fn draw_highlight(hdc: HDC, ox: i32, oy: i32, r: RECT, color: COLORREF) {
     let bmp = CreateCompatibleBitmap(hdc, w, h);
     let old = SelectObject(tmp, HGDIOBJ(bmp.0));
     let br = CreateSolidBrush(color);
-    FillRect(tmp, &RECT { left: 0, top: 0, right: w, bottom: h }, br);
+    FillRect(
+        tmp,
+        &RECT {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+        },
+        br,
+    );
     let _ = DeleteObject(br.into());
-    let bf = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 110, AlphaFormat: 0 };
+    let bf = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 110,
+        AlphaFormat: 0,
+    };
     let _ = AlphaBlend(hdc, r.left + ox, r.top + oy, w, h, tmp, 0, 0, w, h, bf);
     SelectObject(tmp, old);
     let _ = DeleteObject(HGDIOBJ(bmp.0));
@@ -217,7 +288,14 @@ unsafe fn draw_pixelate(hdc: HDC, ox: i32, oy: i32, r: RECT) {
 
 /// Invert the colours under `r` (one `PatBlt` with `DSTINVERT`).
 unsafe fn draw_invert(hdc: HDC, ox: i32, oy: i32, r: RECT) {
-    let _ = PatBlt(hdc, r.left + ox, r.top + oy, r.right - r.left, r.bottom - r.top, DSTINVERT);
+    let _ = PatBlt(
+        hdc,
+        r.left + ox,
+        r.top + oy,
+        r.right - r.left,
+        r.bottom - r.top,
+        DSTINVERT,
+    );
 }
 
 /// Draw the in-progress shape for the live drag (the tool defines the kind). Only
@@ -310,7 +388,11 @@ pub(super) unsafe fn default_text_font(size: i32) -> LOGFONTW {
 
 /// The face name held in a [`LOGFONTW`] (up to the NUL).
 pub(super) fn face_name(lf: &LOGFONTW) -> String {
-    let end = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(lf.lfFaceName.len());
+    let end = lf
+        .lfFaceName
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(lf.lfFaceName.len());
     String::from_utf16_lossy(&lf.lfFaceName[..end])
 }
 
@@ -339,7 +421,11 @@ pub(super) unsafe fn draw_text(
     let oldf = SelectObject(hdc, HGDIOBJ(hf.0));
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, color);
-    let shown = if caret { format!("{s}_") } else { s.to_string() };
+    let shown = if caret {
+        format!("{s}_")
+    } else {
+        s.to_string()
+    };
     let w = wide(&shown);
     let _ = TextOutW(hdc, at.x + ox, at.y + oy, &w[..w.len().saturating_sub(1)]);
     SelectObject(hdc, oldf);
@@ -362,7 +448,12 @@ unsafe fn draw_number(hdc: HDC, ox: i32, oy: i32, at: POINT, n: u32, color: COLO
     let s = n.to_string();
     let label = wide(&s);
     let half = 4 * s.len() as i32;
-    let _ = TextOutW(hdc, cx - half, cy - 8, &label[..label.len().saturating_sub(1)]);
+    let _ = TextOutW(
+        hdc,
+        cx - half,
+        cy - 8,
+        &label[..label.len().saturating_sub(1)],
+    );
 }
 
 /// A rectangle outline of `color`/`w` (the selection / move-grab frame). Stays on
@@ -390,7 +481,12 @@ pub(super) fn shape_bbox(sh: &Shape) -> RECT {
         | Shape::Invert { r } => *r,
         Shape::Arrow { a, b, .. } | Shape::Line { a, b, .. } => norm(*a, *b),
         Shape::Pen { pts, .. } => {
-            let mut r = RECT { left: i32::MAX, top: i32::MAX, right: i32::MIN, bottom: i32::MIN };
+            let mut r = RECT {
+                left: i32::MAX,
+                top: i32::MAX,
+                right: i32::MIN,
+                bottom: i32::MIN,
+            };
             for q in pts {
                 r.left = r.left.min(q.x);
                 r.top = r.top.min(q.y);
@@ -412,9 +508,12 @@ pub(super) fn shape_bbox(sh: &Shape) -> RECT {
                 bottom: at.y + size * 13 / 10,
             }
         }
-        Shape::Number { at, .. } => {
-            RECT { left: at.x - 13, top: at.y - 13, right: at.x + 13, bottom: at.y + 13 }
-        }
+        Shape::Number { at, .. } => RECT {
+            left: at.x - 13,
+            top: at.y - 13,
+            right: at.x + 13,
+            bottom: at.y + 13,
+        },
     }
 }
 

@@ -36,8 +36,8 @@ use windows::Win32::System::DataExchange::{
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::UI::Shell::{
-    SHCreateItemFromParsingName, SHCreateShellItemArrayFromShellItem, IExplorerCommand, IShellItem,
-    IShellItemArray, ECF_HASSUBCOMMANDS, ECS_ENABLED, ECS_HIDDEN,
+    IExplorerCommand, IShellItem, IShellItemArray, SHCreateItemFromParsingName,
+    SHCreateShellItemArrayFromShellItem, ECF_HASSUBCOMMANDS, ECS_ENABLED, ECS_HIDDEN,
 };
 
 use sagethumbs2k_core::settings;
@@ -54,7 +54,11 @@ type DllGetClassObjectFn =
 
 fn dll_path() -> std::path::PathBuf {
     let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().join("sagethumbs2k.dll")
+    exe.parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("sagethumbs2k.dll")
 }
 
 /// A scratch HKCU subkey that is never created, so every settings read under it misses and
@@ -71,9 +75,14 @@ unsafe fn create_for(clsid: GUID) -> Result<IExplorerCommand> {
     let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     let path = dll_path();
     assert!(path.exists(), "cdylib not built at {path:?}");
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let module: HMODULE = LoadLibraryW(PCWSTR(wide.as_ptr()))?;
-    let proc = GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
+    let proc =
+        GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
     let dll_get_class_object: DllGetClassObjectFn = std::mem::transmute(proc);
 
     let mut factory_ptr: *mut c_void = std::ptr::null_mut();
@@ -88,7 +97,11 @@ unsafe fn create_command() -> Result<IExplorerCommand> {
 
 /// A single-file IShellItemArray over `path` (the file must exist), like the shell passes.
 unsafe fn item_array(path: &std::path::Path) -> IShellItemArray {
-    let pw: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let pw: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let item: IShellItem =
         SHCreateItemFromParsingName(PCWSTR(pw.as_ptr()), None).expect("shell item");
     SHCreateShellItemArrayFromShellItem(&item).expect("item array")
@@ -189,20 +202,40 @@ fn enumerates_the_menu_tree() {
     unsafe {
         let cmd = create_command().expect("create");
         // Top level: the groups + the Copy leaf.
-        let top: Vec<String> = collect_subcommands(&cmd).iter().map(|c| title_of(c)).collect();
-        for want in ["Convert into", "Rotate / flip", "Copy to clipboard", "Set as wallpaper"] {
-            assert!(top.iter().any(|t| t == want), "missing top-level {want} in {top:?}");
+        let top: Vec<String> = collect_subcommands(&cmd)
+            .iter()
+            .map(|c| title_of(c))
+            .collect();
+        for want in [
+            "Convert into",
+            "Rotate / flip",
+            "Copy to clipboard",
+            "Set as wallpaper",
+        ] {
+            assert!(
+                top.iter().any(|t| t == want),
+                "missing top-level {want} in {top:?}"
+            );
         }
         // "Convert into" is a submenu carrying the format leaves.
         let subs = collect_subcommands(&cmd);
-        let convert = subs.iter().find(|c| title_of(c) == "Convert into").expect("Convert into group");
+        let convert = subs
+            .iter()
+            .find(|c| title_of(c) == "Convert into")
+            .expect("Convert into group");
         assert!(
             convert.GetFlags().expect("GetFlags") & ECF_HASSUBCOMMANDS.0 as u32 != 0,
             "Convert into should be a submenu"
         );
-        let fmts: Vec<String> = collect_subcommands(convert).iter().map(|c| title_of(c)).collect();
+        let fmts: Vec<String> = collect_subcommands(convert)
+            .iter()
+            .map(|c| title_of(c))
+            .collect();
         for want in ["PNG", "JPG", "WebP", "TIFF", "Icon (.ico)"] {
-            assert!(fmts.iter().any(|t| t == want), "missing format {want} in {fmts:?}");
+            assert!(
+                fmts.iter().any(|t| t == want),
+                "missing format {want} in {fmts:?}"
+            );
         }
     }
 }
@@ -216,9 +249,15 @@ fn convert_verb_invoke_creates_file() {
         let cmd = create_command().expect("create");
         // Navigate root -> "Convert into" -> "JPG".
         let subs = collect_subcommands(&cmd);
-        let convert = subs.iter().find(|c| title_of(c) == "Convert into").expect("Convert into group");
+        let convert = subs
+            .iter()
+            .find(|c| title_of(c) == "Convert into")
+            .expect("Convert into group");
         let fmts = collect_subcommands(convert);
-        let jpg = fmts.iter().find(|c| title_of(c) == "JPG").expect("jpg verb");
+        let jpg = fmts
+            .iter()
+            .find(|c| title_of(c) == "JPG")
+            .expect("jpg verb");
 
         let dir = std::env::temp_dir().join("st2k_verb_invoke");
         std::fs::create_dir_all(&dir).unwrap();
@@ -232,7 +271,11 @@ fn convert_verb_invoke_creates_file() {
             .unwrap();
 
         // Build a real IShellItemArray over the temp file, like the shell would.
-        let pw: Vec<u16> = png.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let pw: Vec<u16> = png
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         let item: IShellItem =
             SHCreateItemFromParsingName(PCWSTR(pw.as_ptr()), None).expect("shell item");
         let arr: IShellItemArray = SHCreateShellItemArrayFromShellItem(&item).expect("item array");
@@ -272,7 +315,11 @@ fn clipboard_verb_copies_image_to_clipboard() {
             .save_with_format(&png, image::ImageFormat::Png)
             .unwrap();
 
-        let pw: Vec<u16> = png.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let pw: Vec<u16> = png
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         let item: IShellItem =
             SHCreateItemFromParsingName(PCWSTR(pw.as_ptr()), None).expect("shell item");
         let arr: IShellItemArray = SHCreateShellItemArrayFromShellItem(&item).expect("item array");
@@ -343,9 +390,15 @@ fn quick_verbs_structure_and_gate() {
             conv.GetFlags().expect("GetFlags") & ECF_HASSUBCOMMANDS.0 as u32 != 0,
             "Convert into should advertise sub-commands"
         );
-        let fmts: Vec<String> = collect_subcommands(&conv).iter().map(|c| title_of(c)).collect();
+        let fmts: Vec<String> = collect_subcommands(&conv)
+            .iter()
+            .map(|c| title_of(c))
+            .collect();
         for want in ["PNG", "JPG", "WebP"] {
-            assert!(fmts.iter().any(|t| t == want), "missing format {want} in {fmts:?}");
+            assert!(
+                fmts.iter().any(|t| t == want),
+                "missing format {want} in {fmts:?}"
+            );
         }
 
         // Convert… — a leaf (no sub-commands).
@@ -363,7 +416,10 @@ fn quick_verbs_structure_and_gate() {
                 cmd.GetFlags().expect("GetFlags") & ECF_HASSUBCOMMANDS.0 as u32 != 0,
                 "quick group should advertise sub-commands"
             );
-            assert!(!collect_subcommands(&cmd).is_empty(), "quick group should have children");
+            assert!(
+                !collect_subcommands(&cmd).is_empty(),
+                "quick group should have children"
+            );
         }
 
         // Gating. Build a real PNG and an (extension-only) audio file.
@@ -386,15 +442,22 @@ fn quick_verbs_structure_and_gate() {
         // `settings` reads it too) this is deterministic: EnableMenu defaults on, MenuQuickVerbs
         // defaults off → the quick verb must be hidden.
         let want_enabled = settings::menu_enabled() && settings::menu_quick_verbs();
-        let png_state = cmd.GetState(&item_array(&png), false).expect("GetState png");
+        let png_state = cmd
+            .GetState(&item_array(&png), false)
+            .expect("GetState png");
         assert_eq!(
             png_state == ECS_ENABLED.0 as u32,
             want_enabled,
             "image quick verb should be enabled iff EnableMenu && MenuQuickVerbs"
         );
         // Audio-only selection → ECS_HIDDEN regardless of the toggle.
-        let mp3_state = cmd.GetState(&item_array(&mp3), false).expect("GetState mp3");
-        assert_eq!(mp3_state, ECS_HIDDEN.0 as u32, "audio-only must hide the quick verb");
+        let mp3_state = cmd
+            .GetState(&item_array(&mp3), false)
+            .expect("GetState mp3");
+        assert_eq!(
+            mp3_state, ECS_HIDDEN.0 as u32,
+            "audio-only must hide the quick verb"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

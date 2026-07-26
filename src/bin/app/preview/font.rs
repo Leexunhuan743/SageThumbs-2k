@@ -12,9 +12,9 @@ use windows::Win32::Graphics::Gdi::{
     AddFontResourceExW, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
     DeleteDC, DeleteObject, FillRect, GdiFlush, GetDC, ReleaseDC, RemoveFontResourceExW,
     SelectObject, SetBkMode, SetTextColor, TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-    CLEARTYPE_QUALITY, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, FF_DONTCARE,
-    FONT_QUALITY, FONT_RESOURCE_CHARACTERISTICS, FW_NORMAL, HBITMAP, HDC, HFONT, HGDIOBJ,
-    OUT_TT_PRECIS, TRANSPARENT,
+    CLEARTYPE_QUALITY, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, FF_DONTCARE, FONT_QUALITY,
+    FONT_RESOURCE_CHARACTERISTICS, FW_NORMAL, HBITMAP, HDC, HFONT, HGDIOBJ, OUT_TT_PRECIS,
+    TRANSPARENT,
 };
 
 /// `FR_PRIVATE`: the font loads for THIS process only and is removed on `RemoveFontResourceExW`.
@@ -29,14 +29,19 @@ fn be16(b: &[u8], o: usize) -> Option<u16> {
     b.get(o..o + 2).map(|s| u16::from_be_bytes([s[0], s[1]]))
 }
 fn be32(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(o..o + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
 }
 
 /// Parse the sfnt `name` table for a human display name — full name (id 4), else family (id 1),
 /// preferring the Windows/Unicode (platform 3, UTF-16BE) record. Handles a `.ttc` collection by
 /// reading the first font. `None` if it can't be parsed.
 fn display_name(bytes: &[u8]) -> Option<String> {
-    let sfnt = if bytes.get(0..4) == Some(b"ttcf") { be32(bytes, 12)? as usize } else { 0 };
+    let sfnt = if bytes.get(0..4) == Some(b"ttcf") {
+        be32(bytes, 12)? as usize
+    } else {
+        0
+    };
     let num_tables = be16(bytes, sfnt + 4)?;
     let mut name_tbl = None;
     for i in 0..num_tables as usize {
@@ -61,8 +66,10 @@ fn display_name(bytes: &[u8]) -> Option<String> {
         let off = be16(bytes, r + 10)? as usize;
         let data = bytes.get(str_base + off..str_base + off + len)?;
         let s = if plat == 3 || plat == 0 {
-            let u16s: Vec<u16> =
-                data.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+            let u16s: Vec<u16> = data
+                .chunks_exact(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect();
             String::from_utf16_lossy(&u16s)
         } else {
             String::from_utf8_lossy(data).into_owned()
@@ -87,16 +94,30 @@ fn display_name(bytes: &[u8]) -> Option<String> {
 /// Create a font at cap-height `px` in the given face.
 unsafe fn face_font(face: &[u16], px: i32) -> HFONT {
     CreateFontW(
-        -px, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0,
-        DEFAULT_CHARSET, OUT_TT_PRECIS, Default::default(),
-        FONT_QUALITY(CLEARTYPE_QUALITY.0), (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+        -px,
+        0,
+        0,
+        0,
+        FW_NORMAL.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET,
+        OUT_TT_PRECIS,
+        Default::default(),
+        FONT_QUALITY(CLEARTYPE_QUALITY.0),
+        (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
         PCWSTR(face.as_ptr()),
     )
 }
 
 /// Render a specimen for the font at `path` into an RGBA buffer `(rgba, w, h)`. Loads the font
 /// privately, draws with it, then unloads. `None` if the file can't be read/loaded.
-pub(super) unsafe fn render_specimen(path: &str, bg: COLORREF, fg: COLORREF) -> Option<(Vec<u8>, i32, i32)> {
+pub(super) unsafe fn render_specimen(
+    path: &str,
+    bg: COLORREF,
+    fg: COLORREF,
+) -> Option<(Vec<u8>, i32, i32)> {
     let bytes = std::fs::read(path).ok()?;
     let name = display_name(&bytes).unwrap_or_else(|| {
         std::path::Path::new(path)
@@ -141,7 +162,16 @@ pub(super) unsafe fn render_specimen(path: &str, bg: COLORREF, fg: COLORREF) -> 
 
     // Background.
     let brush = CreateSolidBrush(bg);
-    FillRect(mdc, &RECT { left: 0, top: 0, right: w, bottom: h }, brush);
+    FillRect(
+        mdc,
+        &RECT {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+        },
+        brush,
+    );
     let _ = DeleteObject(HGDIOBJ(brush.0));
 
     SetBkMode(mdc, TRANSPARENT);

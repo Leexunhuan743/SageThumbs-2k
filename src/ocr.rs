@@ -84,8 +84,9 @@ fn recognize(bytes: &[u8]) -> Result<String> {
 
     // Use the user's languages; fall back to English if no profile language has
     // an OCR pack. (windows-rs maps WinRT null → Err, so or_else fires.)
-    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-        .or_else(|_| OcrEngine::TryCreateFromLanguage(&Language::CreateLanguage(&HSTRING::from("en"))?))?;
+    let engine = OcrEngine::TryCreateFromUserProfileLanguages().or_else(|_| {
+        OcrEngine::TryCreateFromLanguage(&Language::CreateLanguage(&HSTRING::from("en"))?)
+    })?;
 
     let max = OcrEngine::MaxImageDimension()?; // static associated fn
     if bmp.PixelWidth()? as u32 > max || bmp.PixelHeight()? as u32 > max {

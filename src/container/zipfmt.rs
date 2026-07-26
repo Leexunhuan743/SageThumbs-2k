@@ -101,8 +101,10 @@ pub(crate) fn covers_image_only<R: Read + Seek>(
     want: usize,
 ) -> Option<Vec<Vec<u8>>> {
     let entries = list_entries(zip);
-    let out: Vec<Vec<u8>> =
-        pick_covers(&entries, want).into_iter().filter_map(|idx| read_index(zip, idx)).collect();
+    let out: Vec<Vec<u8>> = pick_covers(&entries, want)
+        .into_iter()
+        .filter_map(|idx| read_index(zip, idx))
+        .collect();
     (!out.is_empty()).then_some(out)
 }
 
@@ -161,7 +163,11 @@ pub(crate) fn list_bytes(bytes: &[u8], max: usize) -> Option<Vec<Entry>> {
     let mut out = Vec::new();
     for i in 0..zip.len().min(max) {
         if let Ok(f) = zip.by_index(i) {
-            out.push(Entry { name: f.name().to_string(), is_dir: f.is_dir(), size: f.size() });
+            out.push(Entry {
+                name: f.name().to_string(),
+                is_dir: f.is_dir(),
+                size: f.size(),
+            });
         }
     }
     Some(out)

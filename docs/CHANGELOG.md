@@ -4,6 +4,12 @@ All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
 ## 1.3.6
 
+- **Connections sync is safer across devices and accounts.** Nested preference changes preserve
+  unrelated remote edits, cache validators cannot cross account boundaries, shutdown flushes
+  pending settings, and retry timing honors server throttling.
+- **Release packaging is self-contained and icon-verified.** Public artifacts contain the
+  installable application without development folders, and release validation checks the visible
+  executable and installer branding before publication.
 - **Huge archives now return immediately instead of tying up Explorer.** The archive limit
   is enforced before 7z parsing on every shell-stream path—even when Max file size is set
   to Unlimited or a provider omits the filename or length. The reported 909,208,825-byte

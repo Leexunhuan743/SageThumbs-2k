@@ -74,7 +74,11 @@ pub fn keyframe_mini_mkv<R: Read + Seek>(r: &mut R, fraction: f64) -> Option<Vec
         return None;
     }
     let seg_data = ebml_len + shlen; // Segment Positions are relative to here
-    let seg_end = if sunk { total } else { (seg_data + ssize).min(total) };
+    let seg_end = if sunk {
+        total
+    } else {
+        (seg_data + ssize).min(total)
+    };
 
     // Front-of-segment walk: capture SeekHead/Info/Tracks (and Cues if it happens to be up
     // front), stopping at the first Cluster — we never scan the cluster body.
@@ -89,9 +93,7 @@ pub fn keyframe_mini_mkv<R: Read + Seek>(r: &mut R, fraction: f64) -> Option<Vec
         }
         let (eid, esize, ehlen, eunk) = header_at(r, p)?;
         match eid {
-            ID_SEEKHEAD if esize <= META_MAX => {
-                seekhead = read_full_at(r, p + ehlen, esize)
-            }
+            ID_SEEKHEAD if esize <= META_MAX => seekhead = read_full_at(r, p + ehlen, esize),
             ID_INFO => info_pos = Some(p),
             ID_TRACKS => tracks_pos = Some(p),
             ID_CUES => cues_pos = Some(p),
@@ -157,7 +159,8 @@ pub fn keyframe_mini_mkv<R: Read + Seek>(r: &mut R, fraction: f64) -> Option<Vec
     // Copy that one Cluster, then zero its Timecode so the mini-clip starts at t=0 (otherwise
     // `frame_from_bytes`'s near-the-head seek would land before the cluster's real timestamp
     // and grab nothing). Likewise zero Info's Duration so that seek computes ~0.
-    let (_, cluster_hlen, mut cluster) = read_element_full(r, cluster_abs, CLUSTER_MAX, ID_CLUSTER)?;
+    let (_, cluster_hlen, mut cluster) =
+        read_element_full(r, cluster_abs, CLUSTER_MAX, ID_CLUSTER)?;
     zero_child(&mut cluster, cluster_hlen, ID_CLUSTER_TIMECODE);
     zero_child(&mut info, info_hlen, ID_DURATION);
 
@@ -332,7 +335,9 @@ fn vint_size(buf: &[u8], pos: usize) -> Option<(u64, usize, bool)> {
 
 /// An EBML unsigned integer is a big-endian byte string (1–8 bytes).
 fn ebml_uint(data: &[u8]) -> u64 {
-    data.iter().take(8).fold(0u64, |acc, &b| (acc << 8) | b as u64)
+    data.iter()
+        .take(8)
+        .fold(0u64, |acc, &b| (acc << 8) | b as u64)
 }
 
 /// An EBML float is 4- or 8-byte IEEE-754.
@@ -557,7 +562,9 @@ mod tests {
     /// so CI stays green without an adult-content fixture in the repo.
     #[test]
     fn real_mkv_round_trips_through_mediafoundation() {
-        let Some(path) = std::env::var("ST2K_TEST_MKV").ok().filter(|p| Path::new(p).is_file())
+        let Some(path) = std::env::var("ST2K_TEST_MKV")
+            .ok()
+            .filter(|p| Path::new(p).is_file())
         else {
             eprintln!("real_mkv_round_trips: ST2K_TEST_MKV unset / missing — skipping");
             return;
@@ -565,7 +572,10 @@ mod tests {
         let bytes = std::fs::read(&path).expect("read sample mkv");
         let mini = keyframe_mini_mkv(&mut Cursor::new(&bytes), 0.30)
             .expect("build mini-mkv from real sample");
-        assert!(mini[0..4] == [0x1A, 0x45, 0xDF, 0xA3], "starts with EBML header");
+        assert!(
+            mini[0..4] == [0x1A, 0x45, 0xDF, 0xA3],
+            "starts with EBML header"
+        );
         assert!(mini.len() < bytes.len(), "mini-mkv smaller than source");
         let frame = crate::video::frame_from_bytes(&mini)
             .expect("Media Foundation should decode the mini-mkv cluster");

@@ -186,9 +186,16 @@ pub(crate) mod testutil {
 
     fn tiny_jpeg() -> Vec<u8> {
         let mut buf = Vec::new();
-        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 4, image::Rgb([200, 50, 50])))
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
-            .unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            4,
+            4,
+            image::Rgb([200, 50, 50]),
+        ))
+        .write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
         buf
     }
 }
@@ -203,7 +210,10 @@ mod tests {
         let (psd, _) = synthetic_psd(3, true, 0);
         let got = extract(&psd).expect("thumbnail");
         assert!(got.starts_with(&[0xFF, 0xD8, 0xFF]));
-        assert!(image::load_from_memory(&got).is_ok(), "extracted bytes should be a valid JPEG");
+        assert!(
+            image::load_from_memory(&got).is_ok(),
+            "extracted bytes should be a valid JPEG"
+        );
 
         // The header probe reports the CANVAS size (100×100 here), independent
         // of the extracted thumbnail's pixels.
@@ -244,7 +254,10 @@ mod tests {
         assert_eq!(preview_prefix_len(&mut Cursor::new(&alpha)), None);
 
         // Not a PSD / truncated header: no fast path.
-        assert_eq!(preview_prefix_len(&mut Cursor::new(b"not a psd at all")), None);
+        assert_eq!(
+            preview_prefix_len(&mut Cursor::new(b"not a psd at all")),
+            None
+        );
         assert_eq!(preview_prefix_len(&mut Cursor::new(&big[..26])), None);
 
         // A CMD length pointing past EOF fails the resources-length read, not math.

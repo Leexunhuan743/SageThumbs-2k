@@ -7,8 +7,7 @@
 use windows::core::GUID;
 
 /// SageThumbs 2K thumbnail provider (IThumbnailProvider + IInitializeWithStream).
-pub const CLSID_THUMBNAIL_PROVIDER: GUID =
-    GUID::from_u128(0x7B2E6A14_9C3D_4F8A_B1E7_2A5D9F0C6E31);
+pub const CLSID_THUMBNAIL_PROVIDER: GUID = GUID::from_u128(0x7B2E6A14_9C3D_4F8A_B1E7_2A5D9F0C6E31);
 
 /// Same CLSID, string form, for registry writes.
 pub const CLSID_THUMBNAIL_PROVIDER_STR: &str = "{7B2E6A14-9C3D-4F8A-B1E7-2A5D9F0C6E31}";
@@ -17,8 +16,7 @@ pub const CLSID_THUMBNAIL_PROVIDER_STR: &str = "{7B2E6A14-9C3D-4F8A-B1E7-2A5D9F0
 /// package manifest (`packaging/AppxManifest.xml`), NOT the registry — so there is
 /// no string-form const here; the `manifest_clsids_match_explorer_command` test
 /// pins the manifest's CLSID literals to this typed GUID instead.
-pub const CLSID_EXPLORER_COMMAND: GUID =
-    GUID::from_u128(0xD4F1C8A2_3E7B_4A96_8C0F_6B1E2D9A4C57);
+pub const CLSID_EXPLORER_COMMAND: GUID = GUID::from_u128(0xD4F1C8A2_3E7B_4A96_8C0F_6B1E2D9A4C57);
 
 /// The modern-menu "quick verbs" — Convert into ▸ / Convert… / Resize ▸ / Rotate ▸ surfaced
 /// as their OWN top-level entries on the Windows 11 context menu (one per CLSID), so that
@@ -29,34 +27,28 @@ pub const CLSID_EXPLORER_COMMAND: GUID =
 /// `MENU` key + manifest verb id (a test pins that table to `verbs::QUICK_KEYS`), and the
 /// `manifest_clsids_match_known` test pins these GUIDs to the manifest literals. Like the
 /// root command, these need NO registry registration — the package surrogate activates them.
-pub const CLSID_QUICK_CONVERT_INTO: GUID =
-    GUID::from_u128(0x1C7F4E2A_9D63_4B85_A0F1_7E2C5B9D4A60);
+pub const CLSID_QUICK_CONVERT_INTO: GUID = GUID::from_u128(0x1C7F4E2A_9D63_4B85_A0F1_7E2C5B9D4A60);
 pub const CLSID_QUICK_CONVERT_DIALOG: GUID =
     GUID::from_u128(0x2D8A5F3B_0E74_4C96_B1A2_8F3D6CAE5B71);
-pub const CLSID_QUICK_RESIZE: GUID =
-    GUID::from_u128(0x3E9B6A4C_1F85_4DA7_C2B3_9A4E7DBF6C82);
-pub const CLSID_QUICK_ROTATE: GUID =
-    GUID::from_u128(0x4FAC7B5D_2096_4EB8_D3C4_AB5F8ECA7D93);
+pub const CLSID_QUICK_RESIZE: GUID = GUID::from_u128(0x3E9B6A4C_1F85_4DA7_C2B3_9A4E7DBF6C82);
+pub const CLSID_QUICK_ROTATE: GUID = GUID::from_u128(0x4FAC7B5D_2096_4EB8_D3C4_AB5F8ECA7D93);
 
 /// SageThumbs 2K classic context-menu handler (IContextMenu + IShellExtInit).
 /// Needed for machines where the modern Win11 menu is replaced by the classic
 /// menu (StartAllBack / ExplorerPatcher / registry tweak).
-pub const CLSID_CONTEXT_MENU: GUID =
-    GUID::from_u128(0x9F3A2B1C_5E8D_4A7F_9C2E_1B6D4F8A0E53);
+pub const CLSID_CONTEXT_MENU: GUID = GUID::from_u128(0x9F3A2B1C_5E8D_4A7F_9C2E_1B6D4F8A0E53);
 pub const CLSID_CONTEXT_MENU_STR: &str = "{9F3A2B1C-5E8D-4A7F-9C2E-1B6D4F8A0E53}";
 
 /// SageThumbs 2K preview-pane handler (IPreviewHandler + IInitializeWithStream +
 /// IObjectWithSite + IPreviewHandlerVisuals). Loaded by the shell's out-of-process
 /// preview host (`prevhost.exe`) via the surrogate AppID set in `register.rs`.
-pub const CLSID_PREVIEW_HANDLER: GUID =
-    GUID::from_u128(0x2C8F1A3D_6B4E_4D9C_A1F2_7E3B5C8D0A46);
+pub const CLSID_PREVIEW_HANDLER: GUID = GUID::from_u128(0x2C8F1A3D_6B4E_4D9C_A1F2_7E3B5C8D0A46);
 pub const CLSID_PREVIEW_HANDLER_STR: &str = "{2C8F1A3D-6B4E-4D9C-A1F2-7E3B5C8D0A46}";
 
 /// SageThumbs 2K property handler (IPropertyStore + IInitializeWithStream). Surfaces image
 /// dimensions / EXIF camera / audio tags in Explorer's Details pane, info-tips, and columns.
 /// Loads in-process into explorer.exe + SearchIndexer.exe (read-only, panic-guarded).
-pub const CLSID_PROPERTY_STORE: GUID =
-    GUID::from_u128(0x5E1A7C92_8F3D_4B6A_A0E4_3C7B9D2F1A68);
+pub const CLSID_PROPERTY_STORE: GUID = GUID::from_u128(0x5E1A7C92_8F3D_4B6A_A0E4_3C7B9D2F1A68);
 pub const CLSID_PROPERTY_STORE_STR: &str = "{5E1A7C92-8F3D-4B6A-A0E4-3C7B9D2F1A68}";
 
 #[cfg(test)]
@@ -67,9 +59,17 @@ mod tests {
     fn bare(g: GUID) -> String {
         format!(
             "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-            g.data1, g.data2, g.data3,
-            g.data4[0], g.data4[1], g.data4[2], g.data4[3],
-            g.data4[4], g.data4[5], g.data4[6], g.data4[7],
+            g.data1,
+            g.data2,
+            g.data3,
+            g.data4[0],
+            g.data4[1],
+            g.data4[2],
+            g.data4[3],
+            g.data4[4],
+            g.data4[5],
+            g.data4[6],
+            g.data4[7],
         )
     }
 
@@ -79,10 +79,22 @@ mod tests {
     /// in either would register the wrong coclass with no compile error.
     #[test]
     fn clsid_string_consts_match_typed_guids() {
-        assert_eq!(CLSID_THUMBNAIL_PROVIDER_STR, format!("{{{}}}", bare(CLSID_THUMBNAIL_PROVIDER)));
-        assert_eq!(CLSID_CONTEXT_MENU_STR, format!("{{{}}}", bare(CLSID_CONTEXT_MENU)));
-        assert_eq!(CLSID_PREVIEW_HANDLER_STR, format!("{{{}}}", bare(CLSID_PREVIEW_HANDLER)));
-        assert_eq!(CLSID_PROPERTY_STORE_STR, format!("{{{}}}", bare(CLSID_PROPERTY_STORE)));
+        assert_eq!(
+            CLSID_THUMBNAIL_PROVIDER_STR,
+            format!("{{{}}}", bare(CLSID_THUMBNAIL_PROVIDER))
+        );
+        assert_eq!(
+            CLSID_CONTEXT_MENU_STR,
+            format!("{{{}}}", bare(CLSID_CONTEXT_MENU))
+        );
+        assert_eq!(
+            CLSID_PREVIEW_HANDLER_STR,
+            format!("{{{}}}", bare(CLSID_PREVIEW_HANDLER))
+        );
+        assert_eq!(
+            CLSID_PROPERTY_STORE_STR,
+            format!("{{{}}}", bare(CLSID_PROPERTY_STORE))
+        );
     }
 
     /// Every CLSID literal in the package manifest must be one of the coclass GUIDs
@@ -117,7 +129,10 @@ mod tests {
         // Every verb Clsid in the manifest must be one we actually hand out.
         for seg in MANIFEST.split("Clsid=\"").skip(1) {
             let val = seg.split('"').next().unwrap();
-            assert!(is_known(val), "manifest Clsid `{val}` is not a known coclass GUID");
+            assert!(
+                is_known(val),
+                "manifest Clsid `{val}` is not a known coclass GUID"
+            );
         }
     }
 
@@ -130,7 +145,10 @@ mod tests {
     fn manifest_item_types_are_known_formats() {
         for seg in MANIFEST.split("ItemType Type=\".").skip(1) {
             let ext = seg.split('"').next().unwrap().to_ascii_lowercase();
-            assert!(crate::formats::is_known(&ext), "manifest ItemType `.{ext}` is not in FORMATS");
+            assert!(
+                crate::formats::is_known(&ext),
+                "manifest ItemType `.{ext}` is not in FORMATS"
+            );
         }
     }
 

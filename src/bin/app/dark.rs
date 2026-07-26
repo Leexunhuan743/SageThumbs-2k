@@ -46,31 +46,103 @@ fn tc(dark: COLORREF, light: COLORREF) -> COLORREF {
 // each is a function now, NOT a const, because the value depends on the theme.
 // The blue accent is shared by both themes (the brand color); its low-contrast
 // tints (ACCENT_TEXT) deepen on light so they stay legible on a white surface.
-#[allow(non_snake_case)] pub(crate) fn DARK_BG() -> COLORREF { tc(rgb(32, 32, 32), rgb(243, 243, 243)) } // window background
-#[allow(non_snake_case)] pub(crate) fn DARK_CTL_BG() -> COLORREF { tc(rgb(45, 45, 45), rgb(255, 255, 255)) } // edit / listbox native fill
-#[allow(non_snake_case)] pub(crate) fn DARK_TEXT() -> COLORREF { tc(rgb(232, 232, 232), rgb(26, 26, 26)) } // primary text
-#[allow(non_snake_case)] pub(crate) fn ACCENT() -> COLORREF { rgb(74, 144, 245) } // #4a90f5 — primary blue (both themes)
-#[allow(non_snake_case)] pub(crate) fn ACCENT_HOT() -> COLORREF { rgb(96, 162, 250) } // hover
-#[allow(non_snake_case)] pub(crate) fn ACCENT_PRESS() -> COLORREF { rgb(58, 120, 210) } // pressed
-#[allow(non_snake_case)] pub(crate) fn ACCENT_TEXT() -> COLORREF { tc(rgb(120, 176, 255), rgb(0, 90, 200)) } // ext column / link-ish text
-#[allow(non_snake_case)] pub(crate) fn ON_ACCENT() -> COLORREF { rgb(255, 255, 255) } // text/glyph on the accent fill
-#[allow(non_snake_case)] pub(crate) fn SURFACE() -> COLORREF { tc(rgb(24, 24, 24), rgb(255, 255, 255)) } // file-list well
-#[allow(non_snake_case)] pub(crate) fn INPUT_BG() -> COLORREF { tc(rgb(45, 45, 45), rgb(255, 255, 255)) } // edit / dropdown field fill
-#[allow(non_snake_case)] pub(crate) fn BTN_FACE() -> COLORREF { tc(rgb(50, 50, 50), rgb(251, 251, 251)) } // secondary button face
-#[allow(non_snake_case)] pub(crate) fn BTN_FACE_HOT() -> COLORREF { tc(rgb(60, 60, 60), rgb(240, 240, 240)) }
-#[allow(non_snake_case)] pub(crate) fn BTN_FACE_PRESS() -> COLORREF { tc(rgb(42, 42, 42), rgb(229, 229, 229)) }
-#[allow(non_snake_case)] pub(crate) fn BORDER() -> COLORREF { tc(rgb(60, 60, 60), rgb(206, 206, 206)) } // hairline dividers / field + panel border
-#[allow(non_snake_case)] pub(crate) fn BORDER_STRONG() -> COLORREF { tc(rgb(85, 85, 85), rgb(140, 140, 140)) } // checkbox outline
-#[allow(non_snake_case)] pub(crate) fn CHECK_BG() -> COLORREF { tc(rgb(43, 43, 43), rgb(255, 255, 255)) } // unchecked checkbox fill
-#[allow(non_snake_case)] pub(crate) fn ZEBRA() -> COLORREF { tc(rgb(33, 33, 33), rgb(246, 246, 246)) } // even-row stripe (over SURFACE)
-#[allow(non_snake_case)] pub(crate) fn SEL_BG() -> COLORREF { tc(rgb(38, 48, 64), rgb(204, 228, 250)) } // selected list row (subtle blue)
-#[allow(non_snake_case)] pub(crate) fn HEADER_TEXT() -> COLORREF { tc(rgb(150, 150, 150), rgb(96, 96, 96)) } // muted section/column header
-#[allow(non_snake_case)] pub(crate) fn DISABLED_TEXT() -> COLORREF { tc(rgb(110, 110, 110), rgb(163, 163, 163)) } // greyed text for disabled controls
-// Quick preview code syntax highlighting (VS Code dark+/light+ inspired).
-#[allow(non_snake_case)] pub(crate) fn CODE_KEYWORD() -> COLORREF { tc(rgb(86, 156, 214), rgb(0, 0, 255)) }
-#[allow(non_snake_case)] pub(crate) fn CODE_STRING() -> COLORREF { tc(rgb(206, 145, 120), rgb(163, 21, 21)) }
-#[allow(non_snake_case)] pub(crate) fn CODE_NUMBER() -> COLORREF { tc(rgb(181, 206, 168), rgb(9, 134, 88)) }
-#[allow(non_snake_case)] pub(crate) fn CODE_COMMENT() -> COLORREF { tc(rgb(106, 153, 85), rgb(0, 128, 0)) }
+#[allow(non_snake_case)]
+pub(crate) fn DARK_BG() -> COLORREF {
+    tc(rgb(32, 32, 32), rgb(243, 243, 243))
+} // window background
+#[allow(non_snake_case)]
+pub(crate) fn DARK_CTL_BG() -> COLORREF {
+    tc(rgb(45, 45, 45), rgb(255, 255, 255))
+} // edit / listbox native fill
+#[allow(non_snake_case)]
+pub(crate) fn DARK_TEXT() -> COLORREF {
+    tc(rgb(232, 232, 232), rgb(26, 26, 26))
+} // primary text
+#[allow(non_snake_case)]
+pub(crate) fn ACCENT() -> COLORREF {
+    rgb(74, 144, 245)
+} // #4a90f5 — primary blue (both themes)
+#[allow(non_snake_case)]
+pub(crate) fn ACCENT_HOT() -> COLORREF {
+    rgb(96, 162, 250)
+} // hover
+#[allow(non_snake_case)]
+pub(crate) fn ACCENT_PRESS() -> COLORREF {
+    rgb(58, 120, 210)
+} // pressed
+#[allow(non_snake_case)]
+pub(crate) fn ACCENT_TEXT() -> COLORREF {
+    tc(rgb(120, 176, 255), rgb(0, 90, 200))
+} // ext column / link-ish text
+#[allow(non_snake_case)]
+pub(crate) fn ON_ACCENT() -> COLORREF {
+    rgb(255, 255, 255)
+} // text/glyph on the accent fill
+#[allow(non_snake_case)]
+pub(crate) fn SURFACE() -> COLORREF {
+    tc(rgb(24, 24, 24), rgb(255, 255, 255))
+} // file-list well
+#[allow(non_snake_case)]
+pub(crate) fn INPUT_BG() -> COLORREF {
+    tc(rgb(45, 45, 45), rgb(255, 255, 255))
+} // edit / dropdown field fill
+#[allow(non_snake_case)]
+pub(crate) fn BTN_FACE() -> COLORREF {
+    tc(rgb(50, 50, 50), rgb(251, 251, 251))
+} // secondary button face
+#[allow(non_snake_case)]
+pub(crate) fn BTN_FACE_HOT() -> COLORREF {
+    tc(rgb(60, 60, 60), rgb(240, 240, 240))
+}
+#[allow(non_snake_case)]
+pub(crate) fn BTN_FACE_PRESS() -> COLORREF {
+    tc(rgb(42, 42, 42), rgb(229, 229, 229))
+}
+#[allow(non_snake_case)]
+pub(crate) fn BORDER() -> COLORREF {
+    tc(rgb(60, 60, 60), rgb(206, 206, 206))
+} // hairline dividers / field + panel border
+#[allow(non_snake_case)]
+pub(crate) fn BORDER_STRONG() -> COLORREF {
+    tc(rgb(85, 85, 85), rgb(140, 140, 140))
+} // checkbox outline
+#[allow(non_snake_case)]
+pub(crate) fn CHECK_BG() -> COLORREF {
+    tc(rgb(43, 43, 43), rgb(255, 255, 255))
+} // unchecked checkbox fill
+#[allow(non_snake_case)]
+pub(crate) fn ZEBRA() -> COLORREF {
+    tc(rgb(33, 33, 33), rgb(246, 246, 246))
+} // even-row stripe (over SURFACE)
+#[allow(non_snake_case)]
+pub(crate) fn SEL_BG() -> COLORREF {
+    tc(rgb(38, 48, 64), rgb(204, 228, 250))
+} // selected list row (subtle blue)
+#[allow(non_snake_case)]
+pub(crate) fn HEADER_TEXT() -> COLORREF {
+    tc(rgb(150, 150, 150), rgb(96, 96, 96))
+} // muted section/column header
+#[allow(non_snake_case)]
+pub(crate) fn DISABLED_TEXT() -> COLORREF {
+    tc(rgb(110, 110, 110), rgb(163, 163, 163))
+} // greyed text for disabled controls
+  // Quick preview code syntax highlighting (VS Code dark+/light+ inspired).
+#[allow(non_snake_case)]
+pub(crate) fn CODE_KEYWORD() -> COLORREF {
+    tc(rgb(86, 156, 214), rgb(0, 0, 255))
+}
+#[allow(non_snake_case)]
+pub(crate) fn CODE_STRING() -> COLORREF {
+    tc(rgb(206, 145, 120), rgb(163, 21, 21))
+}
+#[allow(non_snake_case)]
+pub(crate) fn CODE_NUMBER() -> COLORREF {
+    tc(rgb(181, 206, 168), rgb(9, 134, 88))
+}
+#[allow(non_snake_case)]
+pub(crate) fn CODE_COMMENT() -> COLORREF {
+    tc(rgb(106, 153, 85), rgb(0, 128, 0))
+}
 
 /// True when the (effective) theme is dark. Reads `AppsUseLightTheme == 0`, cached.
 /// `ST2K_THEME=light|dark` overrides the registry — a test/diagnostic hook so both
@@ -100,7 +172,7 @@ type FnRefreshImmersive = unsafe extern "system" fn();
 struct Uxtheme {
     set_preferred_app_mode: Option<FnSetPreferredAppMode>, // ordinal 135 (Win 1903+)
     allow_dark_for_window: Option<FnAllowDarkModeForWindow>, // ordinal 133
-    refresh_immersive: Option<FnRefreshImmersive>,           // ordinal 104
+    refresh_immersive: Option<FnRefreshImmersive>,         // ordinal 104
 }
 unsafe impl Send for Uxtheme {}
 unsafe impl Sync for Uxtheme {}
@@ -114,8 +186,10 @@ fn uxtheme() -> &'static Uxtheme {
             // 135/133/104 are undocumented Win10/11 uxtheme export ordinals resolved by
             // GetProcAddress; each is Option-guarded, so a missing/changed ordinal just
             // leaves the fn None and we degrade to the light theme (never crashes).
-            set_preferred_app_mode: by_ord(135).map(|p| std::mem::transmute::<_, FnSetPreferredAppMode>(p)),
-            allow_dark_for_window: by_ord(133).map(|p| std::mem::transmute::<_, FnAllowDarkModeForWindow>(p)),
+            set_preferred_app_mode: by_ord(135)
+                .map(|p| std::mem::transmute::<_, FnSetPreferredAppMode>(p)),
+            allow_dark_for_window: by_ord(133)
+                .map(|p| std::mem::transmute::<_, FnAllowDarkModeForWindow>(p)),
             refresh_immersive: by_ord(104).map(|p| std::mem::transmute::<_, FnRefreshImmersive>(p)),
         }
     })

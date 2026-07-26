@@ -59,7 +59,18 @@ unsafe fn build(hwnd: HWND, hinst: HINSTANCE) {
     // Read-only, word-wrapped, vertically scrollable — the verbose dump can be long.
     let edit_style =
         WINDOW_STYLE((ES_MULTILINE | ES_READONLY) as u32) | WS_VSCROLL | WS_BORDER | WS_TABSTOP;
-    let edit = ctl(hwnd, EDIT, "", edit_style, m, m, cw - 2 * m, edit_h, ID_EDIT, hinst);
+    let edit = ctl(
+        hwnd,
+        EDIT,
+        "",
+        edit_style,
+        m,
+        m,
+        cw - 2 * m,
+        edit_h,
+        ID_EDIT,
+        hinst,
+    );
     // `ctl` themes edits with DarkMode_CFD, which leaves a LIGHT vertical scrollbar. Re-theme
     // the edit to DarkMode_Explorer so its scrollbar renders dark (the edit bg/text stay dark
     // via WM_CTLCOLOREDIT in `dark_ctlcolor`).
@@ -71,12 +82,28 @@ unsafe fn build(hwnd: HWND, hinst: HINSTANCE) {
     let w = wide(&text);
     let _ = SetWindowTextW(edit, PCWSTR(w.as_ptr()));
     let f = gui_font();
-    SendMessageW(edit, WM_SETFONT, Some(WPARAM(f.0 as usize)), Some(LPARAM(1)));
+    SendMessageW(
+        edit,
+        WM_SETFONT,
+        Some(WPARAM(f.0 as usize)),
+        Some(LPARAM(1)),
+    );
 
     // Buttons bottom-right, inside the client (Close rightmost, Copy to its left).
     let close_x = cw - m - btn_w;
     let copy_x = close_x - gap - btn_w;
-    ctl(hwnd, BUTTON, t("btn_copy"), WS_TABSTOP, copy_x, btn_y, btn_w, btn_h, ID_COPY, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_copy"),
+        WS_TABSTOP,
+        copy_x,
+        btn_y,
+        btn_w,
+        btn_h,
+        ID_COPY,
+        hinst,
+    );
     ctl(
         hwnd,
         BUTTON,

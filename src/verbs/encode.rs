@@ -84,7 +84,10 @@ impl Drop for OutSlot {
         // Remove only a still-empty placeholder: a successful write replaced it with
         // a non-empty file (keep it); a failed/abandoned one left it at zero bytes
         // (clean it up). Image encoders never produce a 0-byte success.
-        if std::fs::metadata(&self.0).map(|m| m.len() == 0).unwrap_or(false) {
+        if std::fs::metadata(&self.0)
+            .map(|m| m.len() == 0)
+            .unwrap_or(false)
+        {
             let _ = std::fs::remove_file(&self.0);
         }
     }
@@ -96,7 +99,11 @@ pub(crate) fn reserve(name: impl Fn(u32) -> PathBuf) -> OutSlot {
     let mut n = 0u32;
     loop {
         let cand = name(n);
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&cand) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&cand)
+        {
             Ok(_) => return OutSlot(cand), // the placeholder handle closes here
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
             // Couldn't create (permission / missing dir): hand the name back anyway —
@@ -109,11 +116,19 @@ pub(crate) fn reserve(name: impl Fn(u32) -> PathBuf) -> OutSlot {
 /// Reserve a free `<stem>.<ext>` next to `src` (`<stem> (n).<ext>` if taken),
 /// atomically (see [`reserve`]). Replaces the old existence-check picker.
 pub(crate) fn unique_output(src: &Path, ext: &str) -> OutSlot {
-    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string();
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image")
+        .to_string();
     let dir = src.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
     let ext = ext.to_string();
     reserve(move |n| {
-        let name = if n == 0 { format!("{stem}.{ext}") } else { format!("{stem} ({n}).{ext}") };
+        let name = if n == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem} ({n}).{ext}")
+        };
         dir.join(name)
     })
 }
@@ -225,7 +240,11 @@ pub fn convert_file(path: &str, target: Target) -> Result<std::path::PathBuf> {
 pub fn transform_file(path: &str, t: Transform) -> Result<PathBuf> {
     let bytes = read_capped(path)?;
     let src = Path::new(path);
-    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
 
     // LOSSLESS path for baseline JPEGs: rotate/flip the DCT coefficients directly
     // (no decode-to-pixels, no re-quantize → zero quality loss). Falls through to
@@ -284,7 +303,11 @@ pub fn resize_file(path: &str, r: Resize) -> Result<PathBuf> {
     let bytes = read_capped(path)?;
     let img = apply_resize(decode::decode_full(&bytes)?, r);
     let src = Path::new(path);
-    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
     let out_ext = edit_output_ext(&ext);
     let native_format = if ext_needs_magick(out_ext) {
         None
@@ -345,7 +368,11 @@ pub(crate) fn preserve_src_time(src: &Path, out: &Path) {
 /// (rotate/resize/email) and the DLL's routed resize/email (which pass the reserved
 /// path to `st2k`).
 pub(crate) fn reserve_unique_suffix(src: &Path, suffix: &str, ext: &str) -> OutSlot {
-    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string();
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image")
+        .to_string();
     let dir = src.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
     let (suffix, ext) = (suffix.to_string(), ext.to_string());
     reserve(move |n| {
@@ -756,10 +783,7 @@ fn encode_hdr_bounded<W: Write>(writer: &mut W, img: &DynamicImage) -> std::io::
     Ok(())
 }
 
-fn encode_farbfeld_streaming<W: Write>(
-    writer: &mut W,
-    img: &DynamicImage,
-) -> std::io::Result<()> {
+fn encode_farbfeld_streaming<W: Write>(writer: &mut W, img: &DynamicImage) -> std::io::Result<()> {
     writer.write_all(b"farbfeld")?;
     writer.write_all(&img.width().to_be_bytes())?;
     writer.write_all(&img.height().to_be_bytes())?;
@@ -927,13 +951,20 @@ fn encode_to_opts(
     };
     let res = match format {
         ImageFormat::Jpeg => img
-            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, jpeg_quality))
+            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut w,
+                jpeg_quality,
+            ))
             .map_err(|_| Error::from(E_FAIL)),
         // Lossy WebP via libwebp (image-webp only encodes lossless). Smaller
         // files for photos; alpha is preserved. Optional: without `webp-lossy`,
         // WebP falls through to the lossless `other` arm (the `image` encoder).
         #[cfg(feature = "webp-lossy")]
         ImageFormat::WebP if webp_quality.is_some() => {
+            let quality = match webp_quality {
+                Some(quality) => quality,
+                None => return Err(Error::from(E_FAIL)),
+            };
             // libwebp rejects edges > 16383. `encode()` looks infallible but
             // .unwrap()s internally, and the worker thread has no catch_unwind
             // (panic=abort) — so an oversized image would abort the whole batch.
@@ -944,7 +975,7 @@ fn encode_to_opts(
             }
             let rgba = img.to_rgba8();
             let mem = webp::Encoder::from_rgba(rgba.as_raw(), pw, ph)
-                .encode(webp_quality.unwrap().clamp(1, 100) as f32);
+                .encode(quality.clamp(1, 100) as f32);
             w.write_all(&mem).map_err(|_| Error::from(E_FAIL))
         }
         ImageFormat::Png => {
@@ -962,12 +993,8 @@ fn encode_to_opts(
             ))
             .map_err(|_| Error::from(E_FAIL))
         }
-        ImageFormat::OpenExr => {
-            encode_exr_bounded(&mut w, img).map_err(|_| Error::from(E_FAIL))
-        }
-        ImageFormat::Hdr => {
-            encode_hdr_bounded(&mut w, img).map_err(|_| Error::from(E_FAIL))
-        }
+        ImageFormat::OpenExr => encode_exr_bounded(&mut w, img).map_err(|_| Error::from(E_FAIL)),
+        ImageFormat::Hdr => encode_hdr_bounded(&mut w, img).map_err(|_| Error::from(E_FAIL)),
         ImageFormat::Farbfeld => {
             encode_farbfeld_streaming(&mut w, img).map_err(|_| Error::from(E_FAIL))
         }
@@ -1031,7 +1058,9 @@ pub(crate) fn apply_resize(img: DynamicImage, r: Resize) -> DynamicImage {
         Resize::Fit(..) => img,
         // `image::resize` scales in BOTH directions (aspect preserved), which is
         // exactly the explicit-dimensions contract.
-        Resize::FitUp(w, h) => img.resize(w.max(1), h.max(1), image::imageops::FilterType::Lanczos3),
+        Resize::FitUp(w, h) => {
+            img.resize(w.max(1), h.max(1), image::imageops::FilterType::Lanczos3)
+        }
         Resize::Percent(p) => {
             let s = p.clamp(1, 1000) as f64 / 100.0;
             let w = ((img.width() as f64 * s).round() as u32).max(1);
@@ -1049,11 +1078,19 @@ pub fn convert_file_opts(path: &str, opts: ConvertOpts, out_dir: &Path) -> Resul
     if matches!(opts.target.format, ImageFormat::Jpeg) {
         img = flatten_onto_white(&img);
     }
-    let stem = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string();
+    let stem = Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image")
+        .to_string();
     let ext = opts.target.ext.to_string();
     let dir = out_dir.to_path_buf();
     let slot = reserve(move |n| {
-        let name = if n == 0 { format!("{stem}.{ext}") } else { format!("{stem} ({n}).{ext}") };
+        let name = if n == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem} ({n}).{ext}")
+        };
         dir.join(name)
     });
     write_atomic(slot.path(), |tmp| {
@@ -1080,7 +1117,13 @@ pub fn convert_file_opts(path: &str, opts: ConvertOpts, out_dir: &Path) -> Resul
 /// `convert_file` uses, so a helper-routed PNG convert is byte-identical to the
 /// in-process one (it used to hard-code level 6 here, diverging whenever the user's
 /// PNG setting wasn't 6).
-pub fn convert_to(input: &str, out: &Path, quality: u8, webp_quality: Option<u8>, resize: Resize) -> Result<()> {
+pub fn convert_to(
+    input: &str,
+    out: &Path,
+    quality: u8,
+    webp_quality: Option<u8>,
+    resize: Resize,
+) -> Result<()> {
     let ext = out
         .extension()
         .and_then(|e| e.to_str())
@@ -1122,7 +1165,12 @@ pub fn convert_to(input: &str, out: &Path, quality: u8, webp_quality: Option<u8>
 /// exotic Convert targets the `image` crate can't encode (PSD/DDS/JP2/…).
 /// Decodes with OUR pipeline (so every input format works), applies `resize`, then
 /// hands magick a PNG to write `out` through an explicit, allowlisted coder.
-pub fn convert_to_magick(input: &str, out: &Path, resize: Resize, quality: Option<u8>) -> Result<()> {
+pub fn convert_to_magick(
+    input: &str,
+    out: &Path,
+    resize: Resize,
+    quality: Option<u8>,
+) -> Result<()> {
     let target_ext = out
         .extension()
         .and_then(|extension| extension.to_str())
@@ -1153,11 +1201,19 @@ pub fn convert_to_magick_in(
     if !decode::magick_output_supported(ext) {
         return Err(Error::from(E_FAIL));
     }
-    let stem = Path::new(input).file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string();
+    let stem = Path::new(input)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image")
+        .to_string();
     let dir = out_dir.to_path_buf();
     let e = ext.to_string();
     let slot = reserve(move |n| {
-        let name = if n == 0 { format!("{stem}.{e}") } else { format!("{stem} ({n}).{e}") };
+        let name = if n == 0 {
+            format!("{stem}.{e}")
+        } else {
+            format!("{stem} ({n}).{e}")
+        };
         dir.join(name)
     });
     convert_to_magick(input, slot.path(), resize, quality)?;
@@ -1168,10 +1224,18 @@ pub fn convert_to_magick_in(
 /// Wraps [`crate::topdf::combine_to_pdf`] so the Convert… dialog's PDF target
 /// carries no naming logic. Returns the output path.
 pub fn convert_image_to_pdf_in(input: &str, out_dir: &Path, quality: u8) -> Result<PathBuf> {
-    let stem = Path::new(input).file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string();
+    let stem = Path::new(input)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image")
+        .to_string();
     let dir = out_dir.to_path_buf();
     let slot = reserve(move |n| {
-        let name = if n == 0 { format!("{stem}.pdf") } else { format!("{stem} ({n}).pdf") };
+        let name = if n == 0 {
+            format!("{stem}.pdf")
+        } else {
+            format!("{stem} ({n}).pdf")
+        };
         dir.join(name)
     });
     let one = [input.to_string()];
@@ -1186,7 +1250,10 @@ pub fn convert_image_to_pdf_in(input: &str, out_dir: &Path, quality: u8) -> Resu
 pub fn shrink_for_email(path: &str, size: EmailSize) -> Result<PathBuf> {
     let bytes = read_capped(path)?;
     let edge = size.max_edge();
-    let img = flatten_onto_white(&apply_resize(decode::decode_full(&bytes)?, Resize::Fit(edge, edge)));
+    let img = flatten_onto_white(&apply_resize(
+        decode::decode_full(&bytes)?,
+        Resize::Fit(edge, edge),
+    ));
     let src = Path::new(path);
     let slot = reserve_unique_suffix(src, "email", "jpg");
     write_atomic(slot.path(), |tmp| {
@@ -1211,8 +1278,10 @@ const COMPRESS_Q_MAX: u8 = 95;
 /// Encode `img` to in-memory JPEG bytes at `quality` — the probe the size search uses.
 fn jpeg_bytes(img: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
-    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality))
-        .map_err(|_| Error::from(E_FAIL))?;
+    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+        &mut buf, quality,
+    ))
+    .map_err(|_| Error::from(E_FAIL))?;
     Ok(buf)
 }
 
@@ -1333,8 +1402,7 @@ mod bounded_native_encoder_tests {
             }
             _ => panic!("EXR output must use bounded tiles"),
         }
-        let decoded_exr =
-            image::load_from_memory_with_format(&exr, ImageFormat::OpenExr).unwrap();
+        let decoded_exr = image::load_from_memory_with_format(&exr, ImageFormat::OpenExr).unwrap();
         let decoded_exr = decoded_exr.to_rgba32f();
         let exr_pixel = decoded_exr.get_pixel(0, 0).0;
         assert!(
@@ -1496,7 +1564,10 @@ mod bounded_native_encoder_tests {
         encode_hdr_bounded(&mut rle, &rle_img).unwrap();
         let rle_header =
             b"#?RADIANCE\n# Rust HDR encoder\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 32767\n";
-        assert_eq!(&rle[rle_header.len()..rle_header.len() + 4], &[2, 2, 127, 255]);
+        assert_eq!(
+            &rle[rle_header.len()..rle_header.len() + 4],
+            &[2, 2, 127, 255]
+        );
         assert_eq!(
             image::load_from_memory_with_format(&rle, ImageFormat::Hdr)
                 .unwrap()
@@ -1514,7 +1585,10 @@ mod bounded_native_encoder_tests {
         let raw_header =
             b"#?RADIANCE\n# Rust HDR encoder\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 32768\n";
         assert_eq!(raw.len(), raw_header.len() + 32_768 * 4);
-        assert_ne!(&raw[raw_header.len()..raw_header.len() + 4], &[2, 2, 128, 0]);
+        assert_ne!(
+            &raw[raw_header.len()..raw_header.len() + 4],
+            &[2, 2, 128, 0]
+        );
         assert_eq!(
             image::load_from_memory_with_format(&raw, ImageFormat::Hdr)
                 .unwrap()
@@ -1596,12 +1670,10 @@ mod bounded_native_encoder_tests {
         assert_eq!(decoded.dimensions(), (5, 1));
         assert_eq!(decoded.get_pixel(0, 0).0, [0.0, 0.0, 0.0]);
         assert_eq!(decoded.get_pixel(4, 0).0, [0.0, 0.0, 0.0]);
-        assert!(
-            decoded
-                .pixels()
-                .flat_map(|pixel| pixel.0)
-                .all(|component| component.is_finite() && component >= 0.0)
-        );
+        assert!(decoded
+            .pixels()
+            .flat_map(|pixel| pixel.0)
+            .all(|component| component.is_finite() && component >= 0.0));
         assert!(decoded.get_pixel(1, 0).0[0] > 1.0e38);
         assert!(decoded.get_pixel(2, 0).0[0] > 1.0e38);
     }
@@ -1609,8 +1681,8 @@ mod bounded_native_encoder_tests {
     #[test]
     fn output_extension_routing_is_explicit_and_honest() {
         for ext in [
-            "avif", "jxl", "psd", "dds", "jp2", "pcx", "sgi", "pfm", "dpx", "fits", "xpm",
-            "pict", "ras", "palm",
+            "avif", "jxl", "psd", "dds", "jp2", "pcx", "sgi", "pfm", "dpx", "fits", "xpm", "pict",
+            "ras", "palm",
         ] {
             assert!(ext_needs_magick(ext), "{ext} must route through Magick");
             assert_eq!(edit_output_ext(ext), ext);
@@ -1658,24 +1730,13 @@ mod bounded_native_encoder_tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("source.png");
-        DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
-            3,
-            2,
-            image::Rgb([20, 80, 160]),
-        ))
-        .save(&input)
-        .unwrap();
+        DynamicImage::ImageRgb8(image::RgbImage::from_pixel(3, 2, image::Rgb([20, 80, 160])))
+            .save(&input)
+            .unwrap();
         let output = dir.join("existing.unknown");
         std::fs::write(&output, b"original destination").unwrap();
 
-        assert!(convert_to(
-            input.to_str().unwrap(),
-            &output,
-            90,
-            None,
-            Resize::None
-        )
-        .is_err());
+        assert!(convert_to(input.to_str().unwrap(), &output, 90, None, Resize::None).is_err());
         assert_eq!(std::fs::read(&output).unwrap(), b"original destination");
         assert!(!with_tmp_suffix(&output).exists());
         let _ = std::fs::remove_dir_all(dir);
@@ -1703,12 +1764,19 @@ mod bounded_native_encoder_tests {
 
         let edited = transform_file(input.to_str().unwrap(), Transform::Right90).unwrap();
         assert_eq!(edited.extension().and_then(|ext| ext.to_str()), Some("png"));
-        assert!(std::fs::read(&edited).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(std::fs::read(&edited)
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
         assert_eq!(image::open(&edited).unwrap().dimensions(), (8, 12));
 
         let resized = resize_file(input.to_str().unwrap(), Resize::Fit(6, 4)).unwrap();
-        assert_eq!(resized.extension().and_then(|ext| ext.to_str()), Some("png"));
-        assert!(std::fs::read(&resized).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_eq!(
+            resized.extension().and_then(|ext| ext.to_str()),
+            Some("png")
+        );
+        assert!(std::fs::read(&resized)
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
         assert_eq!(image::open(&resized).unwrap().dimensions(), (6, 4));
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1740,14 +1808,7 @@ mod bounded_native_encoder_tests {
 
         let psd = dir.join("existing.psd");
         std::fs::write(&psd, b"old destination").unwrap();
-        convert_to(
-            input.to_str().unwrap(),
-            &psd,
-            90,
-            None,
-            Resize::None,
-        )
-        .unwrap();
+        convert_to(input.to_str().unwrap(), &psd, 90, None, Resize::None).unwrap();
         assert!(std::fs::read(&psd).unwrap().starts_with(b"8BPS"));
         assert!(!with_tmp_suffix(&psd).exists());
 
@@ -1756,7 +1817,10 @@ mod bounded_native_encoder_tests {
         assert!(std::fs::read(&edited).unwrap().starts_with(b"8BPS"));
 
         let resized = resize_file(psd.to_str().unwrap(), Resize::Fit(20, 15)).unwrap();
-        assert_eq!(resized.extension().and_then(|ext| ext.to_str()), Some("psd"));
+        assert_eq!(
+            resized.extension().and_then(|ext| ext.to_str()),
+            Some("psd")
+        );
         assert!(std::fs::read(&resized).unwrap().starts_with(b"8BPS"));
         let _ = std::fs::remove_dir_all(dir);
     }

@@ -155,14 +155,14 @@ pub(crate) mod testutil {
         f.extend_from_slice(&SENTINEL);
         f.extend_from_slice(&0u32.to_le_bytes()); // overall size (ignored)
         f.push(4); // 3 junk records + the real PNG record
-        // Fixed layout: table starts after sentinel(16) + size(4) + count(1),
-        // each record is 9 bytes, and the PNG payload follows the table.
+                   // Fixed layout: table starts after sentinel(16) + size(4) + count(1),
+                   // each record is 9 bytes, and the PNG payload follows the table.
         let png_off = imgptr + 16 + 4 + 1 + 4 * 9;
         let recs: [(u8, u32, u32); 4] = [
-            (6, FAR, 0),                                      // skipped ONLY by `size == 0`
-            (6, FAR, (super::super::MAX_COVER as u32) + 1),   // ONLY by `size > MAX_COVER`
-            (7, FAR, 100),                                    // ONLY by `code not in {2,3,6}`
-            (6, png_off, png.len() as u32),                   // the real preview
+            (6, FAR, 0),                                    // skipped ONLY by `size == 0`
+            (6, FAR, (super::super::MAX_COVER as u32) + 1), // ONLY by `size > MAX_COVER`
+            (7, FAR, 100),                                  // ONLY by `code not in {2,3,6}`
+            (6, png_off, png.len() as u32),                 // the real preview
         ];
         for (code, off, size) in recs {
             f.push(code);

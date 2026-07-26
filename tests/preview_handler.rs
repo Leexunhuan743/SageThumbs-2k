@@ -36,9 +36,7 @@ use windows::Win32::System::Com::{
     CoInitializeEx, IClassFactory, IStream, COINIT_APARTMENTTHREADED, STGM_READ,
     STGM_SHARE_DENY_NONE,
 };
-use windows::Win32::System::LibraryLoader::{
-    GetModuleHandleW, GetProcAddress, LoadLibraryW,
-};
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Shell::PropertiesSystem::IInitializeWithStream;
 use windows::Win32::UI::Shell::{IPreviewHandler, SHCreateMemStream, SHCreateStreamOnFileEx};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -77,7 +75,10 @@ fn dll_path() -> std::path::PathBuf {
 /// same handshake prevhost performs.
 unsafe fn create_handler() -> Result<IInitializeWithStream> {
     let path = dll_path();
-    assert!(path.exists(), "cdylib not built at {path:?} — run `cargo build` first");
+    assert!(
+        path.exists(),
+        "cdylib not built at {path:?} — run `cargo build` first"
+    );
     let wide: Vec<u16> = path
         .as_os_str()
         .encode_wide()
@@ -85,12 +86,17 @@ unsafe fn create_handler() -> Result<IInitializeWithStream> {
         .collect();
     let module: HMODULE = LoadLibraryW(PCWSTR(wide.as_ptr()))?;
 
-    let proc = GetProcAddress(module, s!("DllGetClassObject"))
-        .ok_or_else(|| Error::from(E_FAIL))?;
+    let proc =
+        GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
     let dll_get_class_object: DllGetClassObjectFn = std::mem::transmute(proc);
 
     let mut factory_ptr: *mut c_void = std::ptr::null_mut();
-    dll_get_class_object(&CLSID_PREVIEW_HANDLER, &IClassFactory::IID, &mut factory_ptr).ok()?;
+    dll_get_class_object(
+        &CLSID_PREVIEW_HANDLER,
+        &IClassFactory::IID,
+        &mut factory_ptr,
+    )
+    .ok()?;
     assert!(!factory_ptr.is_null(), "null class factory");
     let factory = IClassFactory::from_raw(factory_ptr);
     factory.CreateInstance(None)
@@ -166,7 +172,12 @@ unsafe fn preview_renders(stream: &IStream, is_hit: impl Fn([u8; 4]) -> bool) ->
     let init = create_handler().expect("create preview handler");
     init.Initialize(stream, 0).expect("Initialize(IStream)");
     let handler: IPreviewHandler = init.cast().expect("QI IPreviewHandler");
-    let rect = RECT { left: 0, top: 0, right: PANE_W, bottom: PANE_H };
+    let rect = RECT {
+        left: 0,
+        top: 0,
+        right: PANE_W,
+        bottom: PANE_H,
+    };
     handler.SetWindow(parent, &rect).expect("SetWindow");
     handler.DoPreview().expect("DoPreview");
 
@@ -216,10 +227,20 @@ unsafe fn print_client_center(child: HWND) -> Option<[u8; 4]> {
     }
     let old = SelectObject(memdc, hbmp.into());
     // Delivered to the handler's UI thread (it pumps), rendered synchronously.
-    SendMessageW(child, WM_PRINTCLIENT, Some(WPARAM(memdc.0 as usize)), Some(LPARAM(0)));
+    SendMessageW(
+        child,
+        WM_PRINTCLIENT,
+        Some(WPARAM(memdc.0 as usize)),
+        Some(LPARAM(0)),
+    );
     let px_index = ((PANE_H / 2) * PANE_W + PANE_W / 2) as usize * 4;
     let buf = std::slice::from_raw_parts(bits as *const u8, (PANE_W * PANE_H) as usize * 4);
-    let px = [buf[px_index], buf[px_index + 1], buf[px_index + 2], buf[px_index + 3]];
+    let px = [
+        buf[px_index],
+        buf[px_index + 1],
+        buf[px_index + 2],
+        buf[px_index + 3],
+    ];
     SelectObject(memdc, old);
     let _ = DeleteObject(hbmp.into());
     let _ = DeleteDC(memdc);
@@ -305,5 +326,8 @@ fn preview_streams_cover_from_oversized_cbz() {
         preview_renders(&stream, is_red)
     };
     let _ = std::fs::remove_file(&path);
-    assert!(rendered, "oversized CBZ cover never rendered — streamed-cover rescue missing");
+    assert!(
+        rendered,
+        "oversized CBZ cover never rendered — streamed-cover rescue missing"
+    );
 }

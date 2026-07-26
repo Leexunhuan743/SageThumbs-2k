@@ -37,7 +37,12 @@ pub(super) struct WebViewHost {
 /// Create a WebView2 over `parent` at `rect`, navigate to `url`, and lock it down per `mode`.
 /// `None` on any failure (missing runtime, non-writable profile, async error) — the caller falls
 /// back to a text/card preview. Blocks briefly while pumping messages for the two async creates.
-pub(super) unsafe fn create(parent: HWND, rect: &RECT, url: &str, mode: Mode) -> Option<WebViewHost> {
+pub(super) unsafe fn create(
+    parent: HWND,
+    rect: &RECT,
+    url: &str,
+    mode: Mode,
+) -> Option<WebViewHost> {
     // WebView2 requires the calling (UI) thread to be a COM Single-Threaded Apartment. The preview
     // thread isn't otherwise COM-initialized, so init it here (idempotent — S_FALSE if already STA;
     // we intentionally never CoUninitialize, leaving the apartment for the thread's life).
@@ -148,7 +153,10 @@ pub(super) unsafe fn create(parent: HWND, rect: &RECT, url: &str, mode: Mode) ->
 
     let url_h = HSTRING::from(url);
     webview.Navigate(PCWSTR(url_h.as_ptr())).ok()?;
-    Some(WebViewHost { controller, profile_dir })
+    Some(WebViewHost {
+        controller,
+        profile_dir,
+    })
 }
 
 impl WebViewHost {

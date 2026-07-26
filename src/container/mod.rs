@@ -34,10 +34,10 @@ pub(crate) mod collage;
 mod djvu;
 mod dwg;
 mod eps;
-mod indd;
 mod epub;
-mod gcode;
 mod fb2;
+mod gcode;
+mod indd;
 // Amiga / Deluxe Paint IFF ILBM (.iff/.ilbm/.lbm) — a real planar-bitmap decoder.
 mod ilbm;
 mod max;
@@ -126,7 +126,12 @@ pub fn list_archive(bytes: &[u8]) -> Option<Vec<(String, u64, bool)>> {
     } else {
         return None;
     };
-    Some(entries.into_iter().map(|e| (e.name, e.size, e.is_dir)).collect())
+    Some(
+        entries
+            .into_iter()
+            .map(|e| (e.name, e.size, e.is_dir))
+            .collect(),
+    )
 }
 
 /// Does `head` (the first bytes of a file) look like an audio container that may
@@ -352,7 +357,10 @@ pub fn extract_cover(bytes: &[u8]) -> Option<CoverOut> {
 /// raster chunks we never touch). RAR can't stream (the `rars` crate needs the full
 /// buffer), so a giant CBR still falls through to the default icon. `head` is the
 /// first bytes (already peeked) for the magic sniff.
-pub fn archive_cover_seek<R: std::io::Read + std::io::Seek>(reader: R, head: &[u8]) -> Option<Vec<u8>> {
+pub fn archive_cover_seek<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    head: &[u8],
+) -> Option<Vec<u8>> {
     // ZIP family: CBZ / ZIP (and any zip of images).
     if is_zip(head) {
         return zipfmt::cover_from_reader(reader);
@@ -492,8 +500,8 @@ pub fn head_preview_len<R: std::io::Read + std::io::Seek>(
 /// `cover_exts_are_known_formats` test can assert it against `FORMATS`. Every
 /// entry must be in `FORMATS` except the documented [`COVER_ONLY_EXCEPTIONS`].
 pub(crate) const COVER_IMAGE_EXTS: &[&str] = &[
-    "bmp", "ico", "gif", "jpg", "jpe", "jfif", "jpeg", "png", "tif", "tiff", "svg", "webp",
-    "jxr", "nrw", "nef", "dng", "cr2", "heif", "heic", "avif", "jxl",
+    "bmp", "ico", "gif", "jpg", "jpe", "jfif", "jpeg", "png", "tif", "tiff", "svg", "webp", "jxr",
+    "nrw", "nef", "dng", "cr2", "heif", "heic", "avif", "jxl",
     // JPEG-2000 — decodes only on the full (ImageMagick/openjpeg) install, so
     // `select::pick_cover` treats these as a LAST RESORT: a .jp2 page never shadows a
     // sibling .jpg that the compact (no-magick) install could actually render.
@@ -524,12 +532,12 @@ pub(crate) fn is_image_name(name: &str) -> bool {
 #[cfg(test)]
 pub(crate) use clip::testutil as clip_testutil;
 
+#[cfg(test)]
+pub(crate) use dwg::testutil as dwg_testutil;
 /// Test-only re-exports so the `decode`/`streamsrc` head-preview fast-path tests
 /// can build synthetic PSD/DWG files without reaching into the private modules.
 #[cfg(test)]
 pub(crate) use psd::testutil as psd_testutil;
-#[cfg(test)]
-pub(crate) use dwg::testutil as dwg_testutil;
 
 /// Shared embedded-JPEG span scanner — see [`util::jpeg_span_len`]. Re-exported so
 /// `decode` and the container extractors (PSP, C4D) don't each hand-roll their own.
@@ -670,9 +678,11 @@ mod tests {
             zw.start_file("OEBPS/content.opf", opts).unwrap();
             zw.write_all(opf.as_bytes()).unwrap();
             // Natural-sorts BEFORE the cover: what the generic pick would grab.
-            zw.start_file("OEBPS/Images/aaa-illustration.png", opts).unwrap();
+            zw.start_file("OEBPS/Images/aaa-illustration.png", opts)
+                .unwrap();
             zw.write_all(&illustration).unwrap();
-            zw.start_file("OEBPS/Images/zzz-frontispiece.png", opts).unwrap();
+            zw.start_file("OEBPS/Images/zzz-frontispiece.png", opts)
+                .unwrap();
             zw.write_all(&real_cover).unwrap();
             zw.finish().unwrap();
         }
@@ -730,7 +740,10 @@ mod tests {
         let gz = gz.finish().unwrap();
         match extract_cover(&gz) {
             Some(CoverOut::Image(img)) => assert_eq!((img.width(), img.height()), (4, 3)),
-            other => panic!("gzip blend must extract a cover (got some: {})", other.is_some()),
+            other => panic!(
+                "gzip blend must extract a cover (got some: {})",
+                other.is_some()
+            ),
         }
 
         // zstd (the "Compress" save option, Blender 3.0+). ruzstd is decode-only,
@@ -742,12 +755,16 @@ mod tests {
         z.extend_from_slice(&blend);
         match extract_cover(&z) {
             Some(CoverOut::Image(img)) => assert_eq!((img.width(), img.height()), (4, 3)),
-            other => panic!("zstd blend must extract a cover (got some: {})", other.is_some()),
+            other => panic!(
+                "zstd blend must extract a cover (got some: {})",
+                other.is_some()
+            ),
         }
 
         // gzip of a NON-blend payload is not ours — svgz/emz stay with the decode tiers.
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-        gz.write_all(b"<svg xmlns='http://www.w3.org/2000/svg'/>").unwrap();
+        gz.write_all(b"<svg xmlns='http://www.w3.org/2000/svg'/>")
+            .unwrap();
         assert!(extract_cover(&gz.finish().unwrap()).is_none());
     }
 
@@ -824,7 +841,9 @@ mod tests {
         use std::panic::{catch_unwind, AssertUnwindSafe};
 
         // Seeds: every corpus sample (size-capped) + a few degenerate buffers.
-        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("test-corpus");
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("test-corpus");
         let mut seeds: Vec<Vec<u8>> = vec![Vec::new(), vec![0u8; 64], vec![0xFFu8; 64]];
         if let Ok(rd) = std::fs::read_dir(&corpus) {
             for entry in rd.flatten() {
@@ -909,7 +928,10 @@ mod tests {
                 let _ = std::fs::write(&p, data);
                 eprintln!("PANIC iter {i}: {} bytes -> {}", data.len(), p.display());
             }
-            panic!("fuzz_extract_cover found {} panicking input(s)", crashes.len());
+            panic!(
+                "fuzz_extract_cover found {} panicking input(s)",
+                crashes.len()
+            );
         }
         eprintln!("fuzz_extract_cover: {ITERS} iterations, 0 panics");
     }

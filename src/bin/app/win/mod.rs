@@ -13,8 +13,7 @@ use std::sync::OnceLock;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    DeleteObject, GetDC, GetTextExtentPoint32W,
-    ReleaseDC, SelectObject, HBITMAP, HBRUSH, HGDIOBJ,
+    DeleteObject, GetDC, GetTextExtentPoint32W, ReleaseDC, SelectObject, HBITMAP, HBRUSH, HGDIOBJ,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -22,12 +21,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-
 use sagethumbs2k_core::i18n;
-mod scaling;
 mod pickers;
-pub(crate) use scaling::{gui_font, gui_font_for, gui_font_header, gui_font_title, gui_font_sized, dpi_scale, dpi_scale_dpi, set_dpi_override, wm_dpichanged};
-pub(crate) use pickers::{desktop_dir, pick_folder, pick_save_png, pick_save_settings, pick_open_settings, set_clipboard_text};
+mod scaling;
+pub(crate) use pickers::{
+    desktop_dir, pick_folder, pick_open_settings, pick_save_png, pick_save_settings,
+    set_clipboard_text,
+};
+pub(crate) use scaling::{
+    dpi_scale, dpi_scale_dpi, gui_font, gui_font_for, gui_font_header, gui_font_sized,
+    gui_font_title, set_dpi_override, wm_dpichanged,
+};
 
 /// Shorthand for a translated UI string in the active language.
 pub(crate) fn t(key: &str) -> &'static str {
@@ -50,7 +54,10 @@ pub(crate) const URL_GITHUB: &str = "https://github.com/LunarWerxs/SageThumbs-2k
 const APP_ICO: &[u8] = include_bytes!("../../../../assets/app-win.ico");
 
 pub(crate) fn wide(s: &str) -> Vec<u16> {
-    std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    std::ffi::OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// Read a WinInet request handle to EOF, capped at `max_bytes`. Returns the FULL
@@ -66,8 +73,13 @@ pub(crate) unsafe fn wininet_drain(req: *mut c_void, max_bytes: usize) -> Option
     let mut buf = [0u8; 16384];
     loop {
         let mut read = 0u32;
-        if InternetReadFile(req, buf.as_mut_ptr() as *mut c_void, buf.len() as u32, &mut read)
-            .is_err()
+        if InternetReadFile(
+            req,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as u32,
+            &mut read,
+        )
+        .is_err()
         {
             return None; // read error → response is incomplete, don't trust it
         }
@@ -102,9 +114,17 @@ pub(crate) unsafe fn run_dialog(
         lpszClassName: class,
         // A top-level dialog carries the app icon + arrow cursor; the modal popup
         // inherits its owner's icon (the original popup set neither).
-        hIcon: if modal.is_none() { app_icon().unwrap_or_default() } else { Default::default() },
+        hIcon: if modal.is_none() {
+            app_icon().unwrap_or_default()
+        } else {
+            Default::default()
+        },
         hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-        hbrBackground: if dark { crate::dark::dark_bg_brush() } else { HBRUSH(16isize as *mut c_void) },
+        hbrBackground: if dark {
+            crate::dark::dark_bg_brush()
+        } else {
+            HBRUSH(16isize as *mut c_void)
+        },
         ..Default::default()
     };
     RegisterClassW(&wc); // idempotent: re-register returns 0 (already registered) — fine
@@ -113,8 +133,15 @@ pub(crate) unsafe fn run_dialog(
     // modal popup; the primary monitor's DPI otherwise (a top-level dialog opens
     // at CW_USEDEFAULT, so we use the system DPI as the creation DPI).
     let dpi_ref = modal.unwrap_or_default();
-    let creation_dpi = if dpi_ref.0.is_null() { dpi_for_system() } else { GetDpiForWindow(dpi_ref) as i32 };
-    let (sw, sh) = (dpi_scale_dpi(w, creation_dpi), dpi_scale_dpi(h, creation_dpi));
+    let creation_dpi = if dpi_ref.0.is_null() {
+        dpi_for_system()
+    } else {
+        GetDpiForWindow(dpi_ref) as i32
+    };
+    let (sw, sh) = (
+        dpi_scale_dpi(w, creation_dpi),
+        dpi_scale_dpi(h, creation_dpi),
+    );
 
     let (ex_style, style, x, y, parent) = match modal {
         None => (
@@ -130,7 +157,13 @@ pub(crate) unsafe fn run_dialog(
             let _ = GetWindowRect(owner, &mut orc);
             let px = orc.left + ((orc.right - orc.left) - sw) / 2;
             let py = orc.top + ((orc.bottom - orc.top) - sh) / 2;
-            (WS_EX_DLGMODALFRAME, WS_POPUP | WS_CAPTION | WS_SYSMENU, px, py, Some(owner))
+            (
+                WS_EX_DLGMODALFRAME,
+                WS_POPUP | WS_CAPTION | WS_SYSMENU,
+                px,
+                py,
+                Some(owner),
+            )
         }
     };
 
@@ -190,8 +223,15 @@ pub(crate) unsafe fn pump_msgs(frames: usize) {
 /// (nav rail, pane header, toggle switches) only paint on a real WM_PAINT, so without this a
 /// headless capture races them and leaves blank gaps.
 pub(crate) unsafe fn force_repaint(hwnd: HWND) {
-    use windows::Win32::Graphics::Gdi::{RedrawWindow, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW};
-    let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    use windows::Win32::Graphics::Gdi::{
+        RedrawWindow, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW,
+    };
+    let _ = RedrawWindow(
+        Some(hwnd),
+        None,
+        None,
+        RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+    );
 }
 
 /// Create a top-level dialog window OFF-SCREEN + non-activated — a real window that never
@@ -214,7 +254,11 @@ pub(crate) unsafe fn create_shot_window(
         lpszClassName: class,
         hIcon: app_icon().unwrap_or_default(),
         hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-        hbrBackground: if dark { crate::dark::dark_bg_brush() } else { HBRUSH(16isize as *mut c_void) },
+        hbrBackground: if dark {
+            crate::dark::dark_bg_brush()
+        } else {
+            HBRUSH(16isize as *mut c_void)
+        },
         ..Default::default()
     };
     RegisterClassW(&wc); // idempotent
@@ -266,7 +310,11 @@ pub(crate) fn dpi_for_system() -> i32 {
             windows::Win32::Graphics::Gdi::LOGPIXELSX,
         );
         ReleaseDC(None, dc);
-        if dpi == 0 { 96 } else { dpi }
+        if dpi == 0 {
+            96
+        } else {
+            dpi
+        }
     }
 }
 
@@ -370,7 +418,12 @@ pub(crate) unsafe fn ctl(
         None,
     )
     .expect("create control");
-    SendMessageW(h, WM_SETFONT, Some(WPARAM(gui_font_for(parent).0 as usize)), Some(LPARAM(1)));
+    SendMessageW(
+        h,
+        WM_SETFONT,
+        Some(WPARAM(gui_font_for(parent).0 as usize)),
+        Some(LPARAM(1)),
+    );
     if crate::dark::is_dark() {
         // Edit boxes use the dark common-file-dialog style; everything else the
         // dark Explorer style (themed checkbox glyphs, scrollbars, list rows).
@@ -452,7 +505,14 @@ pub(crate) unsafe fn open_url(url: &str) {
         return;
     }
     let u = wide(url);
-    let _ = ShellExecuteW(None, w!("open"), PCWSTR(u.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+    let _ = ShellExecuteW(
+        None,
+        w!("open"),
+        PCWSTR(u.as_ptr()),
+        PCWSTR::null(),
+        PCWSTR::null(),
+        SW_SHOWNORMAL,
+    );
 }
 
 /// Read a DLL-handed list file (one path per line) into a Vec, trimming each
@@ -479,13 +539,19 @@ pub(crate) fn wstr_to_string(w: &[u16]) -> String {
 /// Decode logo/banner artwork to an HBITMAP sized to `w`x`h`. Prefers a file of
 /// `override_name` next to the EXE (user-swappable) and falls back to the
 /// embedded `default_png`.
-pub(crate) unsafe fn load_art(default_png: &[u8], override_name: &str, w: u32, h: u32) -> Option<HBITMAP> {
+pub(crate) unsafe fn load_art(
+    default_png: &[u8],
+    override_name: &str,
+    w: u32,
+    h: u32,
+) -> Option<HBITMAP> {
     let from_file = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join(override_name)))
         .and_then(|f| std::fs::read(f).ok());
     let data = from_file.as_deref().unwrap_or(default_png);
-    sagethumbs2k_core::app_image::image_to_hbitmap_sized(data, w, h).map(|h| HBITMAP(h as *mut c_void))
+    sagethumbs2k_core::app_image::image_to_hbitmap_sized(data, w, h)
+        .map(|h| HBITMAP(h as *mut c_void))
 }
 
 /// Load the app icon for the title bar + taskbar. Prefers an `app.ico` next to
@@ -509,7 +575,14 @@ pub(crate) unsafe fn app_icon() -> Option<HICON> {
             p
         });
         let w = wide(&path.to_string_lossy());
-        match LoadImageW(None, PCWSTR(w.as_ptr()), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE) {
+        match LoadImageW(
+            None,
+            PCWSTR(w.as_ptr()),
+            IMAGE_ICON,
+            0,
+            0,
+            LR_LOADFROMFILE | LR_DEFAULTSIZE,
+        ) {
             Ok(h) => h.0 as usize,
             Err(_) => 0,
         }
@@ -519,7 +592,12 @@ pub(crate) unsafe fn app_icon() -> Option<HICON> {
 
 /// Set a static control's bitmap, freeing whatever bitmap it held before.
 pub(crate) unsafe fn set_static_bitmap(ctl: HWND, hbmp: HBITMAP) {
-    let old = SendMessageW(ctl, STM_SETIMAGE, Some(WPARAM(IMAGE_BITMAP.0 as usize)), Some(LPARAM(hbmp.0 as isize)));
+    let old = SendMessageW(
+        ctl,
+        STM_SETIMAGE,
+        Some(WPARAM(IMAGE_BITMAP.0 as usize)),
+        Some(LPARAM(hbmp.0 as isize)),
+    );
     if old.0 != 0 {
         let _ = DeleteObject(HGDIOBJ(old.0 as *mut c_void));
     }
@@ -542,7 +620,12 @@ pub(crate) unsafe fn text_width(s: &str) -> i32 {
 pub(crate) unsafe fn message_box(hwnd: HWND, text: &str, caption: &str) {
     let t = wide(text);
     let c = wide(caption);
-    MessageBoxW(Some(hwnd), PCWSTR(t.as_ptr()), PCWSTR(c.as_ptr()), MB_OK | MB_ICONWARNING);
+    MessageBoxW(
+        Some(hwnd),
+        PCWSTR(t.as_ptr()),
+        PCWSTR(c.as_ptr()),
+        MB_OK | MB_ICONWARNING,
+    );
 }
 
 /// One-shot tray balloon from a WINDOWLESS helper process: a throwaway hidden window
@@ -629,7 +712,12 @@ pub(crate) unsafe fn notify_toast(title: &str, body: &str, linger: std::time::Du
 
 pub(crate) unsafe fn check(hwnd: HWND, id: i32, on: bool) {
     if let Ok(h) = GetDlgItem(Some(hwnd), id) {
-        SendMessageW(h, BM_SETCHECK_MSG, Some(WPARAM(on as usize)), Some(LPARAM(0)));
+        SendMessageW(
+            h,
+            BM_SETCHECK_MSG,
+            Some(WPARAM(on as usize)),
+            Some(LPARAM(0)),
+        );
     }
 }
 pub(crate) unsafe fn checked(hwnd: HWND, id: i32) -> bool {

@@ -95,8 +95,8 @@ fn write_values(key: &Key, obj: &Map<String, Json>) -> usize {
 /// root key so it can be unit-tested against a throwaway key. All subkey names are created
 /// relative to `root`; the registry has no parent-traversal, so a crafted name can't escape.
 fn import_tree(root: &Key, text: &str) -> Result<usize, String> {
-    let doc: Json =
-        serde_json::from_str(text).map_err(|e| format!("That isn't a valid settings file.\n\n{e}"))?;
+    let doc: Json = serde_json::from_str(text)
+        .map_err(|e| format!("That isn't a valid settings file.\n\n{e}"))?;
     let mut n = 0;
     if let Some(obj) = doc.get("values").and_then(Json::as_object) {
         n += write_values(root, obj);

@@ -20,31 +20,33 @@
 
 use core::cell::{Cell, RefCell};
 
-use windows_implement::implement;
 use windows::core::{Error, Ref, Result, HRESULT, HSTRING, PCWSTR, PSTR};
-use windows::Win32::Foundation::{COLORREF, E_FAIL, E_NOTIMPL, LPARAM, LRESULT, RECT, SIZE, S_OK, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, E_FAIL, E_NOTIMPL, LPARAM, LRESULT, RECT, SIZE, S_OK, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     AlphaBlend, CreateCompatibleDC, CreateDIBSection, CreateFontIndirectW, CreateSolidBrush,
     DeleteDC, DeleteObject, DrawTextW, FillRect, GdiFlush, GetStockObject, GetSysColor,
     GetTextExtentPoint32W, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER,
-    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, COLOR_MENU,
-    COLOR_MENUTEXT, DEFAULT_GUI_FONT, DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE,
-    HBITMAP, HDC, HFONT, HGDIOBJ, TRANSPARENT,
+    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, COLOR_MENU, COLOR_MENUTEXT, DEFAULT_GUI_FONT,
+    DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, HBITMAP, HDC, HFONT, HGDIOBJ,
+    TRANSPARENT,
 };
 use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
 use windows::Win32::System::Ole::ReleaseStgMedium;
 use windows::Win32::System::Registry::HKEY;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    DragQueryFileW, IContextMenu3, IContextMenu2_Impl, IContextMenu3_Impl, IContextMenu_Impl,
+    DragQueryFileW, IContextMenu2_Impl, IContextMenu3, IContextMenu3_Impl, IContextMenu_Impl,
     IShellExtInit, IShellExtInit_Impl, ShellExecuteW, CMINVOKECOMMANDINFO, HDROP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, GetSystemMetrics, InsertMenuW, SetMenuItemInfoW,
-    SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BYPOSITION, MF_POPUP,
-    MF_SEPARATOR, MF_STRING, MIIM_BITMAP, NONCLIENTMETRICSW, SM_CXMENUCHECK, SM_CYMENUCHECK,
-    SPI_GETNONCLIENTMETRICS, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BYPOSITION, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    MIIM_BITMAP, NONCLIENTMETRICSW, SM_CXMENUCHECK, SM_CYMENUCHECK, SPI_GETNONCLIENTMETRICS,
+    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 };
+use windows_implement::implement;
 
 use crate::{safety, settings, verbs};
 
@@ -203,7 +205,13 @@ fn decode_menu_thumb_budgeted(path: &str) -> Option<MenuThumb> {
             let thumb = img.thumbnail(PREVIEW_WIDE, PREVIEW_BOX);
             let rgba = thumb.to_rgba8();
             let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-            Some(MenuThumb { rgba: rgba.into_raw(), w, h, ow, oh })
+            Some(MenuThumb {
+                rgba: rgba.into_raw(),
+                w,
+                h,
+                ow,
+                oh,
+            })
         })();
         if inited {
             unsafe { windows::Win32::System::Com::CoUninitialize() };
@@ -255,7 +263,12 @@ fn build_preview(path: &str) -> Option<Preview> {
         Some((hbm, t.w, t.h, t.ow, t.oh))
     });
     let (hbm, w, h, info) = match decoded {
-        Some((hbm, w, h, ow, oh)) => (hbm, w, h, format!("{ow} \u{00d7} {oh} px  \u{2013}  {size_txt}")),
+        Some((hbm, w, h, ow, oh)) => (
+            hbm,
+            w,
+            h,
+            format!("{ow} \u{00d7} {oh} px  \u{2013}  {size_txt}"),
+        ),
         None => (HBITMAP::default(), 0, 0, size_txt),
     };
     Some(Preview {
@@ -345,7 +358,8 @@ unsafe fn build_menu_into(
                 }
                 // The leaf's command id is its global leaf index, mapped through
                 // the central id_for() so the offset convention lives in one place.
-                let cmd = verbs::id_for(verbs::CmdSlot::Leaf(verbs::LeafId(*next_leaf)), idcmdfirst);
+                let cmd =
+                    verbs::id_for(verbs::CmdSlot::Leaf(verbs::LeafId(*next_leaf)), idcmdfirst);
                 let _ = AppendMenuW(
                     parent,
                     MF_STRING,
@@ -505,7 +519,11 @@ pub fn render_preview_png(path: &str, out_png: &str, bg: Option<u32>) -> bool {
             Some(c) => {
                 // Contrasting text for the chosen bg so we can preview both modes.
                 let bright = ((c & 0xFF) + ((c >> 8) & 0xFF) + ((c >> 16) & 0xFF)) / 3;
-                let fg = if bright > 128 { 0x0020_2020 } else { 0x00E0_E0E0 };
+                let fg = if bright > 128 {
+                    0x0020_2020
+                } else {
+                    0x00E0_E0E0
+                };
                 (c, fg)
             }
             None => menu_theme_colors(),
@@ -528,13 +546,27 @@ pub fn render_preview_png(path: &str, out_png: &str, bg: Option<u32>) -> bool {
         let memdc = CreateCompatibleDC(None);
         let oldbmp = SelectObject(memdc, dib.into());
 
-        paint_preview(memdc, RECT { left: 0, top: 0, right: iw, bottom: ih }, &p, cbg, cfg);
+        paint_preview(
+            memdc,
+            RECT {
+                left: 0,
+                top: 0,
+                right: iw,
+                bottom: ih,
+            },
+            &p,
+            cbg,
+            cfg,
+        );
         let _ = GdiFlush();
 
         // Compute the byte count in usize with checked math — `(iw * ih * 4) as usize` multiplies
         // as i32 first and could overflow into an undersized length for the `from_raw_parts` below
         // (unsound). In practice the dims are tiny preview sizes, but bail cleanly on anything absurd.
-        let Some(n) = (iw as usize).checked_mul(ih as usize).and_then(|p| p.checked_mul(4)) else {
+        let Some(n) = (iw as usize)
+            .checked_mul(ih as usize)
+            .and_then(|p| p.checked_mul(4))
+        else {
             SelectObject(memdc, oldbmp);
             let _ = DeleteDC(memdc);
             let _ = DeleteObject(dib.into());
@@ -599,7 +631,10 @@ fn checker_shades(bg: u32) -> (u32, u32) {
     let darker = |c: u32| c.saturating_sub(8);
     let lighter = |c: u32| (c + 8).min(255);
     let pack = |r: u32, g: u32, b: u32| r | (g << 8) | (b << 16);
-    (pack(darker(r), darker(g), darker(b)), pack(lighter(r), lighter(g), lighter(b)))
+    (
+        pack(darker(r), darker(g), darker(b)),
+        pack(lighter(r), lighter(g), lighter(b)),
+    )
 }
 
 /// Fill the rect `(left,top)`–`(left+w,top+h)` with an 8px two-tone checkerboard
@@ -617,7 +652,16 @@ unsafe fn fill_checker(
     const CELL: i32 = 8;
     let b0 = CreateSolidBrush(COLORREF(c0));
     let b1 = CreateSolidBrush(COLORREF(c1));
-    FillRect(hdc, &RECT { left, top, right: left + w, bottom: top + h }, b0);
+    FillRect(
+        hdc,
+        &RECT {
+            left,
+            top,
+            right: left + w,
+            bottom: top + h,
+        },
+        b0,
+    );
     let mut y = 0;
     while y < h {
         let mut x = 0;
@@ -679,12 +723,32 @@ unsafe fn paint_preview(hdc: HDC, rc: RECT, p: &Preview, bg: u32, fg: u32) {
     SetTextColor(hdc, COLORREF(fg));
 
     let mut name = p.name.clone();
-    let mut line1 = RECT { left: rc.left + 6, top: by + p.h + 2, right: rc.right - 6, bottom: by + p.h + 20 };
-    DrawTextW(hdc, &mut name, &mut line1, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    let mut line1 = RECT {
+        left: rc.left + 6,
+        top: by + p.h + 2,
+        right: rc.right - 6,
+        bottom: by + p.h + 20,
+    };
+    DrawTextW(
+        hdc,
+        &mut name,
+        &mut line1,
+        DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+    );
 
     let mut info = p.info.clone();
-    let mut line2 = RECT { left: rc.left + 6, top: line1.bottom + 1, right: rc.right - 6, bottom: line1.bottom + 19 };
-    DrawTextW(hdc, &mut info, &mut line2, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    let mut line2 = RECT {
+        left: rc.left + 6,
+        top: line1.bottom + 1,
+        right: rc.right - 6,
+        bottom: line1.bottom + 19,
+    };
+    DrawTextW(
+        hdc,
+        &mut info,
+        &mut line2,
+        DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+    );
 
     SelectObject(hdc, oldf);
 }
@@ -731,7 +795,18 @@ unsafe fn preview_hbitmap(p: &Preview) -> HBITMAP {
     let memdc = CreateCompatibleDC(None);
     let oldbmp = SelectObject(memdc, dib.into());
     let (bg, fg) = menu_theme_colors();
-    paint_preview(memdc, RECT { left: 0, top: 0, right: iw, bottom: ih }, p, bg, fg);
+    paint_preview(
+        memdc,
+        RECT {
+            left: 0,
+            top: 0,
+            right: iw,
+            bottom: ih,
+        },
+        p,
+        bg,
+        fg,
+    );
     let _ = GdiFlush();
     SelectObject(memdc, oldbmp);
     let _ = DeleteDC(memdc);
@@ -840,7 +915,8 @@ impl IContextMenu_Impl for ContextMenu_Impl {
             if mode != 0 && single && avail > leaves_n && preview_size_ok(&paths[0]) {
                 // The preview occupies the slot just past the last leaf;
                 // id_for(Preview) encapsulates that "== leaves.len()" convention.
-                self.preview_cmd.set(Some(verbs::id_for(verbs::CmdSlot::Preview, idcmdfirst)));
+                self.preview_cmd
+                    .set(Some(verbs::id_for(verbs::CmdSlot::Preview, idcmdfirst)));
             }
 
             unsafe {
@@ -864,7 +940,13 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                     if mode == 2 {
                         let tile = self.build_tile();
                         if !tile.is_invalid() {
-                            let _ = InsertMenuW(hmenu, pos, MF_BYPOSITION | MF_STRING, cmd as usize, &HSTRING::new());
+                            let _ = InsertMenuW(
+                                hmenu,
+                                pos,
+                                MF_BYPOSITION | MF_STRING,
+                                cmd as usize,
+                                &HSTRING::new(),
+                            );
                             set_item_bitmap(hmenu, pos, tile);
                             pos += 1;
                         }
@@ -889,10 +971,7 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                 // IS the classic menu (a very common Win11 setup), the "I enabled Show quick
                 // actions and see nothing" report. Packaged (compact) and classic (this menu)
                 // are separate surfaces; no single menu ever shows both, so nothing doubles.
-                if settings::menu_quick_verbs()
-                    && !condensed
-                    && !audio_only
-                {
+                if settings::menu_quick_verbs() && !condensed && !audio_only {
                     for item in verbs::quick_items() {
                         // Honor per-item visibility: a hidden top-level item drops
                         // its quick-verb copy from the main menu too.
@@ -905,7 +984,9 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                         }
                         match item {
                             verbs::QuickItem::Group(title, children, start) => {
-                                let Ok(qsub) = CreatePopupMenu() else { continue };
+                                let Ok(qsub) = CreatePopupMenu() else {
+                                    continue;
+                                };
                                 let mut n = start;
                                 build_menu_into(qsub, children, idcmdfirst, &mut n, budget, &vis);
                                 let _ = InsertMenuW(
@@ -978,7 +1059,14 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                     };
                     for (item, start_leaf) in top {
                         let mut leaf = start_leaf;
-                        build_menu_into(hsub, std::slice::from_ref(item), idcmdfirst, &mut leaf, budget, &vis);
+                        build_menu_into(
+                            hsub,
+                            std::slice::from_ref(item),
+                            idcmdfirst,
+                            &mut leaf,
+                            budget,
+                            &vis,
+                        );
                     }
                     let _ = InsertMenuW(
                         hmenu,
@@ -1004,7 +1092,8 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                     // "SageThumbs 2K" entry, so the preview + quick verbs + this
                     // entry read as one cohesive "SageThumbs" group, fenced off from
                     // the rest of the menu (owner request).
-                    let _ = InsertMenuW(hmenu, pos, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null());
+                    let _ =
+                        InsertMenuW(hmenu, pos, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null());
                 }
                 // Command ids consumed: the preview slot (offset = leaf count) when a
                 // preview was added, else the leaves the submenu used (0 when skipped).
@@ -1131,8 +1220,15 @@ mod tests {
                 Some(&mut bm as *mut _ as *mut core::ffi::c_void),
             );
             assert!(got > 0, "GetObjectW must describe the bitmap");
-            assert_eq!((bm.bmWidth, bm.bmHeight), (iw, ih), "tile size must match tile_size()");
-            assert_eq!(bm.bmBitsPixel, 32, "menus alpha-blend hbmpItem: must be 32-bpp");
+            assert_eq!(
+                (bm.bmWidth, bm.bmHeight),
+                (iw, ih),
+                "tile size must match tile_size()"
+            );
+            assert_eq!(
+                bm.bmBitsPixel, 32,
+                "menus alpha-blend hbmpItem: must be 32-bpp"
+            );
 
             let _ = DeleteObject(bmp.into());
         }

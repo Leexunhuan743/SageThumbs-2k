@@ -226,8 +226,8 @@ struct InstallerAsset {
     sha256: String, // lowercase hex, no "sha256:" prefix
 }
 
-/// Pull the Windows installer asset out of GitHub's latest-release JSON — the `.exe` whose
-/// name looks like our setup — returning its tag + download URL + size + sha256, or None on
+/// Pull the Windows installer asset out of GitHub's latest-release JSON — the exact versioned
+/// setup executable — returning its tag + download URL + size + sha256, or None on
 /// any failure (offline, no release, no matching asset).
 fn latest_installer_asset() -> Option<(String, InstallerAsset)> {
     let bytes = http_fetch(RELEASES_API, true)?;
@@ -240,11 +240,11 @@ fn installer_asset_from_json(json: &serde_json::Value) -> Option<(String, Instal
     let raw_tag = json.get("tag_name")?.as_str()?;
     let (major, minor, patch) = parse_ver(raw_tag)?;
     let tag = format!("{major}.{minor}.{patch}");
+    let expected_name = format!("SageThumbs2K-Setup-{tag}.exe");
     let asset = json.get("assets")?.as_array()?.iter().find(|a| {
-        a.get("name").and_then(|n| n.as_str()).is_some_and(|n| {
-            let n = n.to_ascii_lowercase();
-            n.ends_with(".exe") && n.contains("setup")
-        })
+        a.get("name")
+            .and_then(|n| n.as_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case(&expected_name))
     })?;
     let url = asset.get("browser_download_url")?.as_str()?.to_string();
     let (host, path) = crate::http::split_https(&url)?;
@@ -519,6 +519,10 @@ mod tests {
             "tag_name": "v0.6.3",
             "assets": [
                 { "name": "notes.txt", "browser_download_url": "https://x/notes.txt", "size": 1 },
+                { "name": "SageThumbs2K-Setup-debug.exe",
+                  "browser_download_url": "https://github.com/LunarWerxs/SageThumbs-2k/releases/download/v0.6.3/SageThumbs2K-Setup-debug.exe",
+                  "size": 42u64,
+                  "digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
                 { "name": "SageThumbs2K-Setup-0.6.3.exe",
                   "browser_download_url": "https://github.com/LunarWerxs/SageThumbs-2k/releases/download/v0.6.3/SageThumbs2K-Setup-0.6.3.exe",
                   "size": 9_223_820u64,

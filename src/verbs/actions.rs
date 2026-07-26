@@ -81,7 +81,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEDIR, SHCNF_PATHW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, MessageBoxW, SystemParametersInfoW, MB_ICONWARNING, MB_OK,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_SETDESKWALLPAPER,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE,
+    SPI_SETDESKWALLPAPER,
 };
 
 use super::encode::{
@@ -265,7 +266,10 @@ fn resize_one(exe: Option<&Path>, p: &str, r: Resize) -> Option<PathBuf> {
                 return resize_one(None, p, r);
             };
             let q = crate::settings::jpeg_quality().to_string();
-            match run_st2k(exe, &["convert", p, out_s, "--quality", &q, "--resize", &rs]) {
+            match run_st2k(
+                exe,
+                &["convert", p, out_s, "--quality", &q, "--resize", &rs],
+            ) {
                 RunOutcome::Ok => Some(slot.path().to_path_buf()),
                 RunOutcome::Failed => {
                     crate::safety::log(&format!("Resize (st2k) failed for {p}"));
@@ -308,7 +312,10 @@ fn shrink_one(exe: Option<&Path>, p: &str, size: EmailSize) -> Option<PathBuf> {
             let edge = size.max_edge();
             let resize = format!("{edge}x{edge}");
             // EMAIL_JPEG_QUALITY (82) is private to encode.rs; pass the same literal.
-            match run_st2k(exe, &["convert", p, out_s, "--quality", "82", "--resize", &resize]) {
+            match run_st2k(
+                exe,
+                &["convert", p, out_s, "--quality", "82", "--resize", &resize],
+            ) {
                 RunOutcome::Ok => Some(slot.path().to_path_buf()),
                 RunOutcome::Failed => {
                     crate::safety::log(&format!("Shrink for email (st2k) failed for {p}"));
@@ -404,13 +411,20 @@ pub struct ActionReport {
 impl ActionReport {
     /// The verb handed off to a window / companion app; nothing to surface inline.
     fn delegated() -> Self {
-        ActionReport { delegated: true, ..Default::default() }
+        ActionReport {
+            delegated: true,
+            ..Default::default()
+        }
     }
 
     /// A plain `attempted`/`done` report with no failure note (the caller adds one
     /// via [`with_note`] when there's a shortfall).
     fn applied(attempted: usize, done: usize) -> Self {
-        ActionReport { attempted, done, ..Default::default() }
+        ActionReport {
+            attempted,
+            done,
+            ..Default::default()
+        }
     }
 
     /// Attach the first-failure reason (chained onto [`applied`]).
@@ -443,7 +457,12 @@ impl ActionReport {
         let t = crate::wide(&msg);
         let c = crate::wide("SageThumbs 2K");
         unsafe {
-            MessageBoxW(parent, PCWSTR(t.as_ptr()), PCWSTR(c.as_ptr()), MB_OK | MB_ICONWARNING);
+            MessageBoxW(
+                parent,
+                PCWSTR(t.as_ptr()),
+                PCWSTR(c.as_ptr()),
+                MB_OK | MB_ICONWARNING,
+            );
         }
     }
 
@@ -463,11 +482,15 @@ impl ActionReport {
         if self.delegated || self.failed() > 0 || std::env::var_os("ST2K_NO_REVEAL").is_some() {
             return;
         }
-        let Some(out) = self.output.as_ref() else { return };
+        let Some(out) = self.output.as_ref() else {
+            return;
+        };
         if reveal_is_noise(out, sources) {
             return;
         }
-        let _ = Command::new("explorer.exe").raw_arg(format!("/select,\"{}\"", out.display())).spawn();
+        let _ = Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{}\"", out.display()))
+            .spawn();
     }
 }
 
@@ -481,7 +504,9 @@ fn reveal_is_noise(out: &std::path::Path, sources: &[String]) -> bool {
     if !out.is_file() {
         return false;
     }
-    let Some(out_dir) = out.parent() else { return false };
+    let Some(out_dir) = out.parent() else {
+        return false;
+    };
     sources
         .iter()
         .any(|s| std::path::Path::new(s).parent() == Some(out_dir))
@@ -496,30 +521,33 @@ fn reveal_is_noise(out: &std::path::Path, sources: &[String]) -> bool {
 /// keeps NO reference to the COM object that launched it. `owner` is the parent HWND (as
 /// `isize`) for the error MessageBox, or `None`.
 pub fn run_action_detached(action: VerbAction, paths: Vec<String>, owner: Option<isize>) {
-    let _ = std::thread::Builder::new().name("st2k-verb".into()).spawn(move || {
-        // Keep the DLL pinned for the action's lifetime (a detached thread outlives the
-        // Invoke call that spawned it). `ModuleRef::default()` is NOT a no-op — its `Default`
-        // impl does the `dll_add_ref()`; clippy's "use `ModuleRef`" suggestion would skip it.
-        #[allow(clippy::default_constructed_unit_structs)]
-        let _module = crate::ModuleRef::default();
-        // STA matches the shell thread the verb used to run on (ShellExecute / clipboard /
-        // WIC all behave there). S_OK / S_FALSE add a ref to balance; RPC_E_CHANGED_MODE
-        // (already an MTA thread) does not, so only CoUninitialize when we actually inited.
-        let inited = unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
-            )
-        }
-        .is_ok();
-        let report = run_action(action, &paths);
-        let parent = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut core::ffi::c_void));
-        report.surface(parent);
-        report.reveal(&paths);
-        if inited {
-            unsafe { windows::Win32::System::Com::CoUninitialize() };
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("st2k-verb".into())
+        .spawn(move || {
+            // Keep the DLL pinned for the action's lifetime (a detached thread outlives the
+            // Invoke call that spawned it). `ModuleRef::default()` is NOT a no-op — its `Default`
+            // impl does the `dll_add_ref()`; clippy's "use `ModuleRef`" suggestion would skip it.
+            #[allow(clippy::default_constructed_unit_structs)]
+            let _module = crate::ModuleRef::default();
+            // STA matches the shell thread the verb used to run on (ShellExecute / clipboard /
+            // WIC all behave there). S_OK / S_FALSE add a ref to balance; RPC_E_CHANGED_MODE
+            // (already an MTA thread) does not, so only CoUninitialize when we actually inited.
+            let inited = unsafe {
+                windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+                )
+            }
+            .is_ok();
+            let report = run_action(action, &paths);
+            let parent =
+                owner.map(|h| windows::Win32::Foundation::HWND(h as *mut core::ffi::c_void));
+            report.surface(parent);
+            report.reveal(&paths);
+            if inited {
+                unsafe { windows::Win32::System::Com::CoUninitialize() };
+            }
+        });
 }
 
 /// Dispatch a verb over the selected paths (best-effort). Returns an
@@ -535,14 +563,20 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             // global magick cap bounds memory across the fanned-out st2k children.
             let exe = st2k_exe();
             let exe_ref = exe.as_deref();
-            let outs: Vec<PathBuf> = crate::parallel::map(paths, |_, p| convert_one(exe_ref, p, target))
-                .into_iter()
-                .flatten()
-                .collect();
+            let outs: Vec<PathBuf> =
+                crate::parallel::map(paths, |_, p| convert_one(exe_ref, p, target))
+                    .into_iter()
+                    .flatten()
+                    .collect();
             let n = outs.len();
             let first = outs.into_iter().next();
             let mut r = if n < paths.len() {
-                crate::safety::log(&format!("Convert to {}: only {}/{} succeeded", target.ext, n, paths.len()));
+                crate::safety::log(&format!(
+                    "Convert to {}: only {}/{} succeeded",
+                    target.ext,
+                    n,
+                    paths.len()
+                ));
                 ActionReport::applied(paths.len(), n).with_note("conversion failed for some files")
             } else {
                 ActionReport::applied(paths.len(), n)
@@ -556,10 +590,11 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             // ordered results give the same count + first-reveal as the old loop.
             let exe = st2k_exe();
             let exe_ref = exe.as_deref();
-            let outs: Vec<PathBuf> = crate::parallel::map(paths, |_, p| transform_one(exe_ref, p, t))
-                .into_iter()
-                .flatten()
-                .collect();
+            let outs: Vec<PathBuf> =
+                crate::parallel::map(paths, |_, p| transform_one(exe_ref, p, t))
+                    .into_iter()
+                    .flatten()
+                    .collect();
             let n = outs.len();
             let first = outs.into_iter().next();
             let mut r = if n < paths.len() {
@@ -610,13 +645,20 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             }
         }
         VerbAction::CombineToPdf => {
-            let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
+            let imgs: Vec<String> = paths
+                .iter()
+                .filter(|p| is_image(p.as_str()))
+                .cloned()
+                .collect();
             if imgs.is_empty() {
                 return ActionReport::default();
             }
             let out = combined_pdf_path(&imgs[0]);
             match crate::topdf::combine_to_pdf(&imgs, &out, crate::settings::jpeg_quality()) {
-                Ok(_) => ActionReport { output: Some(out), ..ActionReport::applied(1, 1) },
+                Ok(_) => ActionReport {
+                    output: Some(out),
+                    ..ActionReport::applied(1, 1)
+                },
                 Err(e) => {
                     crate::safety::log(&format!("Combine to PDF failed: {e:?}"));
                     ActionReport::applied(1, 0).with_note("couldn't build the PDF")
@@ -624,31 +666,36 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             }
         }
         VerbAction::CombineToCbz => {
-            let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
+            let imgs: Vec<String> = paths
+                .iter()
+                .filter(|p| is_image(p.as_str()))
+                .cloned()
+                .collect();
             if imgs.is_empty() {
                 return ActionReport::default();
             }
             let out = combined_path(&imgs[0], "cbz");
             match combine_to_cbz(&imgs, &out) {
-                Ok(()) => ActionReport { output: Some(out), ..ActionReport::applied(1, 1) },
+                Ok(()) => ActionReport {
+                    output: Some(out),
+                    ..ActionReport::applied(1, 1)
+                },
                 Err(e) => {
                     crate::safety::log(&format!("Combine to CBZ failed: {e:?}"));
                     ActionReport::applied(1, 0).with_note("couldn't build the CBZ archive")
                 }
             }
         }
-        VerbAction::Ocr => {
-            match paths.iter().find(|p| is_image(p.as_str())) {
-                Some(p) => match crate::ocr::ocr_to_clipboard(p) {
-                    Ok(()) => ActionReport::applied(1, 1),
-                    Err(e) => {
-                        crate::safety::log(&format!("OCR failed for {p}: {e:?}"));
-                        ActionReport::applied(1, 0).with_note("couldn't read text from the image")
-                    }
-                },
-                None => ActionReport::default(),
-            }
-        }
+        VerbAction::Ocr => match paths.iter().find(|p| is_image(p.as_str())) {
+            Some(p) => match crate::ocr::ocr_to_clipboard(p) {
+                Ok(()) => ActionReport::applied(1, 1),
+                Err(e) => {
+                    crate::safety::log(&format!("OCR failed for {p}: {e:?}"));
+                    ActionReport::applied(1, 0).with_note("couldn't read text from the image")
+                }
+            },
+            None => ActionReport::default(),
+        },
         VerbAction::ImageInfo => {
             // Opens its own info window (a message box) — the app owns the UX.
             if let Some(p) = paths.iter().find(|p| is_image(p.as_str())) {
@@ -663,7 +710,11 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             // the old sequential loop.
             let exe = st2k_exe();
             let exe_ref = exe.as_deref();
-            let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
+            let imgs: Vec<String> = paths
+                .iter()
+                .filter(|p| is_image(p.as_str()))
+                .cloned()
+                .collect();
             let oks = crate::parallel::map(&imgs, |_, p| strip_one(exe_ref, p));
             let attempted = imgs.len();
             let done = oks.iter().filter(|&&ok| ok).count();
@@ -687,7 +738,11 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             // the same attempted/done/note + first-reveal as the old loop.
             let exe = st2k_exe();
             let exe_ref = exe.as_deref();
-            let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
+            let imgs: Vec<String> = paths
+                .iter()
+                .filter(|p| is_image(p.as_str()))
+                .cloned()
+                .collect();
             let outs: Vec<PathBuf> = crate::parallel::map(&imgs, |_, p| resize_one(exe_ref, p, r))
                 .into_iter()
                 .flatten()
@@ -708,11 +763,16 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             // give the same attempted/done/note + first-reveal as the old loop.
             let exe = st2k_exe();
             let exe_ref = exe.as_deref();
-            let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
-            let outs: Vec<PathBuf> = crate::parallel::map(&imgs, |_, p| shrink_one(exe_ref, p, size))
-                .into_iter()
-                .flatten()
+            let imgs: Vec<String> = paths
+                .iter()
+                .filter(|p| is_image(p.as_str()))
+                .cloned()
                 .collect();
+            let outs: Vec<PathBuf> =
+                crate::parallel::map(&imgs, |_, p| shrink_one(exe_ref, p, size))
+                    .into_iter()
+                    .flatten()
+                    .collect();
             let attempted = imgs.len();
             let done = outs.len();
             let first = outs.into_iter().next();
@@ -758,7 +818,8 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
                         Ok(_) => ActionReport::applied(1, 1),
                         Err(e) => {
                             crate::safety::log(&format!("Files to folder failed: {e:?}"));
-                            ActionReport::applied(1, 0).with_note("couldn't create or fill the folder")
+                            ActionReport::applied(1, 0)
+                                .with_note("couldn't create or fill the folder")
                         }
                     }
                 }
@@ -783,7 +844,11 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
         VerbAction::TagsToFolders => {
             // Audio-only; the dialog (destination/template/copy-move) lives in the
             // companion app. No audio in the selection → nothing to do.
-            let audio: Vec<String> = paths.iter().filter(|p| is_audio(p.as_str())).cloned().collect();
+            let audio: Vec<String> = paths
+                .iter()
+                .filter(|p| is_audio(p.as_str()))
+                .cloned()
+                .collect();
             if audio.is_empty() {
                 ActionReport::default()
             } else {
@@ -801,7 +866,9 @@ fn launch_app(args: &[&str]) {
     // (missing companion EXE on a broken install, or spawn failure). Log it so the
     // Diagnostics log at least explains a dead menu item.
     let Some(exe) = crate::sibling_of_dll(crate::APP_EXE) else {
-        crate::safety::log("launch_app: companion EXE not found next to the DLL — menu action dropped");
+        crate::safety::log(
+            "launch_app: companion EXE not found next to the DLL — menu action dropped",
+        );
         return;
     };
     if let Err(e) = std::process::Command::new(exe).args(args).spawn() {
@@ -815,7 +882,11 @@ fn launch_app(args: &[&str]) {
 /// the EXE from the DLL's OWN directory (NOT current_exe(), which in the shell
 /// host returns explorer.exe/dllhost.exe).
 fn launch_convert_dialog(paths: &[String]) {
-    let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
+    let imgs: Vec<String> = paths
+        .iter()
+        .filter(|p| is_image(p.as_str()))
+        .cloned()
+        .collect();
     if imgs.is_empty() {
         return;
     }
@@ -835,7 +906,11 @@ fn launch_convert_dialog(paths: &[String]) {
 /// modified or deleted (the app's `--upload-keep` path keeps them, unlike the
 /// screenshot `--upload` path which deletes its throwaway capture).
 fn launch_upload(paths: &[String]) {
-    let imgs: Vec<String> = paths.iter().filter(|p| is_image(p.as_str())).cloned().collect();
+    let imgs: Vec<String> = paths
+        .iter()
+        .filter(|p| is_image(p.as_str()))
+        .cloned()
+        .collect();
     if imgs.is_empty() {
         return;
     }
@@ -884,7 +959,10 @@ fn launch_tags_to_folders(audio: &[String]) {
 
 /// `combined.pdf` (deduped) next to the first image.
 fn combined_pdf_path(first: &str) -> PathBuf {
-    let dir = Path::new(first).parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let dir = Path::new(first)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     let mut cand = dir.join("combined.pdf");
     let mut n = 2u32;
     while cand.exists() {
@@ -1008,8 +1086,12 @@ pub fn prepare_wallpaper_in(dir: &Path, path: &str) -> Result<PathBuf> {
 /// full-size camera image on the shell thread is pure waste. Falls back to an 8K
 /// cap if the metrics are unavailable (e.g. a headless/service context).
 fn cap_to_screen(img: DynamicImage) -> DynamicImage {
-    let (mut cap_w, mut cap_h) =
-        unsafe { (GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN)) };
+    let (mut cap_w, mut cap_h) = unsafe {
+        (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
     if cap_w <= 0 || cap_h <= 0 {
         cap_w = 7680;
         cap_h = 4320;
@@ -1085,7 +1167,9 @@ fn rename_by_exif(paths: &[String], pattern: RenamePattern) -> ActionReport {
     // intentionally has nothing to do, so it shouldn't read as "failed".
     let mut r = ActionReport::applied(renamed + errored, renamed);
     if errored > 0 {
-        r.note = Some(format!("{errored} couldn't be renamed (locked or name clash)"));
+        r.note = Some(format!(
+            "{errored} couldn't be renamed (locked or name clash)"
+        ));
     }
     r
 }
@@ -1162,7 +1246,9 @@ pub(crate) fn tag_base(pattern: RenamePattern, t: &crate::strip::AudioTags) -> O
 /// "Customize ▸ Change Icon" persists a folder icon.
 pub(crate) fn set_folder_icon(image_path: &str) -> Result<()> {
     let src = Path::new(image_path);
-    let dir = src.parent().ok_or_else(|| Error::new(E_FAIL, "image has no parent folder"))?;
+    let dir = src
+        .parent()
+        .ok_or_else(|| Error::new(E_FAIL, "image has no parent folder"))?;
 
     let bytes = read_capped(image_path)?;
     let icon = make_icon_square(&decode::decode_full(&bytes)?, 256);
@@ -1217,7 +1303,9 @@ pub(crate) fn set_folder_icon(image_path: &str) -> Result<()> {
 /// non-square image becomes a clean square icon (Explorer scales/letterboxes
 /// otherwise). Never upscales the source beyond the canvas.
 fn make_icon_square(img: &DynamicImage, size: u32) -> DynamicImage {
-    let fit = img.resize(size, size, image::imageops::FilterType::Lanczos3).to_rgba8();
+    let fit = img
+        .resize(size, size, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
     let mut canvas = image::RgbaImage::from_pixel(size, size, image::Rgba([0, 0, 0, 0]));
     let ox = ((size - fit.width()) / 2) as i64;
     let oy = ((size - fit.height()) / 2) as i64;
@@ -1248,7 +1336,8 @@ mod tests {
 
     #[test]
     fn reveal_skips_in_place_sibling_only() {
-        let dir = std::env::temp_dir().join(format!("st2k_reveal_noise_test_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("st2k_reveal_noise_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("photo.png");
@@ -1258,24 +1347,36 @@ mod tests {
         // Convert into ▸ WebP: a file sibling next to the source → noise (no popup).
         let webp = dir.join("photo.webp");
         std::fs::write(&webp, b"out").unwrap();
-        assert!(reveal_is_noise(&webp, &sources), "in-place convert must not reveal");
+        assert!(
+            reveal_is_noise(&webp, &sources),
+            "in-place convert must not reveal"
+        );
 
         // Files-to-folder: a NEW directory → not noise (reveal it).
         let newfolder = dir.join("My Folder");
         std::fs::create_dir_all(&newfolder).unwrap();
-        assert!(!reveal_is_noise(&newfolder, &sources), "new folder should reveal");
+        assert!(
+            !reveal_is_noise(&newfolder, &sources),
+            "new folder should reveal"
+        );
 
         // A file inside a new subfolder (different parent) → reveal it.
         let moved = newfolder.join("photo.png");
         std::fs::write(&moved, b"moved").unwrap();
-        assert!(!reveal_is_noise(&moved, &sources), "output in a new folder should reveal");
+        assert!(
+            !reveal_is_noise(&moved, &sources),
+            "output in a new folder should reveal"
+        );
 
         // Convert that wrote to a totally different folder → reveal it.
         let other_dir = dir.join("elsewhere");
         std::fs::create_dir_all(&other_dir).unwrap();
         let other = other_dir.join("photo.webp");
         std::fs::write(&other, b"o").unwrap();
-        assert!(!reveal_is_noise(&other, &sources), "output in a different dir should reveal");
+        assert!(
+            !reveal_is_noise(&other, &sources),
+            "output in a different dir should reveal"
+        );
 
         // A nonexistent output path is not a file → not "noise" (reveal attempt is
         // harmless; the file-exists gate is the caller's success check).

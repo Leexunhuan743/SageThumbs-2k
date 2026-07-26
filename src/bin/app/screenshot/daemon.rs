@@ -15,16 +15,16 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{
     GetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM,
 };
-use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
+use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
     MOD_SHIFT,
 };
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, ShellExecuteW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD,
+    ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD,
     NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -143,7 +143,10 @@ pub(crate) unsafe fn run_daemon(hinst: HINSTANCE) {
 
     // Learn the shell's dynamic "TaskbarCreated" broadcast id BEFORE the tray add, so an
     // Explorer (re)start from here on always re-adds our icon (see the wndproc arm).
-    TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), Ordering::Relaxed);
+    TASKBAR_CREATED.store(
+        RegisterWindowMessageW(w!("TaskbarCreated")),
+        Ordering::Relaxed,
+    );
 
     // Tray icon is shown unless the user hid it in Settings (the hotkey still works).
     // `ensure_tray_icon` retries on a timer if the taskbar isn't accepting adds yet.
@@ -284,8 +287,7 @@ fn hotkey_label() -> &'static str {
 /// retry timer only survives genuine "no taskbar yet" failures.
 unsafe fn ensure_tray_icon(hwnd: HWND) {
     let nid = tray_data(hwnd, true);
-    if Shell_NotifyIconW(NIM_ADD, &nid).as_bool() || Shell_NotifyIconW(NIM_MODIFY, &nid).as_bool()
-    {
+    if Shell_NotifyIconW(NIM_ADD, &nid).as_bool() || Shell_NotifyIconW(NIM_MODIFY, &nid).as_bool() {
         let _ = KillTimer(Some(hwnd), TRAY_RETRY_TIMER_ID);
     } else {
         let _ = SetTimer(Some(hwnd), TRAY_RETRY_TIMER_ID, TRAY_RETRY_MS, None);
@@ -310,7 +312,15 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let _ = GetCursorPos(&mut pt);
     // Required so the menu dismisses when the user clicks elsewhere.
     let _ = SetForegroundWindow(hwnd);
-    let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, None, hwnd, None);
+    let _ = TrackPopupMenu(
+        menu,
+        TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+        pt.x,
+        pt.y,
+        None,
+        hwnd,
+        None,
+    );
     let _ = DestroyMenu(menu);
 }
 

@@ -4,14 +4,10 @@ use core::ffi::c_void;
 use std::sync::OnceLock;
 
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
-use windows::Win32::Graphics::Gdi::{
-    CreateFontIndirectW, GetStockObject, DEFAULT_GUI_FONT, HFONT,
-};
+use windows::Win32::Graphics::Gdi::{CreateFontIndirectW, GetStockObject, DEFAULT_GUI_FONT, HFONT};
 use windows::Win32::System::WindowsProgramming::MulDiv;
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::WindowsAndMessaging::*;
-
-
 
 pub(crate) unsafe fn gui_font() -> HFONT {
     static FONT: OnceLock<usize> = OnceLock::new();
@@ -67,7 +63,11 @@ pub(crate) fn set_dpi_override(dpi: i32) {
 /// per-window DPI (0 on a bad HWND → callers treat as 96).
 fn effective_dpi(hwnd: HWND) -> i32 {
     let ov = DPI_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
-    if ov > 0 { ov } else { unsafe { GetDpiForWindow(hwnd) as i32 } }
+    if ov > 0 {
+        ov
+    } else {
+        unsafe { GetDpiForWindow(hwnd) as i32 }
+    }
 }
 
 /// Scale a 96-DPI design pixel value `v` to the window's current DPI.
@@ -203,7 +203,10 @@ pub(crate) unsafe fn gui_font_sized(hwnd: HWND, px: i32, weight: i32) -> HFONT {
     static FONTS: OnceLock<std::sync::Mutex<Vec<(i32, i32, u32, usize)>>> = OnceLock::new();
     let cache = FONTS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     let mut guard = cache.lock().unwrap();
-    if let Some(&(_, _, _, p)) = guard.iter().find(|(x, w, d, _)| *x == px && *w == weight && *d == dpi) {
+    if let Some(&(_, _, _, p)) = guard
+        .iter()
+        .find(|(x, w, d, _)| *x == px && *w == weight && *d == dpi)
+    {
         return HFONT(p as *mut c_void);
     }
     let mut ncm = NONCLIENTMETRICSW {

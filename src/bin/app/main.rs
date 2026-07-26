@@ -26,7 +26,6 @@
 #![allow(non_snake_case)]
 
 mod about;
-mod sponsors;
 mod convert;
 mod cred_store;
 mod dark;
@@ -40,12 +39,13 @@ mod image_info;
 mod oauth;
 mod preview;
 mod screenshot;
-mod sync_client;
-mod upload_result;
 mod settings_dlg;
 mod settings_io;
+mod sponsors;
+mod sync_client;
 mod tags_to_folders;
 mod update;
+mod upload_result;
 mod win;
 
 use core::ffi::c_void;
@@ -56,8 +56,8 @@ use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, ICC_LINK_CLASS,
-    ICC_STANDARD_CLASSES, ICC_BAR_CLASSES, ICC_PROGRESS_CLASS,
+    InitCommonControlsEx, ICC_BAR_CLASSES, ICC_LINK_CLASS, ICC_LISTVIEW_CLASSES,
+    ICC_PROGRESS_CLASS, ICC_STANDARD_CLASSES, INITCOMMONCONTROLSEX,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -212,7 +212,9 @@ fn main() {
         // Settings window. Invisible (off-screen); exits 0/1. Checked before `--shot` (exact
         // match, so the shorter flag never swallows it).
         if let Some(pos) = args.iter().position(|a| a == "--shot-gif") {
-            let ok = args.get(pos + 1).is_some_and(|out| settings_dlg::run_shot_gif(hinst, dark, out));
+            let ok = args
+                .get(pos + 1)
+                .is_some_and(|out| settings_dlg::run_shot_gif(hinst, dark, out));
             std::process::exit(i32::from(!ok));
         }
         // Headless self-capture (verification + README/site assets):
@@ -237,7 +239,9 @@ fn main() {
                         // `--pdf-page N`, `--frame N` (animation frame), `--play` (video strip),
                         // `--source` (raw text of a normally-rendered file).
                         let val = |name: &str| {
-                            args.iter().position(|a| a == name).and_then(|p| args.get(p + 1))
+                            args.iter()
+                                .position(|a| a == name)
+                                .and_then(|p| args.get(p + 1))
                         };
                         let opts = crate::preview::ShotOpts {
                             file: val("--file").cloned(),
@@ -291,7 +295,10 @@ fn main() {
         // viewer. With no daemon hook yet (Phase 2), it's driven by the path arg + WM_COPYDATA
         // commands. A second launch forwards its path to the running viewer and exits.
         if let Some(pos) = args.iter().position(|a| a == "--preview") {
-            let path = args.get(pos + 1).filter(|p| !p.starts_with("--")).map(String::as_str);
+            let path = args
+                .get(pos + 1)
+                .filter(|p| !p.starts_with("--"))
+                .map(String::as_str);
             crate::preview::run_preview(hinst, path);
             return;
         }
@@ -376,7 +383,9 @@ fn main() {
             // before the next logon. Heal it FIRST, so the hotkeys the toast implicitly
             // claims are working actually are. No-op when the feature is off.
             heal_after_install();
-            let ver = args.get(pos + 1).map_or(env!("CARGO_PKG_VERSION"), String::as_str);
+            let ver = args
+                .get(pos + 1)
+                .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
             crate::update::show_updated_toast(ver);
             return;
         }

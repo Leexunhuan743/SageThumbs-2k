@@ -47,7 +47,10 @@ fn cleanup(case: &str) {
 /// Capture `body` twice: rendered, and with `--source`. Returns the two PNGs' bytes.
 fn shot_both(case: &str, name: &str, body: &str) -> (Vec<u8>, Vec<u8>) {
     let (dir, doc) = sample(case, name, body);
-    (shot(&dir, &doc, "rendered", &[]), shot(&dir, &doc, "source", &["--source"]))
+    (
+        shot(&dir, &doc, "rendered", &[]),
+        shot(&dir, &doc, "source", &["--source"]),
+    )
 }
 
 /// One headless capture of `doc` with `extra` flags appended. Panics unless the child exits clean
@@ -55,7 +58,11 @@ fn shot_both(case: &str, name: &str, body: &str) -> (Vec<u8>, Vec<u8>) {
 fn shot(dir: &Path, doc: &Path, tag: &str, extra: &[&str]) -> Vec<u8> {
     let out = dir.join(format!("{tag}.png"));
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_SageThumbs2K"));
-    cmd.arg("--shot").arg(&out).args(["--window", "preview", "--file"]).arg(doc).args(extra);
+    cmd.arg("--shot")
+        .arg(&out)
+        .args(["--window", "preview", "--file"])
+        .arg(doc)
+        .args(extra);
     let status = cmd.status().expect("spawn SageThumbs2K --shot");
     assert!(
         status.success(),
@@ -74,8 +81,16 @@ fn source_mode_changes_a_rendered_document() {
     // (case, filename, body) — one markdown file, one CSV (which rides the markdown pipeline via
     // `docconv`, so its raw text is not even what the rendered view holds).
     let cases = [
-        ("md", "doc.md", "# Heading\n\nSome **bold** body text and a list:\n\n- one\n- two\n"),
-        ("csv", "table.csv", "name,role\nAda,Analyst\nGrace,Admiral\n"),
+        (
+            "md",
+            "doc.md",
+            "# Heading\n\nSome **bold** body text and a list:\n\n- one\n- two\n",
+        ),
+        (
+            "csv",
+            "table.csv",
+            "name,role\nAda,Analyst\nGrace,Admiral\n",
+        ),
     ];
     for (case, name, body) in cases {
         let (rendered, sourced) = shot_both(case, name, body);
@@ -95,7 +110,11 @@ fn source_mode_changes_a_rendered_document() {
 fn source_mode_is_a_noop_without_a_rendered_view() {
     // A .txt is already shown as source; a .rs likewise. Both must be untouched by the flag.
     let cases = [
-        ("txt", "notes.txt", "plain text, already the source view\nsecond line\n"),
+        (
+            "txt",
+            "notes.txt",
+            "plain text, already the source view\nsecond line\n",
+        ),
         ("rs", "lib.rs", "fn main() {\n    println!(\"hi\");\n}\n"),
     ];
     for (case, name, body) in cases {
@@ -119,7 +138,11 @@ fn source_mode_is_a_noop_without_a_rendered_view() {
 /// `--source` shot stayed green).
 #[test]
 fn pressing_the_button_matches_opening_in_source_mode() {
-    let (dir, doc) = sample("press", "doc.md", "# Heading\n\nbody **text** here\n\n- a\n- b\n");
+    let (dir, doc) = sample(
+        "press",
+        "doc.md",
+        "# Heading\n\nbody **text** here\n\n- a\n- b\n",
+    );
     let pressed = shot(&dir, &doc, "pressed", &["--toggle-source"]);
     let preset = shot(&dir, &doc, "preset", &["--source"]);
     assert_eq!(
@@ -135,7 +158,11 @@ fn pressing_the_button_matches_opening_in_source_mode() {
 /// just latch on. `--source --toggle-source` = start in source, press once, expect rendered.
 #[test]
 fn pressing_the_button_twice_round_trips_to_rendered() {
-    let (dir, doc) = sample("round", "doc.md", "# Heading\n\nbody **text** here\n\n- a\n- b\n");
+    let (dir, doc) = sample(
+        "round",
+        "doc.md",
+        "# Heading\n\nbody **text** here\n\n- a\n- b\n",
+    );
     let rendered = shot(&dir, &doc, "rendered", &[]);
     let back = shot(&dir, &doc, "back", &["--source", "--toggle-source"]);
     assert_eq!(
@@ -163,7 +190,11 @@ fn hovering_the_source_button_renders() {
         .args(["--hot", "1"])
         .status()
         .expect("spawn SageThumbs2K --shot");
-    assert!(status.success(), "hover shot failed: exit {:?}", status.code());
+    assert!(
+        status.success(),
+        "hover shot failed: exit {:?}",
+        status.code()
+    );
     assert!(out.is_file(), "hover shot wrote no PNG");
     let _ = std::fs::remove_dir_all(&dir);
 }

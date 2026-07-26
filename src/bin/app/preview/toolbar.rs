@@ -1,17 +1,14 @@
 //! Caption toolbar: button rects, tooltips, and button hit-testing.
 
-
 use windows::core::{w, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{
-    HINSTANCE, HWND, LPARAM, RECT, WPARAM,
-};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::UI::Controls::{
     TTF_SUBCLASS, TTM_ADDTOOLW, TTM_NEWTOOLRECTW, TTM_SETMAXTIPWIDTH, TTS_ALWAYSTIP, TTS_NOPREFIX,
     TTTOOLINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::window::{Btn, BTNS, state, btn_visible, CAPTION_H, BTN_W, PAD};
+use super::window::{btn_visible, state, Btn, BTNS, BTN_W, CAPTION_H, PAD};
 
 /// Toolbar button rects (device px, in client coords), right-aligned in the caption. Hidden
 /// buttons (see [`btn_visible`]) are omitted, so the visible set stays right-packed.
@@ -29,7 +26,12 @@ pub(super) unsafe fn button_rects(hwnd: HWND) -> Vec<(Btn, RECT)> {
         if !st.is_null() && !btn_visible(&*st, b) {
             continue;
         }
-        let r = RECT { left: right - bw, top: 0, right, bottom: cap };
+        let r = RECT {
+            left: right - bw,
+            top: 0,
+            right,
+            bottom: cap,
+        };
         out.push((b, r));
         right -= bw;
     }
@@ -78,7 +80,11 @@ pub(super) unsafe fn create_tooltips(hwnd: HWND, hinst: HINSTANCE) -> HWND {
     // tip can never trigger; update_tooltips re-points every rect when visibility changes.
     let rects = button_rects(hwnd);
     for (idx, &b) in BTNS.iter().enumerate() {
-        let r = rects.iter().find(|(bb, _)| *bb == b).map(|(_, r)| *r).unwrap_or_default();
+        let r = rects
+            .iter()
+            .find(|(bb, _)| *bb == b)
+            .map(|(_, r)| *r)
+            .unwrap_or_default();
         // comctl32 copies the text on add, so this temporary is fine.
         let text = crate::win::wide(btn_tip(b));
         let mut ti = TTTOOLINFOW {
@@ -90,7 +96,12 @@ pub(super) unsafe fn create_tooltips(hwnd: HWND, hinst: HINSTANCE) -> HWND {
             lpszText: PWSTR(text.as_ptr() as *mut u16),
             ..Default::default()
         };
-        SendMessageW(tip, TTM_ADDTOOLW, Some(WPARAM(0)), Some(LPARAM(&mut ti as *mut _ as isize)));
+        SendMessageW(
+            tip,
+            TTM_ADDTOOLW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut ti as *mut _ as isize)),
+        );
     }
     tip
 }
@@ -104,7 +115,11 @@ pub(super) unsafe fn update_tooltips(hwnd: HWND, tip: HWND) {
     }
     let rects = button_rects(hwnd);
     for (idx, &b) in BTNS.iter().enumerate() {
-        let r = rects.iter().find(|(bb, _)| *bb == b).map(|(_, r)| *r).unwrap_or_default();
+        let r = rects
+            .iter()
+            .find(|(bb, _)| *bb == b)
+            .map(|(_, r)| *r)
+            .unwrap_or_default();
         let mut ti = TTTOOLINFOW {
             cbSize: core::mem::size_of::<TTTOOLINFOW>() as u32,
             uFlags: TTF_SUBCLASS,
@@ -113,7 +128,12 @@ pub(super) unsafe fn update_tooltips(hwnd: HWND, tip: HWND) {
             rect: r,
             ..Default::default()
         };
-        SendMessageW(tip, TTM_NEWTOOLRECTW, Some(WPARAM(0)), Some(LPARAM(&mut ti as *mut _ as isize)));
+        SendMessageW(
+            tip,
+            TTM_NEWTOOLRECTW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut ti as *mut _ as isize)),
+        );
     }
 }
 

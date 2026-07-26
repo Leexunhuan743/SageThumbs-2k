@@ -34,21 +34,20 @@ const EBOOK_EXTS: &[&str] = &[
     "azw", "azw3", "cb7", "cbr", "cbt", "cbz", "epub", "fb2", "fbz", "mobi", "phz", "prc",
 ];
 const DOCUMENT_EXTS: &[&str] = &[
-    "pdf", "djv", "djvu", "odt", "ods", "odp", "odg", "odf", "ott", "ots", "otp",
-    "pptx", "pptm", "potx", "key", "pages", "numbers", "indd", "indt", "vsdx", "vsdm", "vsd", "pub", "ggb",
+    "pdf", "djv", "djvu", "odt", "ods", "odp", "odg", "odf", "ott", "ots", "otp", "pptx", "pptm",
+    "potx", "key", "pages", "numbers", "indd", "indt", "vsdx", "vsdm", "vsd", "pub", "ggb",
     // Microsoft Word / Excel / PowerPoint (OOXML packages + legacy OLE compound docs).
-    "docx", "docm", "dotx", "dotm", "doc", "dot",
-    "xlsx", "xlsm", "xlsb", "xltx", "xltm", "xls", "xlt",
-    "ppsx", "ppsm", "potm", "ppt", "pps", "pot",
+    "docx", "docm", "dotx", "dotm", "doc", "dot", "xlsx", "xlsm", "xlsb", "xltx", "xltm", "xls",
+    "xlt", "ppsx", "ppsm", "potm", "ppt", "pps", "pot",
 ];
 const AUDIO_EXTS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "opus", "spx", "m4a", "m4b", "aac", "wma", "ape", "wv",
-    "mpc", "wav", "aiff", "aif", "aifc", "dsf",
+    "mp3", "flac", "ogg", "oga", "opus", "spx", "m4a", "m4b", "aac", "wma", "ape", "wv", "mpc",
+    "wav", "aiff", "aif", "aifc", "dsf",
 ];
 const RAW_EXTS: &[&str] = &[
-    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "iiq", "k25",
-    "kdc", "mdc", "mef", "mos", "mrw", "nef", "nrw", "orf", "pef", "raf", "rw2",
-    "rwl", "sr2", "srf", "srw", "x3f",
+    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "iiq", "k25", "kdc", "mdc",
+    "mef", "mos", "mrw", "nef", "nrw", "orf", "pef", "raf", "rw2", "rwl", "sr2", "srf", "srw",
+    "x3f",
     // MysticThumbs-parity additions (must mirror the Camera RAW block in FORMATS).
     "bay", "cap", "dcs", "drf", "ori", "ptx", "pxn",
 ];
@@ -56,8 +55,8 @@ const RAW_EXTS: &[&str] = &[
 // streamed from disk. MF decodes what the OS has a codec for; the rest keep their
 // default icon. Must mirror the Video block in FORMATS.
 const VIDEO_EXTS: &[&str] = &[
-    "mp4", "m4v", "mov", "qt", "mkv", "webm", "avi", "wmv", "asf", "flv", "f4v",
-    "mpg", "mpeg", "m2v", "3gp", "3g2", "ts", "m2ts", "mts", "vob", "ogv", "divx",
+    "mp4", "m4v", "mov", "qt", "mkv", "webm", "avi", "wmv", "asf", "flv", "f4v", "mpg", "mpeg",
+    "m2v", "3gp", "3g2", "ts", "m2ts", "mts", "vob", "ogv", "divx",
 ];
 // Generic archives — thumbnail = the contained images (first image, or the up-to-4
 // contact sheet per Settings). Deliberately ONLY the big three: the zip-in-disguise
@@ -529,8 +528,8 @@ pub const PREVIEW_MD_EXTS: &[&str] = &["md", "markdown", "mdown", "mkd", "mdwn",
 /// not "every text file" — the viewer's content sniff catches unknown-but-textual files too.
 /// (`csv` moved to [`PREVIEW_DOC_EXTS`] — it renders as a real table now.)
 pub const PREVIEW_TEXT_EXTS: &[&str] = &[
-    "txt", "log", "json", "yaml", "yml", "toml", "xml", "ini", "cfg", "rs", "py", "js",
-    "ts", "c", "cpp", "h", "cs", "java", "sh", "ps1", "bat", "html", "css", "sql",
+    "txt", "log", "json", "yaml", "yml", "toml", "xml", "ini", "cfg", "rs", "py", "js", "ts", "c",
+    "cpp", "h", "cs", "java", "sh", "ps1", "bat", "html", "css", "sql",
 ];
 
 /// Structured documents the viewer converts to markdown at load and renders through the
@@ -540,7 +539,9 @@ pub const PREVIEW_DOC_EXTS: &[&str] = &["csv", "tsv", "ipynb"];
 
 /// Is `ext` (no dot) a convert-to-markdown document? ASCII-case-insensitive.
 pub fn is_preview_doc(ext: &str) -> bool {
-    PREVIEW_DOC_EXTS.iter().any(|&e| e.eq_ignore_ascii_case(ext))
+    PREVIEW_DOC_EXTS
+        .iter()
+        .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
 /// Is `ext` (no dot) a markdown source the viewer renders? ASCII-case-insensitive.
@@ -550,7 +551,9 @@ pub fn is_preview_markdown(ext: &str) -> bool {
 
 /// Is `ext` (no dot) a text/code file the viewer renders? ASCII-case-insensitive.
 pub fn is_preview_text(ext: &str) -> bool {
-    PREVIEW_TEXT_EXTS.iter().any(|&e| e.eq_ignore_ascii_case(ext))
+    PREVIEW_TEXT_EXTS
+        .iter()
+        .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
 #[cfg(test)]

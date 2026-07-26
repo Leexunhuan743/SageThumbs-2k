@@ -34,7 +34,9 @@ pub fn combine_to_pdf(paths: &[String], out: &Path, quality: u8) -> Result<PathB
     // exactly as the old sequential `filter_map` did. Per-worker COM init + the
     // global magick cap are handled inside the pool / decoder.
     let imgs: Vec<DynamicImage> = crate::parallel::map(paths, |_, p| {
-        read_capped(p).ok().and_then(|b| decode::decode_full(&b).ok())
+        read_capped(p)
+            .ok()
+            .and_then(|b| decode::decode_full(&b).ok())
     })
     .into_iter()
     .flatten()
@@ -59,7 +61,11 @@ pub fn combine_to_pdf(paths: &[String], out: &Path, quality: u8) -> Result<PathB
 
     off[2] = pdf.len();
     let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 3 + i * 3)).collect();
-    txt!("2 0 obj\n<< /Type /Pages /Count {} /Kids [{}] >>\nendobj\n", n, kids.join(" "));
+    txt!(
+        "2 0 obj\n<< /Type /Pages /Count {} /Kids [{}] >>\nendobj\n",
+        n,
+        kids.join(" ")
+    );
 
     for (i, img) in imgs.iter().enumerate() {
         let (jpeg, w, h) = image_to_baseline_jpeg(img, quality)?;
@@ -87,7 +93,11 @@ pub fn combine_to_pdf(paths: &[String], out: &Path, quality: u8) -> Result<PathB
     for &o in &off[1..=total] {
         txt!("{:010} 00000 n \n", o);
     }
-    txt!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n", total + 1, xref);
+    txt!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+        total + 1,
+        xref
+    );
 
     let tmp: PathBuf = {
         let mut s = out.to_path_buf().into_os_string();
@@ -131,9 +141,15 @@ mod tests {
         combine_to_pdf(&paths, &out, 85).unwrap();
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.starts_with(b"%PDF-1.7"), "must be a PDF");
-        assert!(bytes.windows(9).any(|w| w == b"DCTDecode"), "must embed JPEG via DCTDecode");
+        assert!(
+            bytes.windows(9).any(|w| w == b"DCTDecode"),
+            "must embed JPEG via DCTDecode"
+        );
         // End-to-end: the OS PDF engine (our own decode path) renders it.
-        assert!(decode::decode_full(&bytes).is_ok(), "combined PDF should render via Windows.Data.Pdf");
+        assert!(
+            decode::decode_full(&bytes).is_ok(),
+            "combined PDF should render via Windows.Data.Pdf"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -190,7 +190,10 @@ fn tools_call(id: Value, params: Option<&Value>) -> Value {
     // handled before the text-returning dispatch below.
     if name == "view" {
         let Some(input) = args.get("input").and_then(|v| v.as_str()) else {
-            return result(id, json!({ "content": [{ "type": "text", "text": "missing string argument 'input'" }], "isError": true }));
+            return result(
+                id,
+                json!({ "content": [{ "type": "text", "text": "missing string argument 'input'" }], "isError": true }),
+            );
         };
         let size = args.get("size").and_then(|v| v.as_u64()).unwrap_or(512) as u32;
         return match cli::view_png(input, size) {
@@ -198,13 +201,22 @@ fn tools_call(id: Value, params: Option<&Value>) -> Value {
                 id,
                 json!({ "content": [{ "type": "image", "data": STANDARD.encode(&png), "mimeType": "image/png" }], "isError": false }),
             ),
-            Err(msg) => result(id, json!({ "content": [{ "type": "text", "text": msg }], "isError": true })),
+            Err(msg) => result(
+                id,
+                json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+            ),
         };
     }
 
     match dispatch_tool(name, args) {
-        Ok(text) => result(id, json!({ "content": [{ "type": "text", "text": text }], "isError": false })),
-        Err(msg) => result(id, json!({ "content": [{ "type": "text", "text": msg }], "isError": true })),
+        Ok(text) => result(
+            id,
+            json!({ "content": [{ "type": "text", "text": text }], "isError": false }),
+        ),
+        Err(msg) => result(
+            id,
+            json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+        ),
     }
 }
 
@@ -216,11 +228,24 @@ fn dispatch_tool(name: &str, args: &Value) -> Result<String, String> {
     let u64_or = |k: &str, d: u64| args.get(k).and_then(|v| v.as_u64()).unwrap_or(d);
 
     match name {
-        "thumbnail" => cli::thumbnail(&need("input")?, &need("output")?, u64_or("size", 256) as u32),
+        "thumbnail" => cli::thumbnail(
+            &need("input")?,
+            &need("output")?,
+            u64_or("size", 256) as u32,
+        ),
         "convert" => {
             let q = u64_or("quality", 90).clamp(1, 100) as u8;
-            let wq = args.get("webp_quality").and_then(|v| v.as_u64()).map(|w| w.clamp(1, 100) as u8);
-            cli::convert(&need("input")?, &need("output")?, q, wq, cli::parse_resize(want("resize").as_deref())?)
+            let wq = args
+                .get("webp_quality")
+                .and_then(|v| v.as_u64())
+                .map(|w| w.clamp(1, 100) as u8);
+            cli::convert(
+                &need("input")?,
+                &need("output")?,
+                q,
+                wq,
+                cli::parse_resize(want("resize").as_deref())?,
+            )
         }
         "compress" => cli::compress(&need("input")?, cli::parse_size(&need("max_size")?)?),
         "rotate" => cli::rotate(&need("input")?, &need("by")?),
@@ -230,7 +255,11 @@ fn dispatch_tool(name: &str, args: &Value) -> Result<String, String> {
             let inputs: Vec<String> = args
                 .get("inputs")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             cli::pdf(&need("output")?, &inputs)
         }
@@ -275,17 +304,31 @@ mod tests {
         let resp = handle(&req).unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        for v in ["thumbnail", "convert", "rotate", "strip", "ocr", "pdf", "info", "formats"] {
+        for v in [
+            "thumbnail",
+            "convert",
+            "rotate",
+            "strip",
+            "ocr",
+            "pdf",
+            "info",
+            "formats",
+        ] {
             assert!(names.contains(&v), "tools/list missing '{v}'");
         }
         // Every tool carries an object input schema.
-        assert!(tools.iter().all(|t| t["inputSchema"]["type"] == json!("object")));
+        assert!(tools
+            .iter()
+            .all(|t| t["inputSchema"]["type"] == json!("object")));
     }
 
     #[test]
     fn notification_gets_no_response() {
         let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-        assert!(handle(&note).is_none(), "notifications must not be answered");
+        assert!(
+            handle(&note).is_none(),
+            "notifications must not be answered"
+        );
     }
 
     #[test]
@@ -302,7 +345,10 @@ mod tests {
         let resp = handle(&req).unwrap();
         assert_eq!(resp["result"]["isError"], json!(false));
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.trim_start().starts_with('['), "formats should be a JSON array");
+        assert!(
+            text.trim_start().starts_with('['),
+            "formats should be a JSON array"
+        );
         assert!(text.contains("\"ext\":\"png\""), "should list png");
     }
 
@@ -311,7 +357,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("st2k_mcp_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("in.png");
-        image::DynamicImage::ImageRgba8(image::RgbaImage::new(300, 200)).save(&src).unwrap();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(300, 200))
+            .save(&src)
+            .unwrap();
         let out = dir.join("out.png");
 
         let req = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
@@ -320,7 +368,10 @@ mod tests {
         }});
         let resp = handle(&req).unwrap();
         assert_eq!(resp["result"]["isError"], json!(false), "got {resp}");
-        assert!(out.exists(), "thumbnail tool should have written the output");
+        assert!(
+            out.exists(),
+            "thumbnail tool should have written the output"
+        );
         let d = image::open(&out).unwrap();
         assert!(d.width() <= 64 && d.height() <= 64);
         let _ = std::fs::remove_dir_all(&dir);
@@ -331,6 +382,10 @@ mod tests {
         let req = json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": { "name": "thumbnail", "arguments": { "input": "x.png" } } });
         let resp = handle(&req).unwrap();
-        assert_eq!(resp["result"]["isError"], json!(true), "missing 'output' is a tool error");
+        assert_eq!(
+            resp["result"]["isError"],
+            json!(true),
+            "missing 'output' is a tool error"
+        );
     }
 }

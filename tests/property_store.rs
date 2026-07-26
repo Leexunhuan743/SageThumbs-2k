@@ -15,7 +15,9 @@ use std::os::windows::ffi::OsStrExt;
 
 use windows::core::{s, Error, Interface, Result, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{E_FAIL, HMODULE, PROPERTYKEY, STG_E_ACCESSDENIED};
-use windows::Win32::Storage::EnhancedStorage::{PKEY_Image_HorizontalSize, PKEY_Image_VerticalSize};
+use windows::Win32::Storage::EnhancedStorage::{
+    PKEY_Image_HorizontalSize, PKEY_Image_VerticalSize,
+};
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{CoInitializeEx, IClassFactory, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
@@ -28,7 +30,11 @@ type DllGetClassObjectFn =
 
 fn dll_path() -> std::path::PathBuf {
     let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().join("sagethumbs2k.dll")
+    exe.parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("sagethumbs2k.dll")
 }
 
 fn to_wide(s: &OsStr) -> Vec<u16> {
@@ -49,9 +55,13 @@ unsafe fn make_store(file: &std::path::Path) -> Result<IPropertyStore> {
     let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
     let path = dll_path();
-    assert!(path.exists(), "cdylib not built at {path:?} — run `cargo build` first");
+    assert!(
+        path.exists(),
+        "cdylib not built at {path:?} — run `cargo build` first"
+    );
     let module: HMODULE = LoadLibraryW(PCWSTR(to_wide(path.as_os_str()).as_ptr()))?;
-    let proc = GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
+    let proc =
+        GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
     let dll_get_class_object: DllGetClassObjectFn = std::mem::transmute(proc);
 
     let mut factory_ptr: *mut c_void = std::ptr::null_mut();
@@ -71,7 +81,10 @@ fn property_store_exposes_image_dimensions() {
     let store = unsafe { make_store(&png) }.unwrap();
     unsafe {
         let count = store.GetCount().unwrap();
-        assert!(count >= 3, "an image should expose >=3 props (dims + h + v), got {count}");
+        assert!(
+            count >= 3,
+            "an image should expose >=3 props (dims + h + v), got {count}"
+        );
         // Enumerate the keys (GetAt) and confirm the dimension props are present — proves
         // the COM surface end to end without decoding PROPVARIANT internals (the exact
         // values are covered by strip::read_info's own unit test).
@@ -81,10 +94,22 @@ fn property_store_exposes_image_dimensions() {
             store.GetAt(i, &mut k).unwrap();
             keys.push(k);
         }
-        let has = |want: PROPERTYKEY| keys.iter().any(|k| k.fmtid == want.fmtid && k.pid == want.pid);
-        assert!(has(PKEY_Image_HorizontalSize), "must expose Image.HorizontalSize");
-        assert!(has(PKEY_Image_VerticalSize), "must expose Image.VerticalSize");
-        assert!(store.GetAt(0, std::ptr::null_mut()).is_err(), "GetAt(null) must error, not crash");
+        let has = |want: PROPERTYKEY| {
+            keys.iter()
+                .any(|k| k.fmtid == want.fmtid && k.pid == want.pid)
+        };
+        assert!(
+            has(PKEY_Image_HorizontalSize),
+            "must expose Image.HorizontalSize"
+        );
+        assert!(
+            has(PKEY_Image_VerticalSize),
+            "must expose Image.VerticalSize"
+        );
+        assert!(
+            store.GetAt(0, std::ptr::null_mut()).is_err(),
+            "GetAt(null) must error, not crash"
+        );
     }
     let _ = std::fs::remove_file(&png);
 }
@@ -97,7 +122,10 @@ fn property_store_skips_oversized_file_fast() {
     // in-process property-handler hang (an unbounded std::fs::read + full decode on the shell's
     // thread). Uses a sparse `set_len` file: 300 MiB logical, ~no real disk/IO, and the probe
     // refuses it on the metadata length before reading a byte.
-    let p = std::env::temp_dir().join(format!("st2k_propstore_oversized_{}.dng", std::process::id()));
+    let p = std::env::temp_dir().join(format!(
+        "st2k_propstore_oversized_{}.dng",
+        std::process::id()
+    ));
     {
         let f = std::fs::File::create(&p).unwrap();
         f.set_len(300 * 1024 * 1024).unwrap(); // > decode::limits::MAX_INPUT_BYTES (256 MiB)
@@ -107,8 +135,14 @@ fn property_store_skips_oversized_file_fast() {
     let count = unsafe { store.GetCount() }.unwrap();
     let ms = t.elapsed().as_millis();
     let _ = std::fs::remove_file(&p);
-    assert_eq!(count, 0, "oversized file must yield no properties (read skipped before decode)");
-    assert!(ms < 2000, "oversized file must return fast, not block on a whole-file read; took {ms} ms");
+    assert_eq!(
+        count, 0,
+        "oversized file must yield no properties (read skipped before decode)"
+    );
+    assert!(
+        ms < 2000,
+        "oversized file must return fast, not block on a whole-file read; took {ms} ms"
+    );
 }
 
 #[test]
@@ -117,7 +151,11 @@ fn property_store_is_read_only() {
     let store = unsafe { make_store(&png) }.unwrap();
     let err = unsafe { store.SetValue(&PKEY_Image_HorizontalSize, &PROPVARIANT::default()) }
         .expect_err("SetValue must be refused on a read-only store");
-    assert_eq!(err.code(), STG_E_ACCESSDENIED, "read-only store must return STG_E_ACCESSDENIED");
+    assert_eq!(
+        err.code(),
+        STG_E_ACCESSDENIED,
+        "read-only store must return STG_E_ACCESSDENIED"
+    );
     let _ = std::fs::remove_file(&png);
 }
 

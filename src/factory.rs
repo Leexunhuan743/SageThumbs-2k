@@ -1,10 +1,10 @@
 //! IClassFactory for the single in-proc server. One factory type serves any
 //! of our CLSIDs; it is told which CLSID to construct via `new`.
 
-use windows_implement::implement;
-use windows::core::{Error, Interface, Ref, Result, BOOL, GUID, IUnknown};
+use windows::core::{Error, IUnknown, Interface, Ref, Result, BOOL, GUID};
 use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_NOINTERFACE, E_POINTER};
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
+use windows_implement::implement;
 
 use crate::command::{self, ExplorerCommand};
 use crate::contextmenu::ContextMenu;
@@ -24,7 +24,10 @@ impl ClassFactory {
     // ModuleRef::default()'s side effect (live-object add-ref) must run; keep the Default call.
     #[allow(clippy::default_constructed_unit_structs)]
     pub fn new(clsid: GUID) -> Self {
-        Self { _ref: crate::ModuleRef::default(), clsid }
+        Self {
+            _ref: crate::ModuleRef::default(),
+            clsid,
+        }
     }
 }
 

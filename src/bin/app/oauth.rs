@@ -48,7 +48,9 @@ pub(crate) struct Tokens {
 /// `n` cryptographically-random bytes via the system-preferred RNG. `None` on the
 /// (vanishingly unlikely) CNG failure.
 fn random_bytes(n: usize) -> Option<Vec<u8>> {
-    use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+    use windows::Win32::Security::Cryptography::{
+        BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+    };
     let mut buf = vec![0u8; n];
     let status = unsafe { BCryptGenRandom(None, &mut buf, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
     status.is_ok().then_some(buf)
@@ -101,8 +103,8 @@ pub(crate) fn login() -> Result<Tokens, String> {
     // Bind a throwaway loopback listener on an OS-assigned ephemeral port. Connections does
     // RFC 8252 §7.3 any-port loopback matching, so the registered redirect_uri is the portless
     // `http://127.0.0.1/oauth/callback` and whatever port the OS hands us is accepted.
-    let listener =
-        TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("couldn't open a sign-in listener: {e}"))?;
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| format!("couldn't open a sign-in listener: {e}"))?;
     let port = listener
         .local_addr()
         .map_err(|e| format!("couldn't read the sign-in listener port: {e}"))?
@@ -139,15 +141,27 @@ pub(crate) fn identity_from_tokens(t: &Tokens) -> Option<(String, String, String
         .decode(payload_seg.trim_end_matches('='))
         .ok()?;
     let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let sub = json.get("sub").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let email = json.get("email").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let sub = json
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let email = json
+        .get("email")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
     let name = json
         .get("name")
         .and_then(|v| v.as_str())
         .or_else(|| json.get("given_name").and_then(|v| v.as_str()))
         .unwrap_or_default()
         .to_string();
-    let picture = json.get("picture").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let picture = json
+        .get("picture")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
     if sub.is_empty() {
         return None;
     }
@@ -194,8 +208,8 @@ fn token_request(body: &[u8]) -> Result<Tokens, String> {
 }
 
 fn parse_tokens(body: &[u8]) -> Result<Tokens, String> {
-    let json: serde_json::Value =
-        serde_json::from_slice(body).map_err(|_| "the sign-in server sent an unreadable reply".to_string())?;
+    let json: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| "the sign-in server sent an unreadable reply".to_string())?;
     let access_token = json
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -203,9 +217,18 @@ fn parse_tokens(body: &[u8]) -> Result<Tokens, String> {
         .to_string();
     Ok(Tokens {
         access_token,
-        refresh_token: json.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string),
-        id_token: json.get("id_token").and_then(|v| v.as_str()).map(str::to_string),
-        expires_in: json.get("expires_in").and_then(serde_json::Value::as_u64).unwrap_or(3600),
+        refresh_token: json
+            .get("refresh_token")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        id_token: json
+            .get("id_token")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        expires_in: json
+            .get("expires_in")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(3600),
     })
 }
 
@@ -226,7 +249,11 @@ fn token_error(status: u16, body: &[u8]) -> String {
 /// `/oauth/callback?code=…&state=…`, verify `state`, ack with a friendly page, and return
 /// the code. Non-callback hits (favicon, etc.) get a 404 and the loop keeps waiting until
 /// `timeout` elapses.
-fn catch_code(listener: &TcpListener, timeout: Duration, expected_state: &str) -> Result<String, String> {
+fn catch_code(
+    listener: &TcpListener,
+    timeout: Duration,
+    expected_state: &str,
+) -> Result<String, String> {
     listener
         .set_nonblocking(true)
         .map_err(|e| format!("loopback setup failed: {e}"))?;
@@ -258,7 +285,11 @@ fn handle_conn(stream: &mut TcpStream, expected_state: &str) -> Option<Result<St
     let mut buf = [0u8; 8192];
     let n = stream.read(&mut buf).unwrap_or(0);
     let req = String::from_utf8_lossy(&buf[..n]);
-    let target = req.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("");
+    let target = req
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .unwrap_or("");
 
     if !target.starts_with("/oauth/callback") {
         respond_404(stream);
@@ -267,7 +298,11 @@ fn handle_conn(stream: &mut TcpStream, expected_state: &str) -> Option<Result<St
 
     let params = parse_query(target);
     if let Some(err) = params.get("error") {
-        respond_html(stream, "Sign-in canceled", "You can close this tab and return to SageThumbs 2K.");
+        respond_html(
+            stream,
+            "Sign-in canceled",
+            "You can close this tab and return to SageThumbs 2K.",
+        );
         return Some(Err(format!("sign-in was canceled ({err})")));
     }
     match (params.get("code"), params.get("state")) {
@@ -280,8 +315,14 @@ fn handle_conn(stream: &mut TcpStream, expected_state: &str) -> Option<Result<St
             Some(Ok(code.clone()))
         }
         _ => {
-            respond_html(stream, "Sign-in failed", "Something went wrong. Please try again in SageThumbs 2K.");
-            Some(Err("sign-in response was missing a code or the state didn't match".to_string()))
+            respond_html(
+                stream,
+                "Sign-in failed",
+                "Something went wrong. Please try again in SageThumbs 2K.",
+            );
+            Some(Err(
+                "sign-in response was missing a code or the state didn't match".to_string(),
+            ))
         }
     }
 }
@@ -292,8 +333,12 @@ fn parse_query(target: &str) -> HashMap<String, String> {
     if let Some((_, query)) = target.split_once('?') {
         for pair in query.split('&') {
             if let Some((k, v)) = pair.split_once('=') {
-                let key = percent_encoding::percent_decode_str(k).decode_utf8_lossy().into_owned();
-                let val = percent_encoding::percent_decode_str(v).decode_utf8_lossy().into_owned();
+                let key = percent_encoding::percent_decode_str(k)
+                    .decode_utf8_lossy()
+                    .into_owned();
+                let val = percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .into_owned();
                 map.insert(key, val);
             }
         }
@@ -339,7 +384,8 @@ fn respond_html(stream: &mut TcpStream, title: &str, message: &str) {
 }
 
 fn respond_404(stream: &mut TcpStream) {
-    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let _ = stream
+        .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     let _ = stream.flush();
 }
 
@@ -351,8 +397,15 @@ mod tests {
     fn pkce_challenge_is_s256_of_verifier() {
         let (verifier, challenge) = pkce().expect("CNG available on Windows test host");
         assert_eq!(verifier.len(), 43, "32 bytes → 43 base64url chars");
-        assert_eq!(challenge.len(), 43, "SHA-256 (32 bytes) → 43 base64url chars");
-        assert!(!verifier.contains(['+', '/', '=']), "verifier must be URL-safe, unpadded");
+        assert_eq!(
+            challenge.len(),
+            43,
+            "SHA-256 (32 bytes) → 43 base64url chars"
+        );
+        assert!(
+            !verifier.contains(['+', '/', '=']),
+            "verifier must be URL-safe, unpadded"
+        );
         // The challenge must equal base64url(SHA-256(verifier)) — the relying party recomputes this.
         let expected = b64url(&sha256(verifier.as_bytes()).unwrap());
         assert_eq!(challenge, expected);
@@ -381,7 +434,8 @@ mod tests {
 
     #[test]
     fn parse_tokens_reads_fields() {
-        let body = br#"{"access_token":"AT","refresh_token":"RT","id_token":"h.e.s","expires_in":1200}"#;
+        let body =
+            br#"{"access_token":"AT","refresh_token":"RT","id_token":"h.e.s","expires_in":1200}"#;
         let t = parse_tokens(body).unwrap();
         assert_eq!(t.access_token, "AT");
         assert_eq!(t.refresh_token.as_deref(), Some("RT"));
@@ -407,7 +461,12 @@ mod tests {
         };
         assert_eq!(
             identity_from_tokens(&t),
-            Some(("user-123".into(), "a@b.com".into(), String::new(), String::new()))
+            Some((
+                "user-123".into(),
+                "a@b.com".into(),
+                String::new(),
+                String::new()
+            ))
         );
     }
 

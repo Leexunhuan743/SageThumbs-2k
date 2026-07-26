@@ -15,8 +15,8 @@ use windows::Win32::Graphics::Gdi::{
 use crate::dark::rgb;
 use crate::win::{dpi_scale_dpi, gui_font, wide};
 
-use crate::gdip;
 use super::tools::{face_name, Tool};
+use crate::gdip;
 
 /// A toolbar item. `Sep` is a non-clickable divider between groups.
 #[derive(Clone, Copy, PartialEq)]
@@ -101,7 +101,15 @@ pub(super) fn layout(sel: RECT, vw: i32, vh: i32, dpi: i32) -> Vec<(Button, RECT
     let by = y + pad;
     for (btn, w) in items() {
         let w = dpi_scale_dpi(w, dpi);
-        out.push((btn, RECT { left: bx, top: by, right: bx + w, bottom: by + h }));
+        out.push((
+            btn,
+            RECT {
+                left: bx,
+                top: by,
+                right: bx + w,
+                bottom: by + h,
+            },
+        ));
         bx += w + gap;
     }
     out
@@ -113,14 +121,21 @@ fn bar_rect(buttons: &[(Button, RECT)], dpi: i32) -> RECT {
     let pad = dpi_scale_dpi(PAD, dpi);
     let first = buttons.first().map(|(_, r)| *r).unwrap_or_default();
     let last = buttons.last().map(|(_, r)| *r).unwrap_or_default();
-    RECT { left: first.left - pad, top: first.top - pad, right: last.right + pad, bottom: last.bottom + pad }
+    RECT {
+        left: first.left - pad,
+        top: first.top - pad,
+        right: last.right + pad,
+        bottom: last.bottom + pad,
+    }
 }
 
 /// Which button (if any) is under `(x, y)`. Separators are not clickable.
 pub(super) fn hit(buttons: &[(Button, RECT)], x: i32, y: i32) -> Option<Button> {
     buttons
         .iter()
-        .find(|(b, r)| !matches!(b, Button::Sep) && x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+        .find(|(b, r)| {
+            !matches!(b, Button::Sep) && x >= r.left && x < r.right && y >= r.top && y < r.bottom
+        })
         .map(|(b, _)| *b)
 }
 
@@ -160,7 +175,12 @@ pub(super) unsafe fn draw_tooltip(hdc: HDC, anchor: RECT, text: &str, vw: i32, v
     let n = w.len().saturating_sub(1);
     // Measure the text.
     let mut calc = RECT::default();
-    DrawTextW(hdc, &mut w[..n], &mut calc, DT_CALCRECT | DT_SINGLELINE | DT_LEFT);
+    DrawTextW(
+        hdc,
+        &mut w[..n],
+        &mut calc,
+        DT_CALCRECT | DT_SINGLELINE | DT_LEFT,
+    );
     let pad = dpi_scale_dpi(6, dpi);
     let off = dpi_scale_dpi(6, dpi);
     let bw = (calc.right - calc.left) + pad * 2;
@@ -175,7 +195,12 @@ pub(super) unsafe fn draw_tooltip(hdc: HDC, anchor: RECT, text: &str, vw: i32, v
     if y + bh > vh {
         y = (anchor.top - bh - off).max(0);
     }
-    let r = RECT { left: x, top: y, right: x + bw, bottom: y + bh };
+    let r = RECT {
+        left: x,
+        top: y,
+        right: x + bw,
+        bottom: y + bh,
+    };
     let bg = CreateSolidBrush(rgb(248, 248, 240));
     FillRect(hdc, &r, bg);
     let _ = DeleteObject(bg.into());
@@ -183,7 +208,12 @@ pub(super) unsafe fn draw_tooltip(hdc: HDC, anchor: RECT, text: &str, vw: i32, v
     FrameRect(hdc, &r, border);
     let _ = DeleteObject(border.into());
     SetTextColor(hdc, rgb(20, 20, 20));
-    let mut tr = RECT { left: x + pad, top: y + pad, right: x + bw, bottom: y + bh };
+    let mut tr = RECT {
+        left: x + pad,
+        top: y + pad,
+        right: x + bw,
+        bottom: y + bh,
+    };
     DrawTextW(hdc, &mut w[..n], &mut tr, DT_SINGLELINE | DT_LEFT);
 }
 
@@ -246,13 +276,23 @@ pub(super) fn color_flyout_layout(
         y = anchor.bottom + off; // …or below if there's no room
     }
     y = y.min(vh - ph).max(0); // keep the whole panel on-screen
-    let panel = RECT { left: x, top: y, right: x + pw, bottom: y + ph };
+    let panel = RECT {
+        left: x,
+        top: y,
+        right: x + pw,
+        bottom: y + ph,
+    };
     let mut out = Vec::with_capacity(n as usize);
     for i in 0..n {
         let (row, col) = (i / COLS, i % COLS);
         let sx = x + pad + col * (sw + swgap);
         let sy = y + pad + row * (sw + swgap);
-        let rect = RECT { left: sx, top: sy, right: sx + sw, bottom: sy + sw };
+        let rect = RECT {
+            left: sx,
+            top: sy,
+            right: sx + sw,
+            bottom: sy + sw,
+        };
         let sw = if i < nq {
             let (r, g, b) = QUICK_COLORS[i as usize];
             Swatch::Color(rgb(r, g, b))
@@ -268,7 +308,12 @@ pub(super) fn color_flyout_layout(
 
 /// Paint the colour flyout: a dark panel of swatches, the active colour ringed, and
 /// a four-quadrant "custom" tile.
-pub(super) unsafe fn draw_color_flyout(hdc: HDC, panel: RECT, items: &[(Swatch, RECT)], current: COLORREF) {
+pub(super) unsafe fn draw_color_flyout(
+    hdc: HDC,
+    panel: RECT,
+    items: &[(Swatch, RECT)],
+    current: COLORREF,
+) {
     let bg = CreateSolidBrush(rgb(32, 32, 32));
     FillRect(hdc, &panel, bg);
     let _ = DeleteObject(bg.into());
@@ -291,7 +336,15 @@ pub(super) unsafe fn draw_color_flyout(hdc: HDC, panel: RECT, items: &[(Swatch, 
             }
             Swatch::Custom(Some(c)) => {
                 fill_c(hdc, r, *c);
-                ring(hdc, r, if *c == current { rgb(255, 255, 255) } else { accent });
+                ring(
+                    hdc,
+                    r,
+                    if *c == current {
+                        rgb(255, 255, 255)
+                    } else {
+                        accent
+                    },
+                );
             }
             Swatch::Custom(None) => {
                 fill_c(hdc, r, rgb(48, 48, 48)); // empty placeholder…
@@ -301,15 +354,56 @@ pub(super) unsafe fn draw_color_flyout(hdc: HDC, panel: RECT, items: &[(Swatch, 
                 SetTextColor(hdc, rgb(175, 175, 175));
                 let mut w = wide("+");
                 let mut rr = *r;
-                DrawTextW(hdc, &mut w[..1], &mut rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    hdc,
+                    &mut w[..1],
+                    &mut rr,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                );
             }
             Swatch::Picker => {
                 let mx = (r.left + r.right) / 2;
                 let my = (r.top + r.bottom) / 2;
-                fill_c(hdc, &RECT { left: r.left, top: r.top, right: mx, bottom: my }, rgb(230, 40, 40));
-                fill_c(hdc, &RECT { left: mx, top: r.top, right: r.right, bottom: my }, rgb(70, 190, 70));
-                fill_c(hdc, &RECT { left: r.left, top: my, right: mx, bottom: r.bottom }, rgb(40, 120, 230));
-                fill_c(hdc, &RECT { left: mx, top: my, right: r.right, bottom: r.bottom }, rgb(245, 200, 40));
+                fill_c(
+                    hdc,
+                    &RECT {
+                        left: r.left,
+                        top: r.top,
+                        right: mx,
+                        bottom: my,
+                    },
+                    rgb(230, 40, 40),
+                );
+                fill_c(
+                    hdc,
+                    &RECT {
+                        left: mx,
+                        top: r.top,
+                        right: r.right,
+                        bottom: my,
+                    },
+                    rgb(70, 190, 70),
+                );
+                fill_c(
+                    hdc,
+                    &RECT {
+                        left: r.left,
+                        top: my,
+                        right: mx,
+                        bottom: r.bottom,
+                    },
+                    rgb(40, 120, 230),
+                );
+                fill_c(
+                    hdc,
+                    &RECT {
+                        left: mx,
+                        top: my,
+                        right: r.right,
+                        bottom: r.bottom,
+                    },
+                    rgb(245, 200, 40),
+                );
                 ring(hdc, r, accent);
             }
         }
@@ -329,7 +423,12 @@ unsafe fn frame_c(hdc: HDC, r: &RECT, c: COLORREF) {
 /// A 2px ring of `c` around `r`.
 unsafe fn ring(hdc: HDC, r: &RECT, c: COLORREF) {
     frame_c(hdc, r, c);
-    let inner = RECT { left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1 };
+    let inner = RECT {
+        left: r.left + 1,
+        top: r.top + 1,
+        right: r.right - 1,
+        bottom: r.bottom - 1,
+    };
     frame_c(hdc, &inner, c);
 }
 
@@ -367,7 +466,13 @@ const TF_OPT: i32 = 20; // dropdown option height
 /// Lay the text flyout out above the Text button `anchor` (clamped on-screen). When
 /// `dropdown` is set, the font option rows are included (and the panel grows). `dpi`
 /// scales the design pixels (identity at 96).
-pub(super) fn text_flyout_layout(anchor: RECT, vw: i32, vh: i32, dropdown: bool, dpi: i32) -> (RECT, Vec<(TextItem, RECT)>) {
+pub(super) fn text_flyout_layout(
+    anchor: RECT,
+    vw: i32,
+    vh: i32,
+    dropdown: bool,
+    dpi: i32,
+) -> (RECT, Vec<(TextItem, RECT)>) {
     let pad = dpi_scale_dpi(6, dpi);
     let gap = dpi_scale_dpi(6, dpi);
     let off = dpi_scale_dpi(6, dpi);
@@ -388,32 +493,93 @@ pub(super) fn text_flyout_layout(anchor: RECT, vw: i32, vh: i32, dropdown: bool,
         y = anchor.bottom + off;
     }
     y = y.min(vh - ph).max(0);
-    let panel = RECT { left: x, top: y, right: x + pw, bottom: y + ph };
+    let panel = RECT {
+        left: x,
+        top: y,
+        right: x + pw,
+        bottom: y + ph,
+    };
     let ix = x + pad;
     let iw = pw - pad * 2;
     let mut items = Vec::new();
     let mut cy = y + pad;
-    items.push((TextItem::FontField, RECT { left: ix, top: cy, right: ix + iw, bottom: cy + row - inset }));
+    items.push((
+        TextItem::FontField,
+        RECT {
+            left: ix,
+            top: cy,
+            right: ix + iw,
+            bottom: cy + row - inset,
+        },
+    ));
     cy += row;
     if dropdown {
         cy += inset;
         for i in 0..nf {
-            items.push((TextItem::FontOption(i as usize), RECT { left: ix, top: cy, right: ix + iw, bottom: cy + opt }));
+            items.push((
+                TextItem::FontOption(i as usize),
+                RECT {
+                    left: ix,
+                    top: cy,
+                    right: ix + iw,
+                    bottom: cy + opt,
+                },
+            ));
             cy += opt;
         }
         cy += inset;
     }
     cy += gap;
     let bw = dpi_scale_dpi(28, dpi);
-    items.push((TextItem::SizeDown, RECT { left: ix, top: cy, right: ix + bw, bottom: cy + row - inset }));
-    items.push((TextItem::SizeUp, RECT { left: ix + iw - bw, top: cy, right: ix + iw, bottom: cy + row - inset }));
+    items.push((
+        TextItem::SizeDown,
+        RECT {
+            left: ix,
+            top: cy,
+            right: ix + bw,
+            bottom: cy + row - inset,
+        },
+    ));
+    items.push((
+        TextItem::SizeUp,
+        RECT {
+            left: ix + iw - bw,
+            top: cy,
+            right: ix + iw,
+            bottom: cy + row - inset,
+        },
+    ));
     cy += row + gap;
     // Bold + Underline share a row (each half-width).
     let half = (iw - gap) / 2;
-    items.push((TextItem::Bold, RECT { left: ix, top: cy, right: ix + half, bottom: cy + row - inset }));
-    items.push((TextItem::Underline, RECT { left: ix + iw - half, top: cy, right: ix + iw, bottom: cy + row - inset }));
+    items.push((
+        TextItem::Bold,
+        RECT {
+            left: ix,
+            top: cy,
+            right: ix + half,
+            bottom: cy + row - inset,
+        },
+    ));
+    items.push((
+        TextItem::Underline,
+        RECT {
+            left: ix + iw - half,
+            top: cy,
+            right: ix + iw,
+            bottom: cy + row - inset,
+        },
+    ));
     cy += row + gap;
-    items.push((TextItem::More, RECT { left: ix, top: cy, right: ix + iw, bottom: cy + row - inset }));
+    items.push((
+        TextItem::More,
+        RECT {
+            left: ix,
+            top: cy,
+            right: ix + iw,
+            bottom: cy + row - inset,
+        },
+    ));
     (panel, items)
 }
 
@@ -430,12 +596,23 @@ unsafe fn draw_btn(hdc: HDC, r: RECT, label: &str) {
     let mut w = wide(label);
     let n = w.len().saturating_sub(1);
     let mut rr = r;
-    DrawTextW(hdc, &mut w[..n], &mut rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(
+        hdc,
+        &mut w[..n],
+        &mut rr,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+    );
 }
 
 /// Paint the text settings flyout for the current `font`. `dpi` scales the design
 /// pixels (identity at 96).
-pub(super) unsafe fn draw_text_flyout(hdc: HDC, panel: RECT, items: &[(TextItem, RECT)], font: &LOGFONTW, dpi: i32) {
+pub(super) unsafe fn draw_text_flyout(
+    hdc: HDC,
+    panel: RECT,
+    items: &[(TextItem, RECT)],
+    font: &LOGFONTW,
+    dpi: i32,
+) {
     let bg = CreateSolidBrush(rgb(32, 32, 32));
     FillRect(hdc, &panel, bg);
     let _ = DeleteObject(bg.into());
@@ -472,14 +649,34 @@ pub(super) unsafe fn draw_text_flyout(hdc: HDC, panel: RECT, items: &[(TextItem,
                 let _ = DeleteObject(e.into());
                 SelectObject(hdc, HGDIOBJ(gui_font().0));
                 SetTextColor(hdc, rgb(235, 235, 235));
-                let mut tr = RECT { left: r.left + dpi_scale_dpi(6, dpi), top: r.top, right: r.right - dpi_scale_dpi(18, dpi), bottom: r.bottom };
+                let mut tr = RECT {
+                    left: r.left + dpi_scale_dpi(6, dpi),
+                    top: r.top,
+                    right: r.right - dpi_scale_dpi(18, dpi),
+                    bottom: r.bottom,
+                };
                 let mut w = wide(&cur_face);
                 let n = w.len().saturating_sub(1);
-                DrawTextW(hdc, &mut w[..n], &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                let mut cr = RECT { left: r.right - dpi_scale_dpi(16, dpi), top: r.top, right: r.right, bottom: r.bottom };
+                DrawTextW(
+                    hdc,
+                    &mut w[..n],
+                    &mut tr,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                );
+                let mut cr = RECT {
+                    left: r.right - dpi_scale_dpi(16, dpi),
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                };
                 let mut wv = wide("\u{25BE}"); // ▾
                 let nv = wv.len().saturating_sub(1);
-                DrawTextW(hdc, &mut wv[..nv], &mut cr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    hdc,
+                    &mut wv[..nv],
+                    &mut cr,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                );
             }
             TextItem::FontOption(i) => {
                 let name = PRESET_FONTS[*i];
@@ -488,17 +685,30 @@ pub(super) unsafe fn draw_text_flyout(hdc: HDC, panel: RECT, items: &[(TextItem,
                     FillRect(hdc, r, b);
                     let _ = DeleteObject(b.into());
                 }
-                let mut lf = LOGFONTW { lfHeight: -dpi_scale_dpi(16, dpi), ..Default::default() };
+                let mut lf = LOGFONTW {
+                    lfHeight: -dpi_scale_dpi(16, dpi),
+                    ..Default::default()
+                };
                 for (k, c) in wide(name).iter().take(lf.lfFaceName.len() - 1).enumerate() {
                     lf.lfFaceName[k] = *c;
                 }
                 let hf = CreateFontIndirectW(&lf);
                 let old = SelectObject(hdc, HGDIOBJ(hf.0));
                 SetTextColor(hdc, rgb(235, 235, 235));
-                let mut tr = RECT { left: r.left + 8, top: r.top, right: r.right - 4, bottom: r.bottom };
+                let mut tr = RECT {
+                    left: r.left + 8,
+                    top: r.top,
+                    right: r.right - 4,
+                    bottom: r.bottom,
+                };
                 let mut w = wide(name);
                 let n = w.len().saturating_sub(1);
-                DrawTextW(hdc, &mut w[..n], &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    hdc,
+                    &mut w[..n],
+                    &mut tr,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                );
                 SelectObject(hdc, old);
                 let _ = DeleteObject(HGDIOBJ(hf.0));
             }
@@ -508,19 +718,43 @@ pub(super) unsafe fn draw_text_flyout(hdc: HDC, panel: RECT, items: &[(TextItem,
                 SelectObject(hdc, HGDIOBJ(gui_font().0));
                 SetTextColor(hdc, rgb(235, 235, 235));
                 let label = if bold { "[x]  Bold" } else { "[  ]  Bold" };
-                let mut tr = RECT { left: r.left + 4, top: r.top, right: r.right, bottom: r.bottom };
+                let mut tr = RECT {
+                    left: r.left + 4,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                };
                 let mut w = wide(label);
                 let n = w.len().saturating_sub(1);
-                DrawTextW(hdc, &mut w[..n], &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    hdc,
+                    &mut w[..n],
+                    &mut tr,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                );
             }
             TextItem::Underline => {
                 SelectObject(hdc, HGDIOBJ(gui_font().0));
                 SetTextColor(hdc, rgb(235, 235, 235));
-                let label = if underline { "[x]  Underline" } else { "[  ]  Underline" };
-                let mut tr = RECT { left: r.left + 4, top: r.top, right: r.right, bottom: r.bottom };
+                let label = if underline {
+                    "[x]  Underline"
+                } else {
+                    "[  ]  Underline"
+                };
+                let mut tr = RECT {
+                    left: r.left + 4,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                };
                 let mut w = wide(label);
                 let n = w.len().saturating_sub(1);
-                DrawTextW(hdc, &mut w[..n], &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    hdc,
+                    &mut w[..n],
+                    &mut tr,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                );
             }
             TextItem::More => draw_btn(hdc, *r, "Font\u{2026} (more)"),
         }
@@ -530,17 +764,33 @@ pub(super) unsafe fn draw_text_flyout(hdc: HDC, panel: RECT, items: &[(TextItem,
     if down.right < up.left {
         SelectObject(hdc, HGDIOBJ(gui_font().0));
         SetTextColor(hdc, rgb(255, 255, 255));
-        let mut nr = RECT { left: down.right, top: down.top, right: up.left, bottom: down.bottom };
+        let mut nr = RECT {
+            left: down.right,
+            top: down.top,
+            right: up.left,
+            bottom: down.bottom,
+        };
         let mut w = wide(&format!("{size} px"));
         let n = w.len().saturating_sub(1);
-        DrawTextW(hdc, &mut w[..n], &mut nr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(
+            hdc,
+            &mut w[..n],
+            &mut nr,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
     }
 }
 
 /// Paint the bar: a rounded backdrop, rounded per-group icon cells, the group
 /// dividers, then each button's icon (a Segoe Fluent glyph, an AA vector glyph, or
 /// the colour swatch).
-pub(super) unsafe fn draw(hdc: HDC, buttons: &[(Button, RECT)], active: Tool, color: COLORREF, dpi: i32) {
+pub(super) unsafe fn draw(
+    hdc: HDC,
+    buttons: &[(Button, RECT)],
+    active: Tool,
+    color: COLORREF,
+    dpi: i32,
+) {
     let bar = bar_rect(buttons, dpi);
 
     // Rounded backdrop + every cell background, in one anti-aliased GDI+ pass.
@@ -548,18 +798,46 @@ pub(super) unsafe fn draw(hdc: HDC, buttons: &[(Button, RECT)], active: Tool, co
     let r_cell = dpi_scale_dpi(6, dpi); // per-cell corner radius
     gdip::with_aa(hdc, |g| {
         let bg = gdip::brush(rgb(28, 28, 28));
-        gdip::fill_round(g, bg, bar.left, bar.top, bar.right - bar.left, bar.bottom - bar.top, r_bar);
+        gdip::fill_round(
+            g,
+            bg,
+            bar.left,
+            bar.top,
+            bar.right - bar.left,
+            bar.bottom - bar.top,
+            r_bar,
+        );
         gdip::drop_brush(bg);
         let pen = gdip::pen(rgb(72, 72, 72), 1);
-        gdip::stroke_round(g, pen, bar.left, bar.top, bar.right - bar.left, bar.bottom - bar.top, r_bar);
+        gdip::stroke_round(
+            g,
+            pen,
+            bar.left,
+            bar.top,
+            bar.right - bar.left,
+            bar.bottom - bar.top,
+            r_bar,
+        );
         gdip::drop_pen(pen);
         for (btn, r) in buttons {
             if matches!(btn, Button::Sep) {
                 continue;
             }
             let on = matches!(btn, Button::Tool(t) if *t == active);
-            let cb = gdip::brush(if on { rgb(0, 120, 210) } else { rgb(54, 54, 54) });
-            gdip::fill_round(g, cb, r.left, r.top, r.right - r.left, r.bottom - r.top, r_cell);
+            let cb = gdip::brush(if on {
+                rgb(0, 120, 210)
+            } else {
+                rgb(54, 54, 54)
+            });
+            gdip::fill_round(
+                g,
+                cb,
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                r_cell,
+            );
             gdip::drop_brush(cb);
         }
     });
@@ -569,7 +847,12 @@ pub(super) unsafe fn draw(hdc: HDC, buttons: &[(Button, RECT)], active: Tool, co
     for (btn, r) in buttons {
         if let Button::Sep = btn {
             let cx = (r.left + r.right) / 2;
-            let line = RECT { left: cx, top: r.top + div_inset, right: cx + 1, bottom: r.bottom - div_inset };
+            let line = RECT {
+                left: cx,
+                top: r.top + div_inset,
+                right: cx + 1,
+                bottom: r.bottom - div_inset,
+            };
             let b = CreateSolidBrush(rgb(78, 78, 78));
             FillRect(hdc, &line, b);
             let _ = DeleteObject(b.into());
@@ -589,7 +872,15 @@ pub(super) unsafe fn draw(hdc: HDC, buttons: &[(Button, RECT)], active: Tool, co
                 // A rounded swatch of the current colour, inset a little.
                 gdip::with_aa(hdc, |g| {
                     let b = gdip::brush(color);
-                    gdip::fill_round(g, b, r.left + sw_inset, r.top + sw_inset, (r.right - r.left) - sw_inset * 2, (r.bottom - r.top) - sw_inset * 2, sw_round);
+                    gdip::fill_round(
+                        g,
+                        b,
+                        r.left + sw_inset,
+                        r.top + sw_inset,
+                        (r.right - r.left) - sw_inset * 2,
+                        (r.bottom - r.top) - sw_inset * 2,
+                        sw_round,
+                    );
                     gdip::drop_brush(b);
                 });
             }
@@ -599,7 +890,12 @@ pub(super) unsafe fn draw(hdc: HDC, buttons: &[(Button, RECT)], active: Tool, co
                     SetTextColor(hdc, rgb(238, 238, 238));
                     let mut buf = [ch];
                     let mut rr = *r;
-                    DrawTextW(hdc, &mut buf, &mut rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    DrawTextW(
+                        hdc,
+                        &mut buf,
+                        &mut rr,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                    );
                     SelectObject(hdc, old);
                 } else if let Button::Tool(t) = btn {
                     draw_vector_glyph(hdc, *r, *t);
@@ -615,7 +911,13 @@ pub(super) unsafe fn draw(hdc: HDC, buttons: &[(Button, RECT)], active: Tool, co
 /// default and the few font-glyph tools fall back to a placeholder box — the
 /// vector-glyph tools are unaffected.
 unsafe fn icon_font(dpi: i32) -> HFONT {
-    let mut lf = LOGFONTW { lfHeight: -dpi_scale_dpi(16, dpi), lfWeight: 400, lfQuality: CLEARTYPE_QUALITY, lfCharSet: DEFAULT_CHARSET, ..Default::default() };
+    let mut lf = LOGFONTW {
+        lfHeight: -dpi_scale_dpi(16, dpi),
+        lfWeight: 400,
+        lfQuality: CLEARTYPE_QUALITY,
+        lfCharSet: DEFAULT_CHARSET,
+        ..Default::default()
+    };
     let face = wide("Segoe Fluent Icons");
     for (i, c) in face.iter().take(lf.lfFaceName.len() - 1).enumerate() {
         lf.lfFaceName[i] = *c;
@@ -683,7 +985,12 @@ unsafe fn draw_vector_glyph(hdc: HDC, r: RECT, tool: Tool) {
             SetTextColor(hdc, rgb(20, 20, 20));
             let mut one = [b'1' as u16];
             let mut rr = r;
-            DrawTextW(hdc, &mut one, &mut rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextW(
+                hdc,
+                &mut one,
+                &mut rr,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
         }
         Tool::Pixelate => gdip::with_aa(hdc, |g| {
             // A small checkerboard mosaic — reads clearly as "pixelate / blockify".

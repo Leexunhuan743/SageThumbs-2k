@@ -109,6 +109,9 @@ mod tests {
 
         let bmp = extract(&f).expect("should inflate + wrap the DIB");
         assert!(bmp.starts_with(b"BM"));
-        assert!(image::load_from_memory(&bmp).is_ok(), "wrapped BMP must decode");
+        assert!(
+            image::load_from_memory(&bmp).is_ok(),
+            "wrapped BMP must decode"
+        );
     }
 }

@@ -23,7 +23,9 @@ pub fn looks_like_skp(head: &[u8]) -> bool {
     let h = &head[..head.len().min(64)];
     // ASCII header (older): the literal "SketchUp Model". UTF-16LE header (newer):
     // S\0k\0e\0t\0c\0h\0U\0p\0. Both are specific enough to avoid false-positives.
-    const UTF16: &[u8] = &[b'S', 0, b'k', 0, b'e', 0, b't', 0, b'c', 0, b'h', 0, b'U', 0, b'p', 0];
+    const UTF16: &[u8] = &[
+        b'S', 0, b'k', 0, b'e', 0, b't', 0, b'c', 0, b'h', 0, b'U', 0, b'p', 0,
+    ];
     contains_ci(h, b"SketchUp Model") || find(h, UTF16).is_some()
 }
 
@@ -72,7 +74,9 @@ mod tests {
         }
         assert!(looks_like_skp(&utf16));
 
-        assert!(!looks_like_skp(b"just some random binary header bytes here....."));
+        assert!(!looks_like_skp(
+            b"just some random binary header bytes here....."
+        ));
     }
 
     #[test]
@@ -92,7 +96,10 @@ mod tests {
 
         let got = extract(&skp).expect("should carve the PNG");
         assert!(got.starts_with(PNG_SIG));
-        assert!(image::load_from_memory(&got).is_ok(), "carved bytes must be a valid PNG");
+        assert!(
+            image::load_from_memory(&got).is_ok(),
+            "carved bytes must be a valid PNG"
+        );
     }
 
     #[test]

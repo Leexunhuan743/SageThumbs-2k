@@ -23,11 +23,11 @@ mod command;
 mod container;
 /// Archive entry listing for the Quick preview viewer (no extraction).
 pub use container::list_archive;
+pub mod cli;
 mod contextmenu;
 pub mod decode;
-pub mod doctor;
 mod dib;
-pub mod cli;
+pub mod doctor;
 mod factory;
 pub mod formats;
 mod fsutil;
@@ -40,30 +40,30 @@ mod ocr;
 // Internal batch thread pool (Convert dialog / Combine / multi-file context-menu
 // verbs). `pub` so the companion `SageThumbs2K` app bin can drive it, `doc(hidden)`
 // because it isn't a stable public API — just a shared helper across our own crates.
+pub mod i18n;
 #[doc(hidden)]
 pub mod parallel;
 pub mod pdf;
 mod previewhandler;
 mod propstore;
-mod strip;
-mod topdf;
-pub mod i18n;
 pub mod register;
 pub mod safety;
 pub mod settings;
 pub mod shellcmd;
-pub mod upload_config;
 mod streamsrc;
+mod strip;
 mod thumbprovider;
+mod topdf;
+pub mod upload_config;
 mod verbs;
 // `pub` only so the app EXE's preview player can ask `media_foundation_available()`
 // before touching the delay-loaded MF imports; the decode entry points stay internal.
 pub mod video;
 mod vstream;
 
+pub use strip::read_info_verbose;
 /// Conversion API surfaced for the companion app's Convert… dialog.
 pub use topdf::combine_to_pdf;
-pub use strip::read_info_verbose;
 pub use verbs::{
     convert_file_opts, convert_image_to_pdf_in, convert_to_magick_in, copy_rgba_to_clipboard,
     copy_to_clipboard, default_menu_tokens, files_to_folder, run_action, tags_to_folders,
@@ -80,7 +80,9 @@ use core::ffi::c_void;
 use std::sync::atomic::{AtomicI64, AtomicIsize, Ordering};
 
 use windows::core::{Error, Interface, GUID, HRESULT};
-use windows::Win32::Foundation::{CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_POINTER, HMODULE, S_FALSE, S_OK};
+use windows::Win32::Foundation::{
+    CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_POINTER, HMODULE, S_FALSE, S_OK,
+};
 use windows::Win32::System::Com::IClassFactory;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 
@@ -106,7 +108,10 @@ pub fn dll_release() {
             None // already zero — refuse to underflow
         }
     });
-    debug_assert!(prev.is_ok(), "MODULE_REFS underflow: unbalanced LockServer(FALSE)/release");
+    debug_assert!(
+        prev.is_ok(),
+        "MODULE_REFS underflow: unbalanced LockServer(FALSE)/release"
+    );
 }
 
 /// Test/diagnostics hook: decode a file's bytes the same way the thumbnail
@@ -115,7 +120,9 @@ pub fn dll_release() {
 pub fn probe_cover(bytes: &[u8]) -> Option<(u32, u32)> {
     // decode_preview, not decode_full: this probes the THUMBNAIL path (container
     // covers included) — full fidelity would bypass the container tier for PSD.
-    decode::decode_preview(bytes).ok().map(|img| (img.width(), img.height()))
+    decode::decode_preview(bytes)
+        .ok()
+        .map(|img| (img.width(), img.height()))
 }
 
 /// Diagnostics: render the right-click menu preview for `path` to a PNG exactly
@@ -131,7 +138,9 @@ pub fn render_preview_png(path: &str, out_png: &str, bg: Option<u32>) -> bool {
 #[doc(hidden)]
 pub fn ocr_probe(path: &str) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
-    ocr::recognize_bytes(&bytes).ok().filter(|t| !t.trim().is_empty())
+    ocr::recognize_bytes(&bytes)
+        .ok()
+        .filter(|t| !t.trim().is_empty())
 }
 
 /// RAII module-reference guard. Constructing one (via `Default`) bumps the
@@ -213,10 +222,12 @@ pub fn dll_get_class_object(
 }
 
 pub fn dll_register_server() -> HRESULT {
-    safety::guard_hr(|| match module_path().and_then(|p| register::register(&p)) {
-        Ok(()) => S_OK,
-        Err(e) => e.code(),
-    })
+    safety::guard_hr(
+        || match module_path().and_then(|p| register::register(&p)) {
+            Ok(()) => S_OK,
+            Err(e) => e.code(),
+        },
+    )
 }
 
 pub fn dll_unregister_server() -> HRESULT {

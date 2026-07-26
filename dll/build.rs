@@ -42,7 +42,15 @@ fn main() {
     let obj = format!("{out}/dll_version.o");
     for windres in ["windres", "x86_64-w64-mingw32-windres"] {
         let status = std::process::Command::new(windres)
-            .args(["-I", &out, &format!("{out}/dll_version.rc"), "-O", "coff", "-o", &obj])
+            .args([
+                "-I",
+                &out,
+                &format!("{out}/dll_version.rc"),
+                "-O",
+                "coff",
+                "-o",
+                &obj,
+            ])
             .status();
         if matches!(status, Ok(s) if s.success()) {
             // This crate is cdylib-only, so `-arg` reaches the DLL (no bins to confuse).

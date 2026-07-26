@@ -33,7 +33,8 @@ pub fn strip_metadata(path: &str) -> Result<()> {
     let out_bytes: Vec<u8> = match ext.as_str() {
         "jpg" | "jpeg" | "jpe" | "jfif" => {
             let mut jpeg = Jpeg::from_bytes(input).map_err(|_| Error::from(E_FAIL))?;
-            jpeg.segments_mut().retain(|s| !STRIP_APP_MARKERS.contains(&s.marker()));
+            jpeg.segments_mut()
+                .retain(|s| !STRIP_APP_MARKERS.contains(&s.marker()));
             let bytes = jpeg.encoder().bytes();
             Jpeg::from_bytes(bytes.clone()).map_err(|_| Error::from(E_FAIL))?; // sanity re-parse
             bytes.to_vec()
@@ -162,7 +163,8 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
         // so probing a small head prefix answers a folder-of-big-PSDs Details pane
         // without the whole-file read below (Explorer runs this per file, serially,
         // right alongside the thumbnail extraction).
-        if let Some((w, h)) = head_prefix(path).and_then(|head| crate::container::real_dims(&head)) {
+        if let Some((w, h)) = head_prefix(path).and_then(|head| crate::container::real_dims(&head))
+        {
             info.width = w;
             info.height = h;
         }
@@ -174,9 +176,11 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
             std::fs::read(path).ok()
         };
         if let Some(bytes) = bytes {
-            if let Some((w, h)) = crate::container::real_dims(&bytes)
-                .or_else(|| crate::decode::decode_full(&bytes).ok().map(|i| (i.width(), i.height())))
-            {
+            if let Some((w, h)) = crate::container::real_dims(&bytes).or_else(|| {
+                crate::decode::decode_full(&bytes)
+                    .ok()
+                    .map(|i| (i.width(), i.height()))
+            }) {
                 info.width = w;
                 info.height = h;
             }
@@ -193,7 +197,10 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase())
                 .unwrap_or_default();
-            if matches!(crate::formats::category(&ext), crate::formats::Category::Video) {
+            if matches!(
+                crate::formats::category(&ext),
+                crate::formats::Category::Video
+            ) {
                 if let Some(img) = crate::video::frame_from_path(path) {
                     info.width = img.width();
                     info.height = img.height();
@@ -204,7 +211,9 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
             // All probes (image-crate header, container canvas, full decode, video frame)
             // failed — leave a breadcrumb so a "shows no dimensions" report is diagnosable
             // instead of silently surfacing the 0×0 sentinel.
-            crate::safety::log_debug(&format!("read_info: could not determine dimensions for {path}"));
+            crate::safety::log_debug(&format!(
+                "read_info: could not determine dimensions for {path}"
+            ));
         }
     }
 
@@ -325,9 +334,11 @@ pub fn read_info_verbose(path: &str) -> String {
     }
     if w == 0 && h == 0 {
         if let Ok(bytes) = std::fs::read(path) {
-            if let Some((cw, ch)) = crate::container::real_dims(&bytes)
-                .or_else(|| crate::decode::decode_full(&bytes).ok().map(|i| (i.width(), i.height())))
-            {
+            if let Some((cw, ch)) = crate::container::real_dims(&bytes).or_else(|| {
+                crate::decode::decode_full(&bytes)
+                    .ok()
+                    .map(|i| (i.width(), i.height()))
+            }) {
                 (w, h) = (cw, ch);
             }
         }
@@ -352,8 +363,18 @@ pub fn read_info_verbose(path: &str) -> String {
             for f in exif.fields() {
                 let _ = writeln!(s, "{}: {}", f.tag, f.display_value().with_unit(&exif));
             }
-            let lat = gps_dms(&exif, exif::Tag::GPSLatitude, exif::Tag::GPSLatitudeRef, b'S');
-            let lon = gps_dms(&exif, exif::Tag::GPSLongitude, exif::Tag::GPSLongitudeRef, b'W');
+            let lat = gps_dms(
+                &exif,
+                exif::Tag::GPSLatitude,
+                exif::Tag::GPSLatitudeRef,
+                b'S',
+            );
+            let lon = gps_dms(
+                &exif,
+                exif::Tag::GPSLongitude,
+                exif::Tag::GPSLongitudeRef,
+                b'W',
+            );
             if let (Some(la), Some(lo)) = (lat, lon) {
                 let _ = writeln!(s, "\nGPS (decimal): {la:.6}, {lo:.6}");
                 let _ = writeln!(s, "Map: https://maps.google.com/?q={la:.6},{lo:.6}");
@@ -459,7 +480,8 @@ pub fn read_audio_tags(path: &str) -> AudioTags {
     // Route through &mut dyn ReadSeek so lofty is monomorphized once across all callers
     // (see crate::container::ReadSeek), not separately for BufReader<File>.
     let mut br = std::io::BufReader::new(file);
-    let Ok(probe) = Probe::new(&mut br as &mut dyn crate::container::ReadSeek).guess_file_type() else {
+    let Ok(probe) = Probe::new(&mut br as &mut dyn crate::container::ReadSeek).guess_file_type()
+    else {
         return out;
     };
     let Ok(tagged) = probe.read() else {
@@ -501,14 +523,21 @@ fn format_exif_datetime(s: &str) -> Option<String> {
         return None;
     }
     // Every component must be all-ASCII-digits and non-empty.
-    if !d.iter().chain(t.iter().take(3)).all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
+    if !d
+        .iter()
+        .chain(t.iter().take(3))
+        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    {
         return None;
     }
     // Reject the never-set clock (year/month/day all zero).
     if d[0].trim_start_matches('0').is_empty() || d[1] == "00" || d[2] == "00" {
         return None;
     }
-    Some(format!("{}-{}-{} {}.{}.{}", d[0], d[1], d[2], t[0], t[1], t[2]))
+    Some(format!(
+        "{}-{}-{} {}.{}.{}",
+        d[0], d[1], d[2], t[0], t[1], t[2]
+    ))
 }
 
 #[cfg(test)]
@@ -523,9 +552,16 @@ mod tests {
 
         // A baseline JPEG, then splice a fake APP1 "Exif" segment in after SOI.
         let mut base = Vec::new();
-        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(16, 12, image::Rgb([40, 90, 160])))
-            .write_to(&mut std::io::Cursor::new(&mut base), image::ImageFormat::Jpeg)
-            .unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            16,
+            12,
+            image::Rgb([40, 90, 160]),
+        ))
+        .write_to(
+            &mut std::io::Cursor::new(&mut base),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
         let payload = b"Exif\0\0sometagdata".to_vec();
         let len = (payload.len() + 2) as u16;
         let mut with_exif = Vec::new();
@@ -535,14 +571,24 @@ mod tests {
         with_exif.extend_from_slice(&payload);
         with_exif.extend_from_slice(&base[2..]);
         std::fs::write(&jpg, &with_exif).unwrap();
-        assert!(with_exif.windows(4).any(|w| w == b"Exif"), "setup must contain Exif");
+        assert!(
+            with_exif.windows(4).any(|w| w == b"Exif"),
+            "setup must contain Exif"
+        );
 
         strip_metadata(jpg.to_str().unwrap()).unwrap();
 
         let after = std::fs::read(&jpg).unwrap();
-        assert!(!after.windows(4).any(|w| w == b"Exif"), "Exif should be stripped");
+        assert!(
+            !after.windows(4).any(|w| w == b"Exif"),
+            "Exif should be stripped"
+        );
         let d = image::open(&jpg).unwrap();
-        assert_eq!((d.width(), d.height()), (16, 12), "pixels must be untouched");
+        assert_eq!(
+            (d.width(), d.height()),
+            (16, 12),
+            "pixels must be untouched"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -563,7 +609,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("st2k_info_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let png = dir.join("i.png");
-        image::DynamicImage::ImageRgb8(image::RgbImage::new(33, 22)).save(&png).unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(33, 22))
+            .save(&png)
+            .unwrap();
         let info = read_info(png.to_str().unwrap());
         assert_eq!((info.width, info.height), (33, 22));
         let _ = std::fs::remove_dir_all(&dir);

@@ -16,7 +16,11 @@ pub fn extract(bytes: &[u8]) -> Option<Vec<u8>> {
     let rec_off = |n: usize| -> Option<usize> { be32(bytes, 78 + n * 8).map(|v| v as usize) };
     let rec = |n: usize| -> Option<&[u8]> {
         let start = rec_off(n)?;
-        let end = if n + 1 < rec_count { rec_off(n + 1)? } else { bytes.len() };
+        let end = if n + 1 < rec_count {
+            rec_off(n + 1)?
+        } else {
+            bytes.len()
+        };
         if end < start {
             return None;
         }
@@ -75,7 +79,9 @@ pub fn extract(bytes: &[u8]) -> Option<Vec<u8>> {
     // Last resort: the largest image record (avoids tiny publisher logos when the
     // base is unusable).
     let (idx, size) = images.iter().copied().max_by_key(|&(_, sz)| sz)?;
-    (size as u64 <= super::MAX_COVER).then(|| rec(idx).map(<[u8]>::to_vec)).flatten()
+    (size as u64 <= super::MAX_COVER)
+        .then(|| rec(idx).map(<[u8]>::to_vec))
+        .flatten()
 }
 
 /// MOBI header length at record0[20:24], or None if there's no MOBI header.

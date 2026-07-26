@@ -109,7 +109,9 @@ fn parse_wav<R: Read + Seek>(r: &mut R) -> Option<Pcm> {
     let mut pos: u64 = 12;
     for _ in 0..64 {
         r.seek(SeekFrom::Start(pos)).ok()?;
-        let Some(hdr) = read_arr::<8, _>(r) else { break };
+        let Some(hdr) = read_arr::<8, _>(r) else {
+            break;
+        };
         let id = &hdr[0..4];
         let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
         let body = pos + 8;
@@ -122,7 +124,11 @@ fn parse_wav<R: Read + Seek>(r: &mut R) -> Option<Pcm> {
             let bits = le16(&buf, 14)?;
             // WAVE_FORMAT_EXTENSIBLE: the real tag is the first 2 bytes of the
             // SubFormat GUID at offset 24.
-            let real_tag = if tag == 0xFFFE && buf.len() >= 26 { le16(&buf, 24)? } else { tag };
+            let real_tag = if tag == 0xFFFE && buf.len() >= 26 {
+                le16(&buf, 24)?
+            } else {
+                tag
+            };
             fmt = Some((real_tag, channels, bits));
         } else if id == b"data" {
             data = Some((body, size));
@@ -139,12 +145,18 @@ fn parse_wav<R: Read + Seek>(r: &mut R) -> Option<Pcm> {
     }
     let sample_bytes = bits / 8;
     let kind = match (tag, bits) {
-        (1, 8) => Kind::U8,            // PCM 8-bit unsigned
+        (1, 8) => Kind::U8,               // PCM 8-bit unsigned
         (1, 16 | 24 | 32) => Kind::IntLe, // PCM integer
-        (3, 32) => Kind::F32Le,       // IEEE float
+        (3, 32) => Kind::F32Le,           // IEEE float
         _ => return None,
     };
-    Some(Pcm { data_start: start, data_len: len, channels, sample_bytes, kind })
+    Some(Pcm {
+        data_start: start,
+        data_len: len,
+        channels,
+        sample_bytes,
+        kind,
+    })
 }
 
 /// Walk AIFF/AIFC chunks (`id[4] + size_be[4] + body`, padded to even) for `COMM`
@@ -155,7 +167,9 @@ fn parse_aiff<R: Read + Seek>(r: &mut R) -> Option<Pcm> {
     let mut pos: u64 = 12;
     for _ in 0..64 {
         r.seek(SeekFrom::Start(pos)).ok()?;
-        let Some(hdr) = read_arr::<8, _>(r) else { break };
+        let Some(hdr) = read_arr::<8, _>(r) else {
+            break;
+        };
         let id = &hdr[0..4];
         let size = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
         let body = pos + 8;
@@ -165,11 +179,11 @@ fn parse_aiff<R: Read + Seek>(r: &mut R) -> Option<Pcm> {
             r.read_exact(&mut buf).ok()?;
             let channels = be16(&buf, 0)?;
             let bits = be16(&buf, 6)?; // sampleSize
-            // AIFC carries a 4-byte compression type after the 18-byte COMM core.
+                                       // AIFC carries a 4-byte compression type after the 18-byte COMM core.
             let kind = match buf.get(18..22) {
-                Some(b"sowt") => Kind::IntLe,        // little-endian PCM
+                Some(b"sowt") => Kind::IntLe, // little-endian PCM
                 Some(b"NONE") | Some(b"twos") | None => Kind::IntBe,
-                Some(_) => return None,              // a real (lossy) codec — skip
+                Some(_) => return None, // a real (lossy) codec — skip
             };
             comm = Some((channels, bits, kind));
         } else if id == b"SSND" {
@@ -198,7 +212,13 @@ fn parse_aiff<R: Read + Seek>(r: &mut R) -> Option<Pcm> {
     if !matches!(bits, 8 | 16 | 24 | 32) {
         return None;
     }
-    Some(Pcm { data_start: start, data_len: len, channels, sample_bytes, kind })
+    Some(Pcm {
+        data_start: start,
+        data_len: len,
+        channels,
+        sample_bytes,
+        kind,
+    })
 }
 
 // ── peak extraction ───────────────────────────────────────────────────────────
@@ -247,7 +267,11 @@ fn sample_to_f32(b: &[u8], kind: Kind) -> f32 {
         Kind::S8 => (b[0] as i8 as f32) / 128.0,
         Kind::F32Le => {
             let v = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            if v.is_finite() { v } else { 0.0 }
+            if v.is_finite() {
+                v
+            } else {
+                0.0
+            }
         }
         Kind::IntLe | Kind::IntBe => {
             let n = b.len();
@@ -335,7 +359,10 @@ mod tests {
         let wav = tiny_wav(8192);
         let png = render_from_reader(&mut Cursor::new(wav)).expect("waveform PNG");
         // PNG signature — the bytes flow straight into the image decode tier.
-        assert_eq!(&png[0..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &png[0..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
     }
 
     #[test]

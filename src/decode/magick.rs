@@ -514,9 +514,7 @@ pub fn encode_via_magick(
                 if now >= deadline {
                     timed_out = true;
                 } else {
-                    std::thread::sleep(
-                        std::time::Duration::from_millis(10).min(deadline - now),
-                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10).min(deadline - now));
                 }
             }
             Err(_) => wait_failed = true,

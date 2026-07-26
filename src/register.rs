@@ -69,8 +69,7 @@ const PREVIEW_HANDLER: &str = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
 const PREVHOST_APPID: &str = "{6d2b5079-2f0b-48dd-ab7f-97cec514d30b}";
 /// The machine-wide list the preview pane consults for registered handlers.
 const PREVIEW_HANDLERS: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\PreviewHandlers";
-const APPROVED: &str =
-    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved";
+const APPROVED: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved";
 
 /// (Re-)register the shell extension machine-wide under HKCR/HKLM. NOTE: the
 /// per-extension on/off flags this reads via [`settings::format_enabled`] live
@@ -161,11 +160,19 @@ fn propstore_keys(ext: &str) -> (String, String) {
 /// (PSD/RAW/EPUB/comics/CAD/Krita/SVG/…), where dimensions in the Details pane is a pure win.
 fn hook_ext_propstore(ext: &str) -> Result<()> {
     let (handler, assoc) = propstore_keys(ext);
-    let existing = LOCAL_MACHINE.open(&handler).ok().and_then(|k| k.get_string("").ok());
-    if !matches!(existing.as_deref(), None | Some("") | Some(CLSID_PROPERTY_STORE_STR)) {
+    let existing = LOCAL_MACHINE
+        .open(&handler)
+        .ok()
+        .and_then(|k| k.get_string("").ok());
+    if !matches!(
+        existing.as_deref(),
+        None | Some("") | Some(CLSID_PROPERTY_STORE_STR)
+    ) {
         return Ok(()); // a real handler already owns this extension — leave it alone
     }
-    LOCAL_MACHINE.create(&handler)?.set_string("", CLSID_PROPERTY_STORE_STR)?;
+    LOCAL_MACHINE
+        .create(&handler)?
+        .set_string("", CLSID_PROPERTY_STORE_STR)?;
     let a = CLASSES_ROOT.create(&assoc)?;
     a.set_string("InfoTip", PROP_INFOTIP)?;
     a.set_string("FullDetails", PROP_FULLDETAILS)?;
@@ -183,7 +190,10 @@ fn hook_ext_propstore(ext: &str) -> Result<()> {
 /// installed app added later — so leaving it avoids clobbering that.
 fn set_perceived_type(ext: &str) {
     let key = format!(".{ext}");
-    let already = CLASSES_ROOT.open(&key).ok().and_then(|k| k.get_string("PerceivedType").ok());
+    let already = CLASSES_ROOT
+        .open(&key)
+        .ok()
+        .and_then(|k| k.get_string("PerceivedType").ok());
     if matches!(already.as_deref(), Some(s) if !s.is_empty()) {
         return; // a value is already present (Windows or another app) — leave it
     }
@@ -234,7 +244,12 @@ fn unhook_ext_propstore(ext: &str) {
         // an upgrade-then-uninstall. We are the only writer of these value names for a format we
         // own. Gated on `was_ours` so we never touch lists under a foreign handler.
         if let Ok(k) = CLASSES_ROOT.open(&assoc) {
-            for v in ["InfoTip", "FullDetails", "PreviewDetails", "AdditionalProperties"] {
+            for v in [
+                "InfoTip",
+                "FullDetails",
+                "PreviewDetails",
+                "AdditionalProperties",
+            ] {
                 let _ = k.remove_value(v);
             }
         }
@@ -252,7 +267,9 @@ fn register_preview_handler(dll_path: &str, approved: &windows_registry::Key) ->
     // accurate declaration is Both — matching the property handler. (Apartment worked only
     // because prevhost.exe tolerated the mismatch.)
     CLASSES_ROOT
-        .create(format!("CLSID\\{CLSID_PREVIEW_HANDLER_STR}\\InprocServer32"))?
+        .create(format!(
+            "CLSID\\{CLSID_PREVIEW_HANDLER_STR}\\InprocServer32"
+        ))?
         .set_string("ThreadingModel", "Both")?;
     // The AppID on our CLSID points the shell at the out-of-process preview host.
     CLASSES_ROOT
@@ -306,7 +323,9 @@ fn thumb_keys(ext: &str) -> [String; 2] {
 /// Point one extension's thumbnail `shellex` keys at our CLSID.
 fn hook_ext(ext: &str) -> Result<()> {
     for path in thumb_keys(ext) {
-        CLASSES_ROOT.create(path)?.set_string("", CLSID_THUMBNAIL_PROVIDER_STR)?;
+        CLASSES_ROOT
+            .create(path)?
+            .set_string("", CLSID_THUMBNAIL_PROVIDER_STR)?;
     }
     Ok(())
 }
@@ -341,8 +360,14 @@ fn is_empty_key(path: &str) -> bool {
     let Ok(key) = CLASSES_ROOT.open(path) else {
         return false;
     };
-    let no_subkeys = key.keys().map(|mut it| it.next().is_none()).unwrap_or(false);
-    let no_values = key.values().map(|mut it| it.next().is_none()).unwrap_or(false);
+    let no_subkeys = key
+        .keys()
+        .map(|mut it| it.next().is_none())
+        .unwrap_or(false);
+    let no_values = key
+        .values()
+        .map(|mut it| it.next().is_none())
+        .unwrap_or(false);
     no_subkeys && no_values
 }
 
@@ -432,11 +457,19 @@ fn preview_keys(ext: &str) -> [String; 2] {
 /// format, and clobbering it would replace a richer preview with our static frame.
 fn hook_ext_preview(ext: &str) -> Result<()> {
     for path in preview_keys(ext) {
-        let existing = CLASSES_ROOT.open(&path).ok().and_then(|k| k.get_string("").ok());
-        if !matches!(existing.as_deref(), None | Some("") | Some(CLSID_PREVIEW_HANDLER_STR)) {
+        let existing = CLASSES_ROOT
+            .open(&path)
+            .ok()
+            .and_then(|k| k.get_string("").ok());
+        if !matches!(
+            existing.as_deref(),
+            None | Some("") | Some(CLSID_PREVIEW_HANDLER_STR)
+        ) {
             continue; // a real handler already owns this slot — leave it alone
         }
-        CLASSES_ROOT.create(path)?.set_string("", CLSID_PREVIEW_HANDLER_STR)?;
+        CLASSES_ROOT
+            .create(path)?
+            .set_string("", CLSID_PREVIEW_HANDLER_STR)?;
     }
     Ok(())
 }
@@ -480,7 +513,9 @@ fn notify_shell() {
 /// and reporting "repaired" after a silent failure is worse than reporting nothing.
 pub fn is_registered() -> bool {
     CLASSES_ROOT
-        .open(format!("CLSID\\{CLSID_THUMBNAIL_PROVIDER_STR}\\InprocServer32"))
+        .open(format!(
+            "CLSID\\{CLSID_THUMBNAIL_PROVIDER_STR}\\InprocServer32"
+        ))
         .ok()
         .and_then(|k| k.get_string("").ok())
         .is_some_and(|p| !p.is_empty())

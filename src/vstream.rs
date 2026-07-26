@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use windows::core::{Error, Result, HRESULT};
 use windows::Win32::Foundation::{
-    E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER, S_FALSE, S_OK, STG_E_ACCESSDENIED,
+    E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER, STG_E_ACCESSDENIED, S_FALSE, S_OK,
 };
 use windows::Win32::System::Com::{
     ISequentialStream_Impl, IStream, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG, STGC, STGTY_STREAM,
@@ -101,7 +101,11 @@ impl BlockCacheStream {
             let want = (buf.len() - filled).min(u32::MAX as usize) as u32;
             if self
                 .inner
-                .Read(buf[filled..].as_mut_ptr() as *mut c_void, want, Some(&mut got))
+                .Read(
+                    buf[filled..].as_mut_ptr() as *mut c_void,
+                    want,
+                    Some(&mut got),
+                )
                 .is_err()
             {
                 return None;

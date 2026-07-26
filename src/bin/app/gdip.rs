@@ -13,19 +13,23 @@
 use windows::Win32::Foundation::COLORREF;
 use windows::Win32::Graphics::Gdi::HDC;
 use windows::Win32::Graphics::GdiPlus::{
-    GdipAddPathArc, GdipClosePathFigure, GdipCreateFromHDC, GdipCreatePath, GdipCreatePen1,
-    GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics, GdipDeletePath, GdipDeletePen,
-    GdipDrawEllipseI, GdipDrawLineI, GdipDrawLinesI, GdipDrawPath, GdipDrawRectangleI,
-    GdipFillEllipseI, GdipFillPath, GdipFillRectangleI, GdipSetPenEndCap, GdipSetPenLineJoin,
-    GdipSetPenStartCap, GdipSetPixelOffsetMode, GdipSetSmoothingMode, GdiplusShutdown,
-    GdiplusStartup, GdiplusStartupInput, GdiplusStartupOutput, FillMode, GpBrush, GpGraphics,
-    GpPath, GpPen, GpSolidFill, LineCap, LineJoin, PixelOffsetMode, Point, SmoothingMode, Unit,
+    FillMode, GdipAddPathArc, GdipClosePathFigure, GdipCreateFromHDC, GdipCreatePath,
+    GdipCreatePen1, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics, GdipDeletePath,
+    GdipDeletePen, GdipDrawEllipseI, GdipDrawLineI, GdipDrawLinesI, GdipDrawPath,
+    GdipDrawRectangleI, GdipFillEllipseI, GdipFillPath, GdipFillRectangleI, GdipSetPenEndCap,
+    GdipSetPenLineJoin, GdipSetPenStartCap, GdipSetPixelOffsetMode, GdipSetSmoothingMode,
+    GdiplusShutdown, GdiplusStartup, GdiplusStartupInput, GdiplusStartupOutput, GpBrush,
+    GpGraphics, GpPath, GpPen, GpSolidFill, LineCap, LineJoin, PixelOffsetMode, Point,
+    SmoothingMode, Unit,
 };
 
 /// Initialise GDI+ for this thread; returns the token to pass to [`shutdown`].
 pub(crate) unsafe fn startup() -> usize {
     let mut token: usize = 0;
-    let input = GdiplusStartupInput { GdiplusVersion: 1, ..Default::default() };
+    let input = GdiplusStartupInput {
+        GdiplusVersion: 1,
+        ..Default::default()
+    };
     let mut output = GdiplusStartupOutput::default();
     let _ = GdiplusStartup(&mut token, &input, &mut output);
     token
@@ -98,10 +102,24 @@ pub(crate) unsafe fn rect(g: *mut GpGraphics, p: *mut GpPen, x: i32, y: i32, w: 
 pub(crate) unsafe fn ellipse(g: *mut GpGraphics, p: *mut GpPen, x: i32, y: i32, w: i32, h: i32) {
     let _ = GdipDrawEllipseI(g, p, x, y, w, h);
 }
-pub(crate) unsafe fn fill_rect(g: *mut GpGraphics, b: *mut GpBrush, x: i32, y: i32, w: i32, h: i32) {
+pub(crate) unsafe fn fill_rect(
+    g: *mut GpGraphics,
+    b: *mut GpBrush,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
     let _ = GdipFillRectangleI(g, b, x, y, w, h);
 }
-pub(crate) unsafe fn fill_ellipse(g: *mut GpGraphics, b: *mut GpBrush, x: i32, y: i32, w: i32, h: i32) {
+pub(crate) unsafe fn fill_ellipse(
+    g: *mut GpGraphics,
+    b: *mut GpBrush,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
     let _ = GdipFillEllipseI(g, b, x, y, w, h);
 }
 /// Connected line segments (a polyline) through `pts`.
@@ -128,14 +146,30 @@ unsafe fn round_path(x: i32, y: i32, w: i32, h: i32, r: i32) -> *mut GpPath {
 }
 
 /// Fill an anti-aliased rounded rectangle (corner radius `r`).
-pub(crate) unsafe fn fill_round(g: *mut GpGraphics, b: *mut GpBrush, x: i32, y: i32, w: i32, h: i32, r: i32) {
+pub(crate) unsafe fn fill_round(
+    g: *mut GpGraphics,
+    b: *mut GpBrush,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+) {
     let p = round_path(x, y, w, h, r);
     let _ = GdipFillPath(g, b, p);
     let _ = GdipDeletePath(p);
 }
 
 /// Stroke an anti-aliased rounded rectangle outline.
-pub(crate) unsafe fn stroke_round(g: *mut GpGraphics, pen: *mut GpPen, x: i32, y: i32, w: i32, h: i32, r: i32) {
+pub(crate) unsafe fn stroke_round(
+    g: *mut GpGraphics,
+    pen: *mut GpPen,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+) {
     let p = round_path(x, y, w, h, r);
     let _ = GdipDrawPath(g, pen, p);
     let _ = GdipDeletePath(p);

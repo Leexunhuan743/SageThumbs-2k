@@ -12,9 +12,9 @@ use core::ffi::c_void;
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    Arc, BitBlt, CreateCompatibleDC, CreatePen, DeleteDC, DeleteObject, DrawTextW, Ellipse, FillRect,
-    GetStockObject, GetTextExtentPoint32W, InvalidateRect, RoundRect, SelectObject, SetBkColor,
-    SetBkMode, SetDCBrushColor, SetDCPenColor, SetTextColor, DC_BRUSH, DC_PEN, DT_LEFT,
+    Arc, BitBlt, CreateCompatibleDC, CreatePen, DeleteDC, DeleteObject, DrawTextW, Ellipse,
+    FillRect, GetStockObject, GetTextExtentPoint32W, InvalidateRect, RoundRect, SelectObject,
+    SetBkColor, SetBkMode, SetDCBrushColor, SetDCPenColor, SetTextColor, DC_BRUSH, DC_PEN, DT_LEFT,
     DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HBITMAP, HBRUSH, HDC, HGDIOBJ, PS_SOLID, SRCCOPY,
     TRANSPARENT,
 };
@@ -120,7 +120,12 @@ pub(crate) unsafe fn show_about(parent: HWND) {
     let dpi = GetDpiForWindow(parent) as i32;
     let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     let exstyle = WS_EX_DLGMODALFRAME;
-    let mut rc = RECT { left: 0, top: 0, right: dpi_scale_dpi(CW, dpi), bottom: dpi_scale_dpi(CH, dpi) };
+    let mut rc = RECT {
+        left: 0,
+        top: 0,
+        right: dpi_scale_dpi(CW, dpi),
+        bottom: dpi_scale_dpi(CH, dpi),
+    };
     let _ = AdjustWindowRectExForDpi(&mut rc, style, BOOL(0).into(), exstyle, dpi as u32);
     let (win_w, win_h) = (rc.right - rc.left, rc.bottom - rc.top);
 
@@ -158,9 +163,15 @@ pub(crate) unsafe fn show_about(parent: HWND) {
 
 // ---- Colour helpers -----------------------------------------------------
 
-fn color_r(c: COLORREF) -> u8 { (c.0 & 0xFF) as u8 }
-fn color_g(c: COLORREF) -> u8 { ((c.0 >> 8) & 0xFF) as u8 }
-fn color_b(c: COLORREF) -> u8 { ((c.0 >> 16) & 0xFF) as u8 }
+fn color_r(c: COLORREF) -> u8 {
+    (c.0 & 0xFF) as u8
+}
+fn color_g(c: COLORREF) -> u8 {
+    ((c.0 >> 8) & 0xFF) as u8
+}
+fn color_b(c: COLORREF) -> u8 {
+    ((c.0 >> 16) & 0xFF) as u8
+}
 
 unsafe fn s(hwnd: HWND, v: i32) -> i32 {
     dpi_scale(hwnd, v)
@@ -192,9 +203,14 @@ unsafe fn lw_logo_hbitmap(w: u32, h: u32) -> Option<HBITMAP> {
         .resize_exact(w, h, image::imageops::FilterType::Lanczos3)
         .to_rgba8();
     let base = DARK_BG();
-    let mut out = image::RgbaImage::from_pixel(w, h, image::Rgba([color_r(base), color_g(base), color_b(base), 255]));
+    let mut out = image::RgbaImage::from_pixel(
+        w,
+        h,
+        image::Rgba([color_r(base), color_g(base), color_b(base), 255]),
+    );
     image::imageops::overlay(&mut out, &logo, 0, 0);
-    sagethumbs2k_core::app_image::rgba_to_hbitmap(w, h, out.as_raw()).map(|h| HBITMAP(h as *mut c_void))
+    sagethumbs2k_core::app_image::rgba_to_hbitmap(w, h, out.as_raw())
+        .map(|h| HBITMAP(h as *mut c_void))
 }
 
 /// The GitHub mark at `px`², tinted `fg` and composited over `fill` (the pill face),
@@ -228,15 +244,53 @@ unsafe fn build_about(hwnd: HWND, hinst: HINSTANCE) {
     }
 
     // Eye logo, centered near the top.
-    let logo = ctl(hwnd, STATIC, "", WINDOW_STYLE(SS_BITMAP), (CW - 72) / 2, 20, 72, 72, -1, hinst);
+    let logo = ctl(
+        hwnd,
+        STATIC,
+        "",
+        WINDOW_STYLE(SS_BITMAP),
+        (CW - 72) / 2,
+        20,
+        72,
+        72,
+        -1,
+        hinst,
+    );
     if let Some(hbmp) = load_art(LOGO_PNG, "logo.png", 72, 72) {
         set_static_bitmap(logo, hbmp);
     }
 
     // Product title — big + bold — then the muted subtitle.
-    let title = ctl(hwnd, STATIC, "SageThumbs 2K", WINDOW_STYLE(SS_CENTER), 20, 100, CW - 40, 34, -1, hinst);
-    SendMessageW(title, WM_SETFONT, Some(WPARAM(gui_font_sized(hwnd, 26, 700).0 as usize)), Some(LPARAM(1)));
-    ctl(hwnd, STATIC, t("about_subtitle"), WINDOW_STYLE(SS_CENTER), 20, 138, CW - 40, 18, ID_SUBTITLE, hinst);
+    let title = ctl(
+        hwnd,
+        STATIC,
+        "SageThumbs 2K",
+        WINDOW_STYLE(SS_CENTER),
+        20,
+        100,
+        CW - 40,
+        34,
+        -1,
+        hinst,
+    );
+    SendMessageW(
+        title,
+        WM_SETFONT,
+        Some(WPARAM(gui_font_sized(hwnd, 26, 700).0 as usize)),
+        Some(LPARAM(1)),
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        t("about_subtitle"),
+        WINDOW_STYLE(SS_CENTER),
+        20,
+        138,
+        CW - 40,
+        18,
+        ID_SUBTITLE,
+        hinst,
+    );
 
     // The two status pills, centered as a group. Each pill's width is fixed (the
     // version is constant; the status pill is sized to its widest possible text), so
@@ -254,12 +308,56 @@ unsafe fn build_about(hwnd: HWND, hinst: HINSTANCE) {
     let gap = 12;
     let gx = (CW - (ver_w + gap + status_w)) / 2;
     let pill = WINDOW_STYLE(SS_OWNERDRAW | SS_NOTIFY);
-    ctl(hwnd, STATIC, "", pill, gx, 174, ver_w, 30, ID_VER_PILL, hinst);
-    ctl(hwnd, STATIC, "", pill, gx + ver_w + gap, 174, status_w, 30, ID_STATUS_PILL, hinst);
+    ctl(
+        hwnd,
+        STATIC,
+        "",
+        pill,
+        gx,
+        174,
+        ver_w,
+        30,
+        ID_VER_PILL,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        "",
+        pill,
+        gx + ver_w + gap,
+        174,
+        status_w,
+        30,
+        ID_STATUS_PILL,
+        hinst,
+    );
 
     // Bottom-left: license + copyright (muted via WM_CTLCOLORSTATIC).
-    ctl(hwnd, STATIC, "PolyForm Noncommercial 1.0.0", WINDOW_STYLE(0), 22, 250, 210, 16, ID_LICENSE, hinst);
-    ctl(hwnd, STATIC, "\u{00a9} 2026 Lunarwerx", WINDOW_STYLE(0), 22, 268, 210, 16, ID_COPYRIGHT, hinst);
+    ctl(
+        hwnd,
+        STATIC,
+        "PolyForm Noncommercial 1.0.0",
+        WINDOW_STYLE(0),
+        22,
+        250,
+        210,
+        16,
+        ID_LICENSE,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        "\u{00a9} 2026 Lunarwerx",
+        WINDOW_STYLE(0),
+        22,
+        268,
+        210,
+        16,
+        ID_COPYRIGHT,
+        hinst,
+    );
 
     // Bottom-right: the clickable LunarWerx Studios wordmark. The two theme variants have
     // different aspect ratios, so size the control to the active one (fixed height, width
@@ -267,7 +365,18 @@ unsafe fn build_about(hwnd: HWND, hinst: HINSTANCE) {
     let (_, lw_aspect) = lw_logo();
     let lw_h = 26;
     let lw_w = (lw_h as f32 * lw_aspect).round() as i32;
-    let lw = ctl(hwnd, STATIC, "", WINDOW_STYLE(SS_BITMAP | SS_NOTIFY), CW - 22 - lw_w, 252, lw_w, lw_h, ID_LW_LOGO, hinst);
+    let lw = ctl(
+        hwnd,
+        STATIC,
+        "",
+        WINDOW_STYLE(SS_BITMAP | SS_NOTIFY),
+        CW - 22 - lw_w,
+        252,
+        lw_w,
+        lw_h,
+        ID_LW_LOGO,
+        hinst,
+    );
     if let Some(hbmp) = lw_logo_hbitmap(lw_w as u32, lw_h as u32) {
         set_static_bitmap(lw, hbmp);
     }
@@ -340,12 +449,21 @@ unsafe fn offer_update(hwnd: HWND) {
     let prompt = wide(
         "Download and install the update now? SageThumbs updates itself in the background — Explorer briefly restarts, and you'll get a confirmation when it's done.",
     );
-    if MessageBoxW(Some(hwnd), PCWSTR(prompt.as_ptr()), PCWSTR(cap.as_ptr()), MB_YESNO | MB_ICONINFORMATION) != IDYES {
+    if MessageBoxW(
+        Some(hwnd),
+        PCWSTR(prompt.as_ptr()),
+        PCWSTR(cap.as_ptr()),
+        MB_YESNO | MB_ICONINFORMATION,
+    ) != IDYES
+    {
         return;
     }
     match update::download_and_install(hwnd) {
         // Installer launched: it closes us, upgrades in place, and relaunches — so exit.
-        Ok(_) => std::process::exit(0),
+        Ok(_) => {
+            crate::sync_client::flush_pending(std::time::Duration::from_secs(6));
+            std::process::exit(0)
+        }
         // A user cancel (progress-dialog Cancel or declining UAC) shouldn't nag.
         Err(m) if m.contains("cancel") => {}
         // A real failure: fall back to the manual download page.
@@ -395,7 +513,15 @@ unsafe fn pill_frame(hwnd: HWND, hdc: HDC, rc: &RECT) {
     SetDCPenColor(hdc, BORDER_STRONG());
     let h = rc.bottom - rc.top;
     let inset = s(hwnd, 1);
-    let _ = RoundRect(hdc, rc.left, rc.top, rc.right - inset, rc.bottom - inset, h, h);
+    let _ = RoundRect(
+        hdc,
+        rc.left,
+        rc.top,
+        rc.right - inset,
+        rc.bottom - inset,
+        h,
+        h,
+    );
 }
 
 /// Blit an opaque bitmap into `dst` at `(x,y)`, `w`×`h`.
@@ -416,8 +542,18 @@ unsafe fn draw_text(hdc: HDC, text: &str, left: i32, rc: &RECT, color: COLORREF)
     SetTextColor(hdc, color);
     let mut buf = wide(text);
     let n = buf.len().saturating_sub(1);
-    let mut tr = RECT { left, top: rc.top, right: rc.right, bottom: rc.bottom };
-    DrawTextW(hdc, &mut buf[..n], &mut tr, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+    let mut tr = RECT {
+        left,
+        top: rc.top,
+        right: rc.right,
+        bottom: rc.bottom,
+    };
+    DrawTextW(
+        hdc,
+        &mut buf[..n],
+        &mut tr,
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX,
+    );
 }
 
 unsafe fn draw_ver_pill(hwnd: HWND, d: &DRAWITEMSTRUCT) {
@@ -460,7 +596,15 @@ unsafe fn status_display(st: *mut About) -> (COLORREF, String) {
 /// by `frame` so successive repaints appear to spin. The two radial endpoints only pick the
 /// sweep, so the exact angle-sign convention doesn't matter — either direction reads as
 /// "spinning". Uses a DPI-scaled pen freed before returning.
-unsafe fn draw_spinner(hwnd: HWND, hdc: HDC, cx: i32, cy: i32, r: i32, frame: u32, color: COLORREF) {
+unsafe fn draw_spinner(
+    hwnd: HWND,
+    hdc: HDC,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    frame: u32,
+    color: COLORREF,
+) {
     use core::f32::consts::PI;
     let pen_w = s(hwnd, 2).max(1);
     let pen = CreatePen(PS_SOLID, pen_w, color);
@@ -623,9 +767,11 @@ extern "system" fn about_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
             WM_SETCURSOR => {
                 // Hand cursor over the three clickables; default elsewhere.
                 let over = HWND(wparam.0 as *mut c_void);
-                let clickable = [ID_LW_LOGO, ID_VER_PILL, ID_STATUS_PILL]
-                    .iter()
-                    .any(|&id| GetDlgItem(Some(hwnd), id).map(|h| h == over).unwrap_or(false));
+                let clickable = [ID_LW_LOGO, ID_VER_PILL, ID_STATUS_PILL].iter().any(|&id| {
+                    GetDlgItem(Some(hwnd), id)
+                        .map(|h| h == over)
+                        .unwrap_or(false)
+                });
                 if clickable {
                     if let Ok(hand) = LoadCursorW(None, IDC_HAND) {
                         SetCursor(Some(hand));

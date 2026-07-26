@@ -64,14 +64,18 @@ pub fn extract_n(bytes: &[u8], want: usize) -> Option<Vec<Vec<u8>>> {
     // is REMOVED as it's captured, so a later duplicate-named physical entry
     // (legal in RAR) drains to the sink instead of appending into — and
     // corrupting — an already-captured buffer.
-    let mut targets: std::collections::HashMap<&str, usize> =
-        picks.iter().enumerate().map(|(rank, &i)| (entries[i].name.as_str(), rank)).collect();
+    let mut targets: std::collections::HashMap<&str, usize> = picks
+        .iter()
+        .enumerate()
+        .map(|(rank, &i)| (entries[i].name.as_str(), rank))
+        .collect();
 
     // Stream extraction: capture ONLY the picked entries, then abort (Err stops the
     // run once every target has been seen; targets are normally the first pages, so
     // little extra is decompressed).
-    let bufs: Vec<Rc<RefCell<Vec<u8>>>> =
-        (0..picks.len()).map(|_| Rc::new(RefCell::new(Vec::new()))).collect();
+    let bufs: Vec<Rc<RefCell<Vec<u8>>>> = (0..picks.len())
+        .map(|_| Rc::new(RefCell::new(Vec::new())))
+        .collect();
     let mut remaining = picks.len();
     let _ = archive.extract_to(None, |meta| {
         if remaining == 0 {

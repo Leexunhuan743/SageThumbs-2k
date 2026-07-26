@@ -49,9 +49,16 @@ mod tests {
 
     fn tiny_tiff() -> Vec<u8> {
         let mut buf = Vec::new();
-        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(6, 4, image::Rgb([40, 160, 220])))
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Tiff)
-            .unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            6,
+            4,
+            image::Rgb([40, 160, 220]),
+        ))
+        .write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::Tiff,
+        )
+        .unwrap();
         buf
     }
 
@@ -76,10 +83,16 @@ mod tests {
     #[test]
     fn extracts_dos_eps_tiff_preview() {
         let tiff = tiny_tiff();
-        let eps = dos_eps(b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 6 4\nshowpage\n", &tiff);
+        let eps = dos_eps(
+            b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 6 4\nshowpage\n",
+            &tiff,
+        );
         let got = extract(&eps).expect("TIFF preview");
         assert_eq!(got, tiff);
-        assert!(image::load_from_memory(&got).is_ok(), "preview should decode as TIFF");
+        assert!(
+            image::load_from_memory(&got).is_ok(),
+            "preview should decode as TIFF"
+        );
     }
 
     #[test]

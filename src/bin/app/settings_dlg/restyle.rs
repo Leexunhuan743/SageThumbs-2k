@@ -35,7 +35,12 @@ pub(super) unsafe fn draw_section_header(hwnd: HWND, d: &DRAWITEMSTRUCT) {
     let track = s(hwnd, 1);
     SetTextCharacterExtra(hdc, track);
     let mut tr = rc;
-    DrawTextW(hdc, &mut text[..tn], &mut tr, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+    DrawTextW(
+        hdc,
+        &mut text[..tn],
+        &mut tr,
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX,
+    );
     SetTextCharacterExtra(hdc, 0);
 
     // Divider, vertically centered, from just after the text (incl. tracking) to
@@ -43,7 +48,12 @@ pub(super) unsafe fn draw_section_header(hwnd: HWND, d: &DRAWITEMSTRUCT) {
     let lx = rc.left + sz.cx + tn as i32 * track + s(hwnd, 12);
     let ly = (rc.top + rc.bottom) / 2;
     if lx < rc.right {
-        let line = RECT { left: lx, top: ly, right: rc.right, bottom: ly + s(hwnd, 1).max(1) };
+        let line = RECT {
+            left: lx,
+            top: ly,
+            right: rc.right,
+            bottom: ly + s(hwnd, 1).max(1),
+        };
         fill(hdc, &line, BORDER());
     }
 }
@@ -91,11 +101,15 @@ unsafe fn draw_check_glyph(
         gdip::drop_pen(p);
         if on {
             let cp = gdip::pen_round(ON_ACCENT(), s(hwnd, 2).max(2));
-            gdip::polyline(gg, cp, &[
-                (x + g * 27 / 100, y + g * 52 / 100),
-                (x + g * 43 / 100, y + g * 68 / 100),
-                (x + g * 73 / 100, y + g * 33 / 100),
-            ]);
+            gdip::polyline(
+                gg,
+                cp,
+                &[
+                    (x + g * 27 / 100, y + g * 52 / 100),
+                    (x + g * 43 / 100, y + g * 68 / 100),
+                    (x + g * 73 / 100, y + g * 33 / 100),
+                ],
+            );
             gdip::drop_pen(cp);
         }
     });
@@ -161,7 +175,12 @@ unsafe fn draw_checkbox(hwnd: HWND, nmcd: *const NMCUSTOMDRAW) -> isize {
     let sw_h = s(hwnd, 20);
 
     // Label fills the row, leaving room for the switch on the right.
-    let mut tr = RECT { left: rc.left, top: rc.top, right: rc.right - sw_w - s(hwnd, 12), bottom: rc.bottom };
+    let mut tr = RECT {
+        left: rc.left,
+        top: rc.top,
+        right: rc.right - sw_w - s(hwnd, 12),
+        bottom: rc.bottom,
+    };
     SelectObject(hdc, HGDIOBJ(gui_font_for(hwnd).0));
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, DARK_TEXT());
@@ -175,7 +194,17 @@ unsafe fn draw_checkbox(hwnd: HWND, nmcd: *const NMCUSTOMDRAW) -> isize {
     );
 
     // Switch at the right edge of the control rect.
-    draw_switch_glyph(hwnd, hdc, rc.right - sw_w, rc.top, rc.bottom, sw_w, sw_h, on, active);
+    draw_switch_glyph(
+        hwnd,
+        hdc,
+        rc.right - sw_w,
+        rc.top,
+        rc.bottom,
+        sw_w,
+        sw_h,
+        on,
+        active,
+    );
     CDRF_SKIPDEFAULT as isize
 }
 
@@ -200,11 +229,31 @@ unsafe fn draw_pushbutton(hwnd: HWND, nmcd: *const NMCUSTOMDRAW) -> isize {
         // hotkey is off. Native Win32 greys disabled buttons; our owner-draw must too.
         (BTN_FACE(), BORDER(), DISABLED_TEXT())
     } else if accent {
-        let f = if pressed { ACCENT_PRESS() } else if hot { ACCENT_HOT() } else { ACCENT() };
+        let f = if pressed {
+            ACCENT_PRESS()
+        } else if hot {
+            ACCENT_HOT()
+        } else {
+            ACCENT()
+        };
         (f, f, ON_ACCENT())
     } else {
-        let f = if pressed { BTN_FACE_PRESS() } else if hot { BTN_FACE_HOT() } else { BTN_FACE() };
-        (f, if hot || focus { BORDER_STRONG() } else { BORDER() }, DARK_TEXT())
+        let f = if pressed {
+            BTN_FACE_PRESS()
+        } else if hot {
+            BTN_FACE_HOT()
+        } else {
+            BTN_FACE()
+        };
+        (
+            f,
+            if hot || focus {
+                BORDER_STRONG()
+            } else {
+                BORDER()
+            },
+            DARK_TEXT(),
+        )
     };
     let rad = s(hwnd, 8);
     let inset = s(hwnd, 1);
@@ -280,7 +329,10 @@ pub(super) unsafe fn draw_list_item(p: *mut NMLVCUSTOMDRAW) -> isize {
         } else {
             SURFACE()
         };
-        let mut rr = RECT { left: 0 /* LVIR_BOUNDS */, ..Default::default() };
+        let mut rr = RECT {
+            left: 0, /* LVIR_BOUNDS */
+            ..Default::default()
+        };
         SendMessageW(
             list,
             LVM_GETITEMRECT,
@@ -288,10 +340,25 @@ pub(super) unsafe fn draw_list_item(p: *mut NMLVCUSTOMDRAW) -> isize {
             Some(LPARAM(&mut rr as *mut _ as isize)),
         );
         // Erase the native checkbox gutter, then draw ours centered in it.
-        let gutter = RECT { left: rr.left, top: rr.top, right: rr.left + s(list, 20), bottom: rr.bottom };
+        let gutter = RECT {
+            left: rr.left,
+            top: rr.top,
+            right: rr.left + s(list, 20),
+            bottom: rr.bottom,
+        };
         fill(hdc, &gutter, bg);
         let on = is_checked(list, row);
-        draw_check_glyph(list, hdc, rr.left + s(list, 4), rr.top, rr.bottom, s(list, 14), s(list, 4), on, false);
+        draw_check_glyph(
+            list,
+            hdc,
+            rr.left + s(list, 4),
+            rr.top,
+            rr.bottom,
+            s(list, 14),
+            s(list, 4),
+            on,
+            false,
+        );
         return CDRF_DODEFAULT as isize;
     }
     CDRF_DODEFAULT as isize
@@ -318,12 +385,22 @@ unsafe fn draw_rounded_panel(
     if GetWindowRect(ctrl, &mut wr).is_err() {
         return;
     }
-    let mut tl = POINT { x: wr.left, y: wr.top };
-    let mut br = POINT { x: wr.right, y: wr.bottom };
+    let mut tl = POINT {
+        x: wr.left,
+        y: wr.top,
+    };
+    let mut br = POINT {
+        x: wr.right,
+        y: wr.bottom,
+    };
     let _ = ScreenToClient(hwnd, &mut tl);
     let _ = ScreenToClient(hwnd, &mut br);
-    let (ix, iy_top, iy_bottom, e) =
-        (s(hwnd, ix), s(hwnd, iy_top), s(hwnd, iy_bottom), s(hwnd, ell));
+    let (ix, iy_top, iy_bottom, e) = (
+        s(hwnd, ix),
+        s(hwnd, iy_top),
+        s(hwnd, iy_bottom),
+        s(hwnd, ell),
+    );
     let bw = s(hwnd, 1).max(1);
     let (px, py) = (tl.x - ix, tl.y - iy_top);
     let (pw, ph) = ((br.x + ix) - px, (br.y + iy_bottom) - py);
@@ -406,8 +483,16 @@ unsafe extern "system" fn combo_subclass(
             // picker while "instant screenshot" is off). Native Win32 greys a disabled
             // combo automatically; our owner-draw must do it explicitly.
             let enabled = windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled(h).as_bool();
-            let text_col = if enabled { DARK_TEXT() } else { DISABLED_TEXT() };
-            let chevron_col = if enabled { HEADER_TEXT() } else { DISABLED_TEXT() };
+            let text_col = if enabled {
+                DARK_TEXT()
+            } else {
+                DISABLED_TEXT()
+            };
+            let chevron_col = if enabled {
+                HEADER_TEXT()
+            } else {
+                DISABLED_TEXT()
+            };
             let bw = s(h, 18); // reserved chevron column on the right
 
             // Current selection text, left-aligned.
@@ -425,8 +510,12 @@ unsafe extern "system" fn combo_subclass(
                     SelectObject(hdc, HGDIOBJ(gui_font_for(h).0));
                     SetBkMode(hdc, TRANSPARENT);
                     SetTextColor(hdc, text_col);
-                    let mut tr =
-                        RECT { left: rc.left + s(h, 9), top: rc.top, right: rc.right - bw, bottom: rc.bottom };
+                    let mut tr = RECT {
+                        left: rc.left + s(h, 9),
+                        top: rc.top,
+                        right: rc.right - bw,
+                        bottom: rc.bottom,
+                    };
                     DrawTextW(
                         hdc,
                         &mut buf[..len as usize],
@@ -442,7 +531,11 @@ unsafe extern "system" fn combo_subclass(
             let d = s(h, 3);
             gdip::with_aa(hdc, |g| {
                 let p = gdip::pen_round(chevron_col, s(h, 2).max(1));
-                gdip::polyline(g, p, &[(cx - d, cy - d / 2), (cx, cy + d / 2), (cx + d, cy - d / 2)]);
+                gdip::polyline(
+                    g,
+                    p,
+                    &[(cx - d, cy - d / 2), (cx, cy + d / 2), (cx + d, cy - d / 2)],
+                );
                 gdip::drop_pen(p);
             });
             let _ = EndPaint(h, &ps);

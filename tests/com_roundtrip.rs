@@ -26,7 +26,7 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Shell::PropertiesSystem::IInitializeWithStream;
 use windows::Win32::UI::Shell::{
-    SHCreateMemStream, IThumbnailProvider, WTS_ALPHATYPE, WTSAT_ARGB, WTSAT_UNKNOWN,
+    IThumbnailProvider, SHCreateMemStream, WTSAT_ARGB, WTSAT_UNKNOWN, WTS_ALPHATYPE,
 };
 
 const CLSID_THUMBNAIL_PROVIDER: GUID = GUID::from_u128(0x7B2E6A14_9C3D_4F8A_B1E7_2A5D9F0C6E31);
@@ -57,7 +57,12 @@ impl Thumb {
     /// BGRA quad at (x, y).
     fn px(&self, x: usize, y: usize) -> [u8; 4] {
         let i = (y * self.w + x) * 4;
-        [self.bgra[i], self.bgra[i + 1], self.bgra[i + 2], self.bgra[i + 3]]
+        [
+            self.bgra[i],
+            self.bgra[i + 1],
+            self.bgra[i + 2],
+            self.bgra[i + 3],
+        ]
     }
 }
 
@@ -67,7 +72,10 @@ unsafe fn get_thumbnail(bytes: &[u8], cx: u32) -> Result<Thumb> {
     let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
     let path = dll_path();
-    assert!(path.exists(), "cdylib not built at {path:?} — run `cargo build` first");
+    assert!(
+        path.exists(),
+        "cdylib not built at {path:?} — run `cargo build` first"
+    );
     let wide: Vec<u16> = path
         .as_os_str()
         .encode_wide()
@@ -75,13 +83,18 @@ unsafe fn get_thumbnail(bytes: &[u8], cx: u32) -> Result<Thumb> {
         .collect();
     let module: HMODULE = LoadLibraryW(PCWSTR(wide.as_ptr()))?;
 
-    let proc = GetProcAddress(module, s!("DllGetClassObject"))
-        .ok_or_else(|| Error::from(E_FAIL))?;
+    let proc =
+        GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
     let dll_get_class_object: DllGetClassObjectFn = std::mem::transmute(proc);
 
     // Class factory, exactly as the shell does it.
     let mut factory_ptr: *mut c_void = std::ptr::null_mut();
-    dll_get_class_object(&CLSID_THUMBNAIL_PROVIDER, &IClassFactory::IID, &mut factory_ptr).ok()?;
+    dll_get_class_object(
+        &CLSID_THUMBNAIL_PROVIDER,
+        &IClassFactory::IID,
+        &mut factory_ptr,
+    )
+    .ok()?;
     assert!(!factory_ptr.is_null(), "null class factory");
     let factory = IClassFactory::from_raw(factory_ptr);
 
@@ -120,7 +133,12 @@ unsafe fn get_thumbnail(bytes: &[u8], cx: u32) -> Result<Thumb> {
     }
     let _ = DeleteObject(hbmp.into());
 
-    Ok(Thumb { w, h, bgra, alpha: alpha.0 })
+    Ok(Thumb {
+        w,
+        h,
+        bgra,
+        alpha: alpha.0,
+    })
 }
 
 fn solid(w: u32, h: u32, rgba: [u8; 4]) -> RgbaImage {
@@ -151,7 +169,11 @@ fn png_fits_box_preserves_aspect_and_color() {
     assert_eq!((t.w, t.h), (96, 48), "200x100 should fit 96-box as 96x48");
     assert_eq!(t.alpha, WTSAT_ARGB.0, "should report premultiplied ARGB");
     let [b, g, r, a] = t.px(0, 0);
-    assert!(r > 200 && g < 60 && b < 60 && a == 255, "expected red, got BGRA {:?}", [b, g, r, a]);
+    assert!(
+        r > 200 && g < 60 && b < 60 && a == 255,
+        "expected red, got BGRA {:?}",
+        [b, g, r, a]
+    );
 }
 
 #[test]
@@ -160,7 +182,11 @@ fn dib_is_top_down() {
     let mut img = RgbaImage::new(200, 100);
     for y in 0..100u32 {
         for x in 0..200u32 {
-            let c = if y < 50 { [255, 0, 0, 255] } else { [0, 0, 255, 255] };
+            let c = if y < 50 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
             img.put_pixel(x, y, Rgba(c));
         }
     }
@@ -168,8 +194,14 @@ fn dib_is_top_down() {
     let t = unsafe { get_thumbnail(&png, 64) }.unwrap();
     let top = t.px(0, 0);
     let bottom = t.px(0, t.h - 1);
-    assert!(top[2] > 180 && top[0] < 70, "top row should be red, got BGRA {top:?}");
-    assert!(bottom[0] > 180 && bottom[2] < 70, "bottom row should be blue, got BGRA {bottom:?}");
+    assert!(
+        top[2] > 180 && top[0] < 70,
+        "top row should be red, got BGRA {top:?}"
+    );
+    assert!(
+        bottom[0] > 180 && bottom[2] < 70,
+        "bottom row should be blue, got BGRA {bottom:?}"
+    );
 }
 
 #[test]
@@ -180,7 +212,10 @@ fn alpha_is_premultiplied() {
     assert_eq!(t.alpha, WTSAT_ARGB.0);
     let [b, _g, r, a] = t.px(0, 0);
     assert_eq!(a, 128, "alpha preserved");
-    assert!((r as i32 - 100).abs() < 20, "R should be premultiplied ~100, got {r}");
+    assert!(
+        (r as i32 - 100).abs() < 20,
+        "R should be premultiplied ~100, got {r}"
+    );
     assert!(b < 20, "blue ~0, got {b}");
 }
 
@@ -241,7 +276,11 @@ fn big_psd_thumbnails_through_com_via_the_head_prefix() {
     let t = unsafe { get_thumbnail(&psd, 96) }.unwrap();
     assert!(t.w > 0 && t.h > 0);
     let [b, g, r, _a] = t.px(t.w / 2, t.h / 2);
-    assert!(r > 150 && g < 110 && b < 110, "expected the red baked thumbnail, got BGRA {:?}", [b, g, r]);
+    assert!(
+        r > 150 && g < 110 && b < 110,
+        "expected the red baked thumbnail, got BGRA {:?}",
+        [b, g, r]
+    );
 }
 
 #[test]
@@ -249,5 +288,8 @@ fn garbage_returns_error_not_crash() {
     // GetThumbnail should return a failure HRESULT (not crash the host) for
     // undecodable input.
     let result = unsafe { get_thumbnail(&[0, 1, 2, 3, 4, 5, 6, 7], 96) };
-    assert!(result.is_err(), "garbage input should yield a failed GetThumbnail");
+    assert!(
+        result.is_err(),
+        "garbage input should yield a failed GetThumbnail"
+    );
 }

@@ -15,7 +15,11 @@ use std::path::{Path, PathBuf};
 /// is somehow unset).
 pub fn config_path() -> Option<PathBuf> {
     let base = std::env::var("APPDATA").ok()?;
-    Some(Path::new(&base).join("SageThumbs2K").join("upload-hosts.conf"))
+    Some(
+        Path::new(&base)
+            .join("SageThumbs2K")
+            .join("upload-hosts.conf"),
+    )
 }
 
 /// The documented, ALL-COMMENTED default template. Because every host line is

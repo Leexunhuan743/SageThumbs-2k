@@ -22,10 +22,14 @@ use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use windows::core::{s, Error, Interface, Result, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{E_FAIL, HMODULE};
 use windows::Win32::Graphics::Gdi::{DeleteObject, HBITMAP};
-use windows::Win32::System::Com::{CoInitializeEx, IClassFactory, IStream, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{
+    CoInitializeEx, IClassFactory, IStream, COINIT_APARTMENTTHREADED,
+};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Shell::PropertiesSystem::IInitializeWithStream;
-use windows::Win32::UI::Shell::{SHCreateMemStream, IThumbnailProvider, WTS_ALPHATYPE, WTSAT_UNKNOWN};
+use windows::Win32::UI::Shell::{
+    IThumbnailProvider, SHCreateMemStream, WTSAT_UNKNOWN, WTS_ALPHATYPE,
+};
 use windows_registry::CURRENT_USER;
 
 const CLSID_THUMBNAIL_PROVIDER: GUID = GUID::from_u128(0x7B2E6A14_9C3D_4F8A_B1E7_2A5D9F0C6E31);
@@ -39,7 +43,11 @@ type DllGetClassObjectFn =
 
 fn dll_path() -> std::path::PathBuf {
     let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().join("sagethumbs2k.dll")
+    exe.parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("sagethumbs2k.dll")
 }
 
 /// Run a full GetThumbnail handshake on `bytes`; Ok means a thumbnail was
@@ -57,13 +65,23 @@ unsafe fn get_thumbnail(bytes: &[u8], cx: u32) -> Result<()> {
         "cdylib not built at {path:?} — run `cargo build --release` first (this is a \
          build-artifact precondition, not an environment skip)"
     );
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let module: HMODULE = LoadLibraryW(PCWSTR(wide.as_ptr()))?;
-    let proc = GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
+    let proc =
+        GetProcAddress(module, s!("DllGetClassObject")).ok_or_else(|| Error::from(E_FAIL))?;
     let dll_get_class_object: DllGetClassObjectFn = std::mem::transmute(proc);
 
     let mut factory_ptr: *mut c_void = std::ptr::null_mut();
-    dll_get_class_object(&CLSID_THUMBNAIL_PROVIDER, &IClassFactory::IID, &mut factory_ptr).ok()?;
+    dll_get_class_object(
+        &CLSID_THUMBNAIL_PROVIDER,
+        &IClassFactory::IID,
+        &mut factory_ptr,
+    )
+    .ok()?;
     let factory = IClassFactory::from_raw(factory_ptr);
     let init: IInitializeWithStream = factory.CreateInstance(None)?;
     let stream: IStream = SHCreateMemStream(Some(bytes)).ok_or_else(|| Error::from(E_FAIL))?;
@@ -97,7 +115,11 @@ fn solid(w: u32, h: u32, rgba: [u8; 4]) -> RgbaImage {
 /// Write a DWORD into the throwaway settings root the DLL is redirected to. No save/restore:
 /// the whole key is scratch and gets wiped at the end, so we just set what each step needs.
 fn put(name: &str, value: u32) {
-    CURRENT_USER.create(TEST_ROOT).unwrap().set_u32(name, value).unwrap();
+    CURRENT_USER
+        .create(TEST_ROOT)
+        .unwrap()
+        .set_u32(name, value)
+        .unwrap();
 }
 
 /// Delete the throwaway settings key (idempotent). The user's real `Software\SageThumbs2K`
@@ -118,7 +140,11 @@ fn settings_gate_the_provider() {
     let small = encode(solid(80, 60, [10, 200, 30, 255]), ImageFormat::Png);
     // Uncompressed BMP that is comfortably over 1 MB but under the 100 MB default.
     let big = encode(solid(700, 700, [120, 60, 200, 255]), ImageFormat::Bmp);
-    assert!(big.len() > 1024 * 1024, "BMP fixture should exceed 1 MB, got {}", big.len());
+    assert!(
+        big.len() > 1024 * 1024,
+        "BMP fixture should exceed 1 MB, got {}",
+        big.len()
+    );
 
     // --- EnableThumbs gate ---
     put("EnableThumbs", 1);
@@ -137,6 +163,12 @@ fn settings_gate_the_provider() {
 
     assert!(enabled.is_ok(), "EnableThumbs=1 should produce a thumbnail");
     assert!(disabled.is_err(), "EnableThumbs=0 should decline (E_FAIL)");
-    assert!(under_limit.is_ok(), "a ~1.9 MB file under a 100 MB MaxSize should thumbnail");
-    assert!(over_limit.is_err(), "the same file over a 1 MB MaxSize should be skipped");
+    assert!(
+        under_limit.is_ok(),
+        "a ~1.9 MB file under a 100 MB MaxSize should thumbnail"
+    );
+    assert!(
+        over_limit.is_err(),
+        "the same file over a 1 MB MaxSize should be skipped"
+    );
 }

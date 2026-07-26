@@ -12,7 +12,12 @@ pub(super) unsafe fn draw_left_mask(hwnd: HWND, d: &DRAWITEMSTRUCT) {
     fill(d.hDC, &d.rcItem, DARK_BG());
     // Divider a few px below the fold (so it clears the row straddling the edge).
     let y = d.rcItem.top + s(hwnd, 6);
-    let line = RECT { left: s(hwnd, 14), top: y, right: s(hwnd, 706), bottom: y + s(hwnd, 1).max(1) };
+    let line = RECT {
+        left: s(hwnd, 14),
+        top: y,
+        right: s(hwnd, 706),
+        bottom: y + s(hwnd, 1).max(1),
+    };
     fill(d.hDC, &line, BORDER());
 }
 
@@ -37,7 +42,10 @@ pub(super) unsafe fn view_bottom_dev(dialog: HWND) -> i32 {
     if let Ok(mask) = GetDlgItem(Some(dialog), ID_LEFT_MASK) {
         let mut r = RECT::default();
         if GetWindowRect(mask, &mut r).is_ok() {
-            let mut tl = POINT { x: r.left, y: r.top };
+            let mut tl = POINT {
+                x: r.left,
+                y: r.top,
+            };
             let _ = ScreenToClient(dialog, &mut tl);
             return tl.y;
         }
@@ -57,8 +65,14 @@ unsafe fn update_visibility(dialog: HWND) {
             if GetWindowRect(h, &mut r).is_err() {
                 continue;
             }
-            let mut a = POINT { x: r.left, y: r.top };
-            let mut b = POINT { x: r.left, y: r.bottom };
+            let mut a = POINT {
+                x: r.left,
+                y: r.top,
+            };
+            let mut b = POINT {
+                x: r.left,
+                y: r.bottom,
+            };
             let _ = ScreenToClient(dialog, &mut a);
             let _ = ScreenToClient(dialog, &mut b);
             let visible = b.y > top && a.y < bot;
@@ -99,10 +113,18 @@ pub(super) unsafe fn scroll_to(dialog: HWND, new_pos: i32) {
         for &h in &s.items {
             let mut r = RECT::default();
             if GetWindowRect(h, &mut r).is_ok() {
-                let mut tl = POINT { x: r.left, y: r.top };
+                let mut tl = POINT {
+                    x: r.left,
+                    y: r.top,
+                };
                 let _ = ScreenToClient(dialog, &mut tl);
                 let _ = SetWindowPos(
-                    h, None, tl.x, tl.y - delta, 0, 0,
+                    h,
+                    None,
+                    tl.x,
+                    tl.y - delta,
+                    0,
+                    0,
                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW,
                 );
             }
@@ -150,8 +172,10 @@ pub(super) unsafe fn recompute_scroll(dialog: HWND) {
     let view_top = dpi_scale(dialog, LEFT_VIEW_TOP);
     let new_vp = (view_bottom_dev(dialog) - view_top).max(1);
     // Total content height is invariant across resizes: range + viewport == content_h.
-    let (content_h, sb, old_pos) =
-        SCROLL.with(|s| { let s = s.borrow(); (s.range + s.viewport_h, s.scrollbar, s.pos) });
+    let (content_h, sb, old_pos) = SCROLL.with(|s| {
+        let s = s.borrow();
+        (s.range + s.viewport_h, s.scrollbar, s.pos)
+    });
     let new_range = (content_h - new_vp).max(0);
     SCROLL.with(|s| {
         let mut s = s.borrow_mut();

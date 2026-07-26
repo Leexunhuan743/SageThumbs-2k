@@ -73,7 +73,16 @@ unsafe fn capture_hwnd_bgra_once(hwnd: HWND, fill: COLORREF) -> Option<(Vec<u8>,
     // A fresh compatible bitmap's contents are UNDEFINED — paint it with the caller's sentinel
     // so a partial PrintWindow render is detectable instead of showing as arbitrary garbage.
     let brush = CreateSolidBrush(fill);
-    let _ = FillRect(mem, &RECT { left: 0, top: 0, right: w, bottom: h }, brush);
+    let _ = FillRect(
+        mem,
+        &RECT {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+        },
+        brush,
+    );
     let _ = DeleteObject(HGDIOBJ(brush.0));
     let printed = PrintWindow(hwnd, mem, PW_RENDERFULLCONTENT).as_bool();
 
@@ -91,7 +100,15 @@ unsafe fn capture_hwnd_bgra_once(hwnd: HWND, fill: COLORREF) -> Option<(Vec<u8>,
         ..Default::default()
     };
     let mut buf = vec![0u8; n as usize];
-    let got = GetDIBits(mem, bmp, 0, h as u32, Some(buf.as_mut_ptr() as *mut c_void), &mut bi, DIB_RGB_COLORS);
+    let got = GetDIBits(
+        mem,
+        bmp,
+        0,
+        h as u32,
+        Some(buf.as_mut_ptr() as *mut c_void),
+        &mut bi,
+        DIB_RGB_COLORS,
+    );
 
     SelectObject(mem, old);
     let _ = DeleteObject(HGDIOBJ(bmp.0));
@@ -115,9 +132,9 @@ unsafe fn capture_hwnd_bgra_once(hwnd: HWND, fill: COLORREF) -> Option<(Vec<u8>,
 /// edge that is entirely near-black is trimmed (so a legitimately dark-but-not-black edge stays).
 fn trim_black_edges(buf: Vec<u8>, w: i32, h: i32) -> (Vec<u8>, i32, i32) {
     const MAX: usize = 4; // never trim more than this per side
-    // R+G+B <= this = a dark border line. The window's own 1px outer border reads ~30-40; the
-    // darkest real content (the nav well, SURFACE 24,24,24 = 72; the window bg 32,32,32 = 96) is
-    // well above 55, so this catches the border line without ever eating a content column/row.
+                          // R+G+B <= this = a dark border line. The window's own 1px outer border reads ~30-40; the
+                          // darkest real content (the nav well, SURFACE 24,24,24 = 72; the window bg 32,32,32 = 96) is
+                          // well above 55, so this catches the border line without ever eating a content column/row.
     const DARK: u16 = 55;
     let (wu, hu) = (w as usize, h as usize);
     if wu == 0 || hu == 0 {
@@ -127,8 +144,10 @@ fn trim_black_edges(buf: Vec<u8>, w: i32, h: i32) -> (Vec<u8>, i32, i32) {
     // An edge line is "a border" if a strong MAJORITY of it is dark — NOT all of it: the 1px
     // border column measures ~95% dark but ~5% title-bar-coloured at the very top, while a real
     // content column is ~0% dark, so ≥60% cleanly separates the two.
-    let row_black = |y: usize| (0..wu).filter(|&x| dark_at((y * wu + x) * 4)).count() * 100 >= wu * 60;
-    let col_black = |x: usize| (0..hu).filter(|&y| dark_at((y * wu + x) * 4)).count() * 100 >= hu * 60;
+    let row_black =
+        |y: usize| (0..wu).filter(|&x| dark_at((y * wu + x) * 4)).count() * 100 >= wu * 60;
+    let col_black =
+        |x: usize| (0..hu).filter(|&y| dark_at((y * wu + x) * 4)).count() * 100 >= hu * 60;
     let mut top = 0;
     while top < MAX.min(hu) && row_black(top) {
         top += 1;
@@ -162,7 +181,13 @@ fn trim_black_edges(buf: Vec<u8>, w: i32, h: i32) -> (Vec<u8>, i32, i32) {
 /// window's VISIBLE frame (`DWMWA_EXTENDED_FRAME_BOUNDS`), dropping the invisible DWM resize
 /// border. Falls back to the uncropped buffer if DWM can't report bounds or there's nothing to
 /// trim.
-unsafe fn crop_to_extended_frame(hwnd: HWND, wr: &RECT, buf: Vec<u8>, w: i32, h: i32) -> (Vec<u8>, i32, i32) {
+unsafe fn crop_to_extended_frame(
+    hwnd: HWND,
+    wr: &RECT,
+    buf: Vec<u8>,
+    w: i32,
+    h: i32,
+) -> (Vec<u8>, i32, i32) {
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     let mut efb = RECT::default();
     let ok = DwmGetWindowAttribute(
@@ -182,7 +207,13 @@ unsafe fn crop_to_extended_frame(hwnd: HWND, wr: &RECT, buf: Vec<u8>, w: i32, h:
     if dx == 0 && dy == 0 && cw == w && ch == h {
         return (buf, w, h); // nothing to trim
     }
-    let (dxu, dyu, cwu, chu, wu) = (dx as usize, dy as usize, cw as usize, ch as usize, w as usize);
+    let (dxu, dyu, cwu, chu, wu) = (
+        dx as usize,
+        dy as usize,
+        cw as usize,
+        ch as usize,
+        w as usize,
+    );
     let mut out = vec![0u8; cwu * chu * 4];
     for row in 0..chu {
         let src = ((dyu + row) * wu + dxu) * 4;
@@ -207,7 +238,12 @@ pub(crate) fn downscale_to_width(img: RgbaImage, target_w: u32) -> RgbaImage {
         return img;
     }
     let target_h = (img.height() as u64 * target_w as u64 / img.width() as u64).max(1) as u32;
-    image::imageops::resize(&img, target_w, target_h, image::imageops::FilterType::Lanczos3)
+    image::imageops::resize(
+        &img,
+        target_w,
+        target_h,
+        image::imageops::FilterType::Lanczos3,
+    )
 }
 
 /// Encode same-size RGBA `frames` to an animated, infinite-loop GIF at `path`, `delay_ms`

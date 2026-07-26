@@ -18,34 +18,36 @@
 
 mod anim;
 mod content;
+mod docconv;
 mod font;
-#[cfg(feature = "html-preview")]
-mod webview;
 mod highlight;
 mod infocard;
-mod docconv;
+mod loader;
 mod markdown;
 mod mdhtml;
-mod video;
-mod window;
-mod loader;
 mod paint;
 mod selection;
 mod shot;
 mod toolbar;
 mod transport;
+mod video;
+#[cfg(feature = "html-preview")]
+mod webview;
+mod window;
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{
+    GetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, WPARAM,
+};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, FindWindowW, GetMessageW, SendMessageW, SetForegroundWindow, TranslateMessage,
-    MSG, WM_COPYDATA,
+    DispatchMessageW, FindWindowW, GetMessageW, SendMessageW, SetForegroundWindow,
+    TranslateMessage, MSG, WM_COPYDATA,
 };
 
 /// Last time we spawned a `--preview` in response to a Space press (ms tick), or 0. Serializes
@@ -144,9 +146,18 @@ pub(super) unsafe fn send_command(hwnd: HWND, cmd: usize, path: Option<&str>) {
     let cds = COPYDATASTRUCT {
         dwData: cmd,
         cbData: (wide.len() * 2) as u32,
-        lpData: if wide.is_empty() { core::ptr::null_mut() } else { wide.as_ptr() as *mut c_void },
+        lpData: if wide.is_empty() {
+            core::ptr::null_mut()
+        } else {
+            wide.as_ptr() as *mut c_void
+        },
     };
-    SendMessageW(hwnd, WM_COPYDATA, Some(WPARAM(0)), Some(LPARAM(&cds as *const _ as isize)));
+    SendMessageW(
+        hwnd,
+        WM_COPYDATA,
+        Some(WPARAM(0)),
+        Some(LPARAM(&cds as *const _ as isize)),
+    );
 }
 
 /// Parse a `WM_COPYDATA` payload back into `(command, path)`. `path` is `None` when the
@@ -161,7 +172,11 @@ pub(super) unsafe fn parse_command(lparam: LPARAM) -> Option<(usize, Option<Stri
     let path = if (2..=MAX_PAYLOAD_BYTES).contains(&cds.cbData) && !cds.lpData.is_null() {
         let n = (cds.cbData / 2) as usize;
         let slice = core::slice::from_raw_parts(cds.lpData as *const u16, n);
-        Some(String::from_utf16_lossy(slice).trim_end_matches('\0').to_string())
+        Some(
+            String::from_utf16_lossy(slice)
+                .trim_end_matches('\0')
+                .to_string(),
+        )
     } else {
         None
     };
@@ -262,6 +277,11 @@ pub(crate) struct ShotOpts {
 
 /// The app's `--shot --window preview` mode: build the viewer OFF-SCREEN per `opts`, render it to
 /// a PNG at `out` via `PrintWindow`, then tear it down. Returns whether the PNG was written.
-pub(crate) unsafe fn run_shot_preview(hinst: HINSTANCE, dark: bool, out: &str, opts: &ShotOpts) -> bool {
+pub(crate) unsafe fn run_shot_preview(
+    hinst: HINSTANCE,
+    dark: bool,
+    out: &str,
+    opts: &ShotOpts,
+) -> bool {
     shot::run_shot(hinst, dark, out, opts)
 }

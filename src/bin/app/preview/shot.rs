@@ -1,6 +1,5 @@
 //! Headless --shot capture harness.
 
-
 use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -11,11 +10,20 @@ use super::window::create_viewer;
 
 /// Build the viewer off-screen on `input` (or a synthetic gradient), render it to `out` via
 /// `PrintWindow`, tear it down. Returns whether the PNG was written.
-pub(super) unsafe fn run_shot(hinst: HINSTANCE, dark: bool, out: &str, opts: &super::ShotOpts) -> bool {
+pub(super) unsafe fn run_shot(
+    hinst: HINSTANCE,
+    dark: bool,
+    out: &str,
+    opts: &super::ShotOpts,
+) -> bool {
     if let Some(dpi) = opts.dpi {
         crate::win::set_dpi_override(dpi); // headless high-DPI capture (no physical high-DPI monitor needed)
     }
-    let tmp = if opts.file.is_none() { write_synthetic_png() } else { None };
+    let tmp = if opts.file.is_none() {
+        write_synthetic_png()
+    } else {
+        None
+    };
     let path = opts.file.clone().or_else(|| tmp.clone());
     let Some(hwnd) = create_viewer(hinst, dark, path, Some(opts)) else {
         if let Some(t) = &tmp {

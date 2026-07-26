@@ -21,7 +21,9 @@ static INIT: Once = Once::new();
 pub fn t(key: &str) -> &'static str {
     ensure_init();
     let idx = CURRENT.load(Ordering::Relaxed);
-    lookup(idx, key).or_else(|| lookup(0, key)).unwrap_or(MISSING_KEY)
+    lookup(idx, key)
+        .or_else(|| lookup(0, key))
+        .unwrap_or(MISSING_KEY)
 }
 
 fn lookup(idx: usize, key: &str) -> Option<&'static str> {
@@ -30,7 +32,10 @@ fn lookup(idx: usize, key: &str) -> Option<&'static str> {
         // key — binary-search instead of a linear scan (t() runs once per drawn menu
         // node, and the en-fallback path scans twice). The sort invariant is locked
         // by `locale_pairs_are_sorted_for_binary_search` below.
-        pairs.binary_search_by(|(k, _)| (*k).cmp(key)).ok().map(|i| pairs[i].1)
+        pairs
+            .binary_search_by(|(k, _)| (*k).cmp(key))
+            .ok()
+            .map(|i| pairs[i].1)
     })
 }
 
@@ -204,7 +209,11 @@ mod tests {
     #[test]
     fn english_keys_resolve() {
         for (k, v) in LOCALES[0].1 {
-            assert_eq!(lookup(0, k), Some(*v), "en key {k} not found by binary search");
+            assert_eq!(
+                lookup(0, k),
+                Some(*v),
+                "en key {k} not found by binary search"
+            );
         }
     }
 }

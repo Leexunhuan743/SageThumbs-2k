@@ -8,11 +8,11 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use windows::core::{Error, Result, PCWSTR};
-use windows::Win32::UI::Shell::{SHChangeNotify, StrCmpLogicalW, SHCNE_UPDATEDIR, SHCNF_PATHW};
 use windows::Win32::Foundation::E_FAIL;
+use windows::Win32::UI::Shell::{SHChangeNotify, StrCmpLogicalW, SHCNE_UPDATEDIR, SHCNF_PATHW};
 
 use super::actions::is_image;
-use super::encode::{read_capped, write_atomic, reserve, OutSlot};
+use super::encode::{read_capped, reserve, write_atomic, OutSlot};
 use crate::decode;
 
 /// Case-insensitive whole-path comparison (Windows file names are case-folding,
@@ -43,7 +43,10 @@ pub(crate) fn sanitize_component(s: &str) -> String {
 
 /// `combined.<ext>` (deduped) next to the first selected file.
 pub(crate) fn combined_path(first: &str, ext: &str) -> PathBuf {
-    let dir = Path::new(first).parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let dir = Path::new(first)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     let mut cand = dir.join(format!("combined.{ext}"));
     let mut n = 2u32;
     while cand.exists() {
@@ -57,7 +60,10 @@ pub(crate) fn combined_path(first: &str, ext: &str) -> PathBuf {
 /// sort key for [`natural_key_cmp`], built once per element (not once per
 /// comparison) so `sort_by_cached_key` doesn't re-encode UTF-16 on every compare.
 fn natural_sort_key(p: &str) -> Vec<u16> {
-    let fname = Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p);
+    let fname = Path::new(p)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(p);
     fname.encode_utf16().chain(once(0)).collect()
 }
 
@@ -89,7 +95,10 @@ pub fn combine_to_cbz(imgs: &[String], out: &Path) -> Result<()> {
             .compression_method(zip::CompressionMethod::Stored);
         for (i, p) in sorted.iter().enumerate() {
             let bytes = read_capped(p)?;
-            let stem = Path::new(p.as_str()).file_name().and_then(|n| n.to_str()).unwrap_or("page");
+            let stem = Path::new(p.as_str())
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("page");
             // Zero-padded index prefix keeps page order stable in any reader.
             let name = format!("{:03}_{stem}", i + 1);
             zw.start_file(name, opts).map_err(|_| Error::from(E_FAIL))?;
@@ -164,7 +173,12 @@ fn copy_into(src: &Path, dir: &Path) -> Result<PathBuf> {
 fn refresh_dir(dir: &Path) {
     let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(once(0)).collect();
     unsafe {
-        SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, Some(wide.as_ptr() as *const c_void), None);
+        SHChangeNotify(
+            SHCNE_UPDATEDIR,
+            SHCNF_PATHW,
+            Some(wide.as_ptr() as *const c_void),
+            None,
+        );
     }
 }
 
@@ -176,7 +190,10 @@ pub fn files_to_folder(paths: &[String], folder_name: &str) -> Result<PathBuf> {
         return Err(Error::from(E_FAIL));
     }
     let name = sanitize_component(folder_name);
-    let parent = Path::new(&paths[0]).parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let parent = Path::new(&paths[0])
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
 
     // A *fresh* folder (dedupe) — "create a folder & move files in", never silently
     // merge into an unrelated existing folder.
@@ -192,7 +209,10 @@ pub fn files_to_folder(paths: &[String], folder_name: &str) -> Result<PathBuf> {
     // surfaces as an error instead of a fake success — callers build the user-facing report
     // (and the dialog message) off this Result. (A partial move still succeeds: the common
     // failure modes fail every file, which the 0-moved check catches.)
-    let moved = paths.iter().filter(|p| move_into(Path::new(p), &dir).is_ok()).count();
+    let moved = paths
+        .iter()
+        .filter(|p| move_into(Path::new(p), &dir).is_ok())
+        .count();
     refresh_dir(&parent);
     if moved == 0 {
         // Nothing landed in the new folder — clean up the empty dir we just made.
@@ -258,9 +278,16 @@ pub fn sort_by_dimensions(paths: &[String]) -> (usize, usize) {
 
 /// Expand a folder-name template against one file's tags. Tokens: `$artist`,
 /// `$album`, `$title`, `$track` (zero-padded). A missing tag becomes `missing`.
-pub(crate) fn expand_template(template: &str, tags: &crate::strip::AudioTags, missing: &str) -> String {
+pub(crate) fn expand_template(
+    template: &str,
+    tags: &crate::strip::AudioTags,
+    missing: &str,
+) -> String {
     let or = |o: &Option<String>| o.clone().unwrap_or_else(|| missing.to_string());
-    let track = tags.track.map(|n| format!("{n:02}")).unwrap_or_else(|| missing.to_string());
+    let track = tags
+        .track
+        .map(|n| format!("{n:02}"))
+        .unwrap_or_else(|| missing.to_string());
     template
         .replace("$artist", &or(&tags.artist))
         .replace("$album", &or(&tags.album))
@@ -306,7 +333,11 @@ pub fn tags_to_folders(
             continue;
         }
         let src = Path::new(p);
-        let ok = if move_files { move_into(src, &dir).is_ok() } else { copy_into(src, &dir).is_ok() };
+        let ok = if move_files {
+            move_into(src, &dir).is_ok()
+        } else {
+            copy_into(src, &dir).is_ok()
+        };
         if ok {
             done += 1;
             touched = true;

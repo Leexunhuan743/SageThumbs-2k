@@ -73,14 +73,20 @@ fn manifest_bytes() -> Option<&'static [u8]> {
             // On a fresh report, a leftover "tombstone" version (left by a prior uninstall)
             // marks this as a reinstall rather than a first-time install; note that plus the
             // version it came from.
-            let prev = is_new.then(sagethumbs2k_core::settings::tombstone_version).flatten();
+            let prev = is_new
+                .then(sagethumbs2k_core::settings::tombstone_version)
+                .flatten();
             let reinstall = match &prev {
                 Some(v) => format!("&reinstall=1&prev={v}"),
                 None => String::new(),
             };
             // The developer's own test box (HKCU DevMachine=1) tags the request with `&dev=1`.
             // Empty on every real install.
-            let dev = if sagethumbs2k_core::settings::is_dev_machine() { "&dev=1" } else { "" };
+            let dev = if sagethumbs2k_core::settings::is_dev_machine() {
+                "&dev=1"
+            } else {
+                ""
+            };
             let url = format!(
                 "{BANNER_URL}?v={}&os={}&new={}{}{}",
                 env!("CARGO_PKG_VERSION"),
@@ -103,7 +109,9 @@ fn manifest_bytes() -> Option<&'static [u8]> {
             });
             // recv_timeout → Err on timeout; a still-running fetch is abandoned
             // (its eventual send hits a dropped receiver and is discarded).
-            rx.recv_timeout(std::time::Duration::from_secs(MANIFEST_TIMEOUT_SECS)).ok().flatten()
+            rx.recv_timeout(std::time::Duration::from_secs(MANIFEST_TIMEOUT_SECS))
+                .ok()
+                .flatten()
         })
         .as_deref()
 }
@@ -135,7 +143,9 @@ pub(crate) fn sponsors_enabled() -> bool {
 /// `sponsors` key, falling back to the legacy `ads` key). Everything else — parse
 /// error, kill-switched, empty/missing list — is off. Pure so it can be unit-tested.
 fn manifest_has_sponsors(bytes: &[u8]) -> bool {
-    let Ok(m) = serde_json::from_slice::<serde_json::Value>(bytes) else { return false };
+    let Ok(m) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return false;
+    };
     if m.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
         return false;
     }
@@ -185,8 +195,20 @@ impl SponsorRotator {
     /// fresh open doesn't always show sponsor #0 (the bug where the banner looked
     /// "stuck").
     fn new(sponsors: Vec<Sponsor>, rotate_ms: u32, random: bool, mut rng: u32) -> Self {
-        let cur = if random && sponsors.len() > 1 { (xorshift(&mut rng) as usize) % sponsors.len() } else { 0 };
-        let mut r = Self { sponsors, cur, img: 0, frame: 0, rotate_ms, random, rng };
+        let cur = if random && sponsors.len() > 1 {
+            (xorshift(&mut rng) as usize) % sponsors.len()
+        } else {
+            0
+        };
+        let mut r = Self {
+            sponsors,
+            cur,
+            img: 0,
+            frame: 0,
+            rotate_ms,
+            random,
+            rng,
+        };
         r.pick_image();
         r
     }
@@ -196,7 +218,11 @@ impl SponsorRotator {
     fn pick_image(&mut self) {
         self.frame = 0;
         let m = self.sponsors.get(self.cur).map_or(0, |a| a.images.len());
-        self.img = if m > 1 { (xorshift(&mut self.rng) as usize) % m } else { 0 };
+        self.img = if m > 1 {
+            (xorshift(&mut self.rng) as usize) % m
+        } else {
+            0
+        };
     }
 
     /// Advance to the next sponsor (random avoids an immediate repeat; otherwise in
@@ -219,7 +245,9 @@ impl SponsorRotator {
 
     /// The image currently on display (its frames + delay).
     fn current(&self) -> Option<&SponsorImage> {
-        self.sponsors.get(self.cur).and_then(|a| a.images.get(self.img))
+        self.sponsors
+            .get(self.cur)
+            .and_then(|a| a.images.get(self.img))
     }
 
     /// Whether anything actually rotates: more than one sponsor, or any sponsor
@@ -246,8 +274,7 @@ fn xorshift(s: &mut u32) -> u32 {
 pub(crate) fn is_web_url(url: &str) -> bool {
     let u = url.trim();
     let lower = u.to_ascii_lowercase();
-    (lower.starts_with("http://") || lower.starts_with("https://"))
-        && !u.bytes().any(|b| b < 0x20)
+    (lower.starts_with("http://") || lower.starts_with("https://")) && !u.bytes().any(|b| b < 0x20)
 }
 
 /// HTTPS-only — required for assets we *fetch* (manifest + images): no plaintext
@@ -341,10 +368,10 @@ pub(crate) fn http_download_streaming(
         return None;
     }
     use windows::Win32::Networking::WinInet::{
-        InternetCloseHandle, InternetOpenUrlW, InternetOpenW, InternetReadFile,
-        InternetSetOptionW, INTERNET_FLAG_NO_CACHE_WRITE, INTERNET_FLAG_PRAGMA_NOCACHE,
-        INTERNET_FLAG_RELOAD, INTERNET_FLAG_SECURE, INTERNET_OPTION_CONNECT_TIMEOUT,
-        INTERNET_OPTION_RECEIVE_TIMEOUT, INTERNET_OPTION_SEND_TIMEOUT,
+        InternetCloseHandle, InternetOpenUrlW, InternetOpenW, InternetReadFile, InternetSetOptionW,
+        INTERNET_FLAG_NO_CACHE_WRITE, INTERNET_FLAG_PRAGMA_NOCACHE, INTERNET_FLAG_RELOAD,
+        INTERNET_FLAG_SECURE, INTERNET_OPTION_CONNECT_TIMEOUT, INTERNET_OPTION_RECEIVE_TIMEOUT,
+        INTERNET_OPTION_SEND_TIMEOUT,
     };
     unsafe {
         let agent = wide("SageThumbs2K");
@@ -380,8 +407,13 @@ pub(crate) fn http_download_streaming(
         let mut ok = true;
         loop {
             let mut read = 0u32;
-            if InternetReadFile(req, buf.as_mut_ptr() as *mut c_void, buf.len() as u32, &mut read)
-                .is_err()
+            if InternetReadFile(
+                req,
+                buf.as_mut_ptr() as *mut c_void,
+                buf.len() as u32,
+                &mut read,
+            )
+            .is_err()
             {
                 ok = false; // read error → incomplete, don't trust it
                 break;
@@ -422,9 +454,16 @@ fn build_sponsors_from_manifest(bytes: &[u8], w: u32, h: u32) -> Option<(Vec<Spo
     // first lets a huge manifest value wrap (e.g. 0x1_0000_0001 → 1) and yield a
     // 1-second rotation; the saturating_mul only guards overflow AFTER the cast, too
     // late to rescue an already-wrapped value. 86_400 * 1000 fits in u32.
-    let rotate_ms =
-        (manifest.get("rotate_seconds").and_then(|v| v.as_u64()).unwrap_or(10).clamp(1, 86_400) as u32) * 1000;
-    let random = manifest.get("random").and_then(|v| v.as_bool()).unwrap_or(false);
+    let rotate_ms = (manifest
+        .get("rotate_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10)
+        .clamp(1, 86_400) as u32)
+        * 1000;
+    let random = manifest
+        .get("random")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     // Prefer the `sponsors` array; fall back to the legacy `ads` key so an existing
     // remote feed keeps working unchanged after the rename.
     let items = manifest
@@ -453,16 +492,21 @@ fn build_sponsors_from_manifest(bytes: &[u8], w: u32, h: u32) -> Option<(Vec<Spo
         };
         let mut images: Vec<SponsorImage> = Vec::new();
         for url in urls {
-            let Some(img_bytes) = http_fetch(url, false) else { continue };
+            let Some(img_bytes) = http_fetch(url, false) else {
+                continue;
+            };
             // Animated GIF → many frames; anything else → one still frame.
-            let (frames, delay_ms) =
-                if let Some((fr, d)) = sagethumbs2k_core::app_image::decode_gif_frames_sized(&img_bytes, w, h) {
-                    (fr, d)
-                } else if let Some(handle) = sagethumbs2k_core::app_image::image_to_hbitmap_sized(&img_bytes, w, h) {
-                    (vec![handle], 0)
-                } else {
-                    continue;
-                };
+            let (frames, delay_ms) = if let Some((fr, d)) =
+                sagethumbs2k_core::app_image::decode_gif_frames_sized(&img_bytes, w, h)
+            {
+                (fr, d)
+            } else if let Some(handle) =
+                sagethumbs2k_core::app_image::image_to_hbitmap_sized(&img_bytes, w, h)
+            {
+                (vec![handle], 0)
+            } else {
+                continue;
+            };
             if frames.is_empty() {
                 continue;
             }
@@ -471,7 +515,11 @@ fn build_sponsors_from_manifest(bytes: &[u8], w: u32, h: u32) -> Option<(Vec<Spo
         if images.is_empty() {
             continue;
         }
-        sponsors.push(Sponsor { images, tip: wide(text), link: wide(link) });
+        sponsors.push(Sponsor {
+            images,
+            tip: wide(text),
+            link: wide(link),
+        });
     }
     if sponsors.is_empty() {
         return None;
@@ -489,26 +537,37 @@ fn build_sponsors_from_manifest(bytes: &[u8], w: u32, h: u32) -> Option<(Vec<Spo
 pub(crate) fn spawn_remote_sponsors(banner: HWND, w: u32, h: u32) {
     let hwnd = banner.0 as usize;
     std::thread::spawn(move || {
-        let Some(bytes) = manifest_bytes() else { return };
-        let Some((sponsors, rotate_ms, random)) = build_sponsors_from_manifest(bytes, w, h) else { return };
+        let Some(bytes) = manifest_bytes() else {
+            return;
+        };
+        let Some((sponsors, rotate_ms, random)) = build_sponsors_from_manifest(bytes, w, h) else {
+            return;
+        };
 
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u32)
             .unwrap_or(0x9e37_79b9)
             | 1; // xorshift seed must be non-zero
-        let rot = Box::into_raw(Box::new(SponsorRotator::new(sponsors, rotate_ms, random, seed)));
+        let rot = Box::into_raw(Box::new(SponsorRotator::new(
+            sponsors, rotate_ms, random, seed,
+        )));
 
         let banner = HWND(hwnd as *mut c_void);
         unsafe {
-            let parent = IsWindow(Some(banner)).as_bool().then(|| GetParent(banner).ok()).flatten();
+            let parent = IsWindow(Some(banner))
+                .as_bool()
+                .then(|| GetParent(banner).ok())
+                .flatten();
             match parent {
                 // Ownership of `rot` transfers to the UI thread only if the post
                 // succeeds. If PostMessageW fails (queue full / window torn down
                 // between the IsWindow check and here), the message — and the
                 // rotator + its GDI bitmaps — would leak; free them instead.
                 Some(p) => {
-                    if PostMessageW(Some(p), WM_APP_SPONSORS, WPARAM(hwnd), LPARAM(rot as isize)).is_err() {
+                    if PostMessageW(Some(p), WM_APP_SPONSORS, WPARAM(hwnd), LPARAM(rot as isize))
+                        .is_err()
+                    {
                         drop_sponsor_rotator(rot);
                     }
                 }
@@ -522,13 +581,23 @@ pub(crate) fn spawn_remote_sponsors(banner: HWND, w: u32, h: u32) {
 /// for it. `free_prev` uses set_static_bitmap to delete the bitmap currently held
 /// (only true for the very first swap, which frees the embedded placeholder); every
 /// later swap reuses bitmaps that the rotator still owns, so it must NOT delete them.
-pub(crate) unsafe fn show_current_image(hwnd: HWND, banner: HWND, r: &SponsorRotator, free_prev: bool) {
+pub(crate) unsafe fn show_current_image(
+    hwnd: HWND,
+    banner: HWND,
+    r: &SponsorRotator,
+    free_prev: bool,
+) {
     let Some(img) = r.current() else { return };
     if let Some(&first) = img.frames.first() {
         if free_prev {
             set_static_bitmap(banner, HBITMAP(first as *mut c_void));
         } else {
-            SendMessageW(banner, STM_SETIMAGE, Some(WPARAM(IMAGE_BITMAP.0 as usize)), Some(LPARAM(first)));
+            SendMessageW(
+                banner,
+                STM_SETIMAGE,
+                Some(WPARAM(IMAGE_BITMAP.0 as usize)),
+                Some(LPARAM(first)),
+            );
         }
     }
     let _ = KillTimer(Some(hwnd), TIMER_BANNER);
@@ -562,13 +631,19 @@ mod tests {
     #[test]
     fn gate_requires_enabled_populated_manifest() {
         // Reachable + has sponsors (enabled absent = on, or explicitly true).
-        assert!(manifest_has_sponsors(br#"{ "sponsors": [ { "image": "x", "link": "y" } ] }"#));
-        assert!(manifest_has_sponsors(br#"{ "enabled": true, "sponsors": [ {} ] }"#));
+        assert!(manifest_has_sponsors(
+            br#"{ "sponsors": [ { "image": "x", "link": "y" } ] }"#
+        ));
+        assert!(manifest_has_sponsors(
+            br#"{ "enabled": true, "sponsors": [ {} ] }"#
+        ));
         // Legacy "ads" key still recognised.
         assert!(manifest_has_sponsors(br#"{ "ads": [ {} ] }"#));
 
         // Remote kill switch wins even with sponsors present.
-        assert!(!manifest_has_sponsors(br#"{ "enabled": false, "sponsors": [ {} ] }"#));
+        assert!(!manifest_has_sponsors(
+            br#"{ "enabled": false, "sponsors": [ {} ] }"#
+        ));
         // Empty / missing sponsor list.
         assert!(!manifest_has_sponsors(br#"{ "sponsors": [] }"#));
         assert!(!manifest_has_sponsors(br#"{}"#));

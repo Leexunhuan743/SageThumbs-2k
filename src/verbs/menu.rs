@@ -119,7 +119,14 @@ impl MenuItem {
 }
 
 const fn convert(key: &'static str, format: ImageFormat, ext: &'static str) -> MenuItem {
-    MenuItem::Verb(key, VerbAction::Convert(Target { format, ext, webp_quality: None }))
+    MenuItem::Verb(
+        key,
+        VerbAction::Convert(Target {
+            format,
+            ext,
+            webp_quality: None,
+        }),
+    )
 }
 
 /// Quality for the quick "Convert into ▸ WebP" verb. WebP's whole point is small
@@ -131,67 +138,121 @@ const WEBP_LOSSY_QUALITY: u8 = 80;
 
 /// The "SageThumbs 2K ▸" menu tree, in display order.
 pub const MENU: &[MenuItem] = &[
-    MenuItem::Group("menu_convert_into", &[
-        convert("menu_fmt_png", ImageFormat::Png, "png"),
-        convert("menu_fmt_jpg", ImageFormat::Jpeg, "jpg"),
-        // Two one-click WebP options: lossy (small files — what most people mean by
-        // "convert to WebP") and lossless (perfect quality, larger). The dialog also
-        // exposes lossless + a quality slider.
-        MenuItem::Verb(
-            "menu_fmt_webp",
-            VerbAction::Convert(Target {
-                format: ImageFormat::WebP,
-                ext: "webp",
-                webp_quality: Some(WEBP_LOSSY_QUALITY),
-            }),
-        ),
-        convert("menu_fmt_webp_lossless", ImageFormat::WebP, "webp"),
-        // AVIF (AV1 still image) — the modern "smaller than WebP/JPEG" target. The
-        // `image` crate can't encode it, so this routes through the bundled
-        // ImageMagick (see `encode::ext_needs_magick`); same engine the Convert…
-        // dialog uses for AVIF. On a compact (no-magick) install the encode fails
-        // gracefully (the file is just reported as not converted).
-        convert("menu_fmt_avif", ImageFormat::Avif, "avif"),
-        convert("menu_fmt_bmp", ImageFormat::Bmp, "bmp"),
-        convert("menu_fmt_gif", ImageFormat::Gif, "gif"),
-        convert("menu_fmt_tiff", ImageFormat::Tiff, "tiff"),
-        convert("menu_fmt_ico", ImageFormat::Ico, "ico"),
-    ]),
+    MenuItem::Group(
+        "menu_convert_into",
+        &[
+            convert("menu_fmt_png", ImageFormat::Png, "png"),
+            convert("menu_fmt_jpg", ImageFormat::Jpeg, "jpg"),
+            // Two one-click WebP options: lossy (small files — what most people mean by
+            // "convert to WebP") and lossless (perfect quality, larger). The dialog also
+            // exposes lossless + a quality slider.
+            MenuItem::Verb(
+                "menu_fmt_webp",
+                VerbAction::Convert(Target {
+                    format: ImageFormat::WebP,
+                    ext: "webp",
+                    webp_quality: Some(WEBP_LOSSY_QUALITY),
+                }),
+            ),
+            convert("menu_fmt_webp_lossless", ImageFormat::WebP, "webp"),
+            // AVIF (AV1 still image) — the modern "smaller than WebP/JPEG" target. The
+            // `image` crate can't encode it, so this routes through the bundled
+            // ImageMagick (see `encode::ext_needs_magick`); same engine the Convert…
+            // dialog uses for AVIF. On a compact (no-magick) install the encode fails
+            // gracefully (the file is just reported as not converted).
+            convert("menu_fmt_avif", ImageFormat::Avif, "avif"),
+            convert("menu_fmt_bmp", ImageFormat::Bmp, "bmp"),
+            convert("menu_fmt_gif", ImageFormat::Gif, "gif"),
+            convert("menu_fmt_tiff", ImageFormat::Tiff, "tiff"),
+            convert("menu_fmt_ico", ImageFormat::Ico, "ico"),
+        ],
+    ),
     MenuItem::Verb("menu_convert_dialog", VerbAction::ConvertDialog),
     MenuItem::Verb("menu_combine_pdf", VerbAction::CombineToPdf),
     MenuItem::Verb("menu_combine_cbz", VerbAction::CombineToCbz),
     MenuItem::Separator,
-    MenuItem::Group("menu_resize", &[
-        MenuItem::Verb("menu_resize_1080", VerbAction::ResizeImg(Resize::Fit(1920, 1080))),
-        MenuItem::Verb("menu_resize_720", VerbAction::ResizeImg(Resize::Fit(1280, 720))),
-        MenuItem::Verb("menu_resize_600", VerbAction::ResizeImg(Resize::Fit(800, 600))),
-        MenuItem::Verb("menu_resize_50", VerbAction::ResizeImg(Resize::Percent(50))),
-        MenuItem::Verb("menu_resize_25", VerbAction::ResizeImg(Resize::Percent(25))),
-    ]),
-    MenuItem::Group("menu_email", &[
-        MenuItem::Verb("menu_email_small", VerbAction::ShrinkForEmail(EmailSize::Small)),
-        MenuItem::Verb("menu_email_medium", VerbAction::ShrinkForEmail(EmailSize::Medium)),
-        MenuItem::Verb("menu_email_large", VerbAction::ShrinkForEmail(EmailSize::Large)),
-    ]),
-    MenuItem::Group("menu_rotate", &[
-        MenuItem::Verb("menu_rotate_right", VerbAction::Transform(Transform::Right90)),
-        MenuItem::Verb("menu_rotate_left", VerbAction::Transform(Transform::Left90)),
-        MenuItem::Verb("menu_rotate_180", VerbAction::Transform(Transform::Rotate180)),
-        MenuItem::Verb("menu_flip_h", VerbAction::Transform(Transform::FlipH)),
-        MenuItem::Verb("menu_flip_v", VerbAction::Transform(Transform::FlipV)),
-    ]),
+    MenuItem::Group(
+        "menu_resize",
+        &[
+            MenuItem::Verb(
+                "menu_resize_1080",
+                VerbAction::ResizeImg(Resize::Fit(1920, 1080)),
+            ),
+            MenuItem::Verb(
+                "menu_resize_720",
+                VerbAction::ResizeImg(Resize::Fit(1280, 720)),
+            ),
+            MenuItem::Verb(
+                "menu_resize_600",
+                VerbAction::ResizeImg(Resize::Fit(800, 600)),
+            ),
+            MenuItem::Verb("menu_resize_50", VerbAction::ResizeImg(Resize::Percent(50))),
+            MenuItem::Verb("menu_resize_25", VerbAction::ResizeImg(Resize::Percent(25))),
+        ],
+    ),
+    MenuItem::Group(
+        "menu_email",
+        &[
+            MenuItem::Verb(
+                "menu_email_small",
+                VerbAction::ShrinkForEmail(EmailSize::Small),
+            ),
+            MenuItem::Verb(
+                "menu_email_medium",
+                VerbAction::ShrinkForEmail(EmailSize::Medium),
+            ),
+            MenuItem::Verb(
+                "menu_email_large",
+                VerbAction::ShrinkForEmail(EmailSize::Large),
+            ),
+        ],
+    ),
+    MenuItem::Group(
+        "menu_rotate",
+        &[
+            MenuItem::Verb(
+                "menu_rotate_right",
+                VerbAction::Transform(Transform::Right90),
+            ),
+            MenuItem::Verb("menu_rotate_left", VerbAction::Transform(Transform::Left90)),
+            MenuItem::Verb(
+                "menu_rotate_180",
+                VerbAction::Transform(Transform::Rotate180),
+            ),
+            MenuItem::Verb("menu_flip_h", VerbAction::Transform(Transform::FlipH)),
+            MenuItem::Verb("menu_flip_v", VerbAction::Transform(Transform::FlipV)),
+        ],
+    ),
     MenuItem::Separator,
-    MenuItem::Group("menu_rename", &[
-        MenuItem::Verb("menu_rename_date", VerbAction::RenameByExif(RenamePattern::DateTaken)),
-        MenuItem::Verb("menu_rename_camera", VerbAction::RenameByExif(RenamePattern::CameraDate)),
-        MenuItem::Verb("menu_rename_artist_title", VerbAction::RenameByExif(RenamePattern::ArtistTitle)),
-        MenuItem::Verb("menu_rename_track_title", VerbAction::RenameByExif(RenamePattern::TrackTitle)),
-    ]),
+    MenuItem::Group(
+        "menu_rename",
+        &[
+            MenuItem::Verb(
+                "menu_rename_date",
+                VerbAction::RenameByExif(RenamePattern::DateTaken),
+            ),
+            MenuItem::Verb(
+                "menu_rename_camera",
+                VerbAction::RenameByExif(RenamePattern::CameraDate),
+            ),
+            MenuItem::Verb(
+                "menu_rename_artist_title",
+                VerbAction::RenameByExif(RenamePattern::ArtistTitle),
+            ),
+            MenuItem::Verb(
+                "menu_rename_track_title",
+                VerbAction::RenameByExif(RenamePattern::TrackTitle),
+            ),
+        ],
+    ),
     MenuItem::Verb("menu_files_to_folder", VerbAction::FilesToFolder),
-    MenuItem::Group("menu_sort", &[
-        MenuItem::Verb("menu_sort_dimensions", VerbAction::SortByDimensions),
-        MenuItem::Verb("menu_sort_tags", VerbAction::TagsToFolders),
-    ]),
+    MenuItem::Group(
+        "menu_sort",
+        &[
+            MenuItem::Verb("menu_sort_dimensions", VerbAction::SortByDimensions),
+            MenuItem::Verb("menu_sort_tags", VerbAction::TagsToFolders),
+        ],
+    ),
     MenuItem::Separator,
     // The old "Tools" submenu, flattened to TOP-LEVEL verbs so each can be individually
     // shown/hidden + reordered via the "Menu items" customization (no extra submenu to
@@ -205,11 +266,23 @@ pub const MENU: &[MenuItem] = &[
     MenuItem::Verb("menu_upload", VerbAction::Upload),
     MenuItem::Separator,
     MenuItem::Verb("menu_set_folder_icon", VerbAction::SetFolderIcon),
-    MenuItem::Group("menu_wallpaper", &[
-        MenuItem::Verb("menu_wallpaper_stretch", VerbAction::Wallpaper(WallpaperMode::Stretch)),
-        MenuItem::Verb("menu_wallpaper_tile", VerbAction::Wallpaper(WallpaperMode::Tile)),
-        MenuItem::Verb("menu_wallpaper_center", VerbAction::Wallpaper(WallpaperMode::Center)),
-    ]),
+    MenuItem::Group(
+        "menu_wallpaper",
+        &[
+            MenuItem::Verb(
+                "menu_wallpaper_stretch",
+                VerbAction::Wallpaper(WallpaperMode::Stretch),
+            ),
+            MenuItem::Verb(
+                "menu_wallpaper_tile",
+                VerbAction::Wallpaper(WallpaperMode::Tile),
+            ),
+            MenuItem::Verb(
+                "menu_wallpaper_center",
+                VerbAction::Wallpaper(WallpaperMode::Center),
+            ),
+        ],
+    ),
     MenuItem::Separator,
     MenuItem::Verb("menu_settings", VerbAction::OpenSettings),
 ];
@@ -292,8 +365,12 @@ fn leaf_count() -> u32 {
 /// Top-level MENU items surfaced directly on the MAIN context menu when the
 /// "quick verbs" Option is on (the most-used actions, one click instead of two).
 /// In MENU order this yields: Convert into ▸ · Convert… · Resize ▸ · Rotate ▸.
-pub const QUICK_KEYS: &[&str] =
-    &["menu_convert_into", "menu_convert_dialog", "menu_resize", "menu_rotate"];
+pub const QUICK_KEYS: &[&str] = &[
+    "menu_convert_into",
+    "menu_convert_dialog",
+    "menu_resize",
+    "menu_rotate",
+];
 
 /// Count the leaf verbs under a menu item (separators / the group node itself
 /// don't count). Used to map each top-level item to its first global leaf index,
@@ -356,9 +433,10 @@ pub fn default_menu_tokens() -> Vec<&'static str> {
         match it {
             // Drop a leading divider + collapse consecutive ones.
             MenuItem::Separator
-                if !out.is_empty() && out.last().copied() != Some(MENU_SEP_TOKEN) => {
-                    out.push(MENU_SEP_TOKEN);
-                }
+                if !out.is_empty() && out.last().copied() != Some(MENU_SEP_TOKEN) =>
+            {
+                out.push(MENU_SEP_TOKEN);
+            }
             MenuItem::Group(t, _) | MenuItem::Verb(t, _) if *t != "menu_settings" => out.push(t),
             _ => {} // menu_settings is the always-last tail, never in the saved order
         }
@@ -396,7 +474,10 @@ fn order_top_level_with(saved: &[String]) -> Vec<(&'static MenuItem, u32)> {
             .copied()
             .find(|(it, _)| !matches!(it, MenuItem::Separator) && it.title() == key)
     };
-    let sep = pairs.iter().copied().find(|(it, _)| matches!(it, MenuItem::Separator));
+    let sep = pairs
+        .iter()
+        .copied()
+        .find(|(it, _)| matches!(it, MenuItem::Separator));
     let reorderable = |t: &str| !t.is_empty() && t != "menu_settings";
 
     // Body in saved order (items de-duped, dividers as placed), then any item missing
@@ -428,7 +509,9 @@ fn order_top_level_with(saved: &[String]) -> Vec<(&'static MenuItem, u32)> {
     let mut out: Vec<(&'static MenuItem, u32)> = Vec::with_capacity(body.len() + 2);
     for p in body {
         if matches!(p.0, MenuItem::Separator)
-            && out.last().is_none_or(|last| matches!(last.0, MenuItem::Separator))
+            && out
+                .last()
+                .is_none_or(|last| matches!(last.0, MenuItem::Separator))
         {
             continue;
         }
@@ -494,7 +577,12 @@ pub fn audio_top_level() -> Vec<(&'static MenuItem, u32)> {
     // Pick color is a system-wide screen picker (works regardless of the selected file), so it
     // belongs here too — it was previously offered on the condensed (unsupported) menu but not
     // the audio one, an inconsistency.
-    const KEYS: &[&str] = &["menu_files_to_folder", "menu_rename", "menu_sort", "menu_pick_color"];
+    const KEYS: &[&str] = &[
+        "menu_files_to_folder",
+        "menu_rename",
+        "menu_sort",
+        "menu_pick_color",
+    ];
     let mut items: Vec<(&'static MenuItem, u32)> = Vec::new();
     let mut sep: Option<(&'static MenuItem, u32)> = None;
     let mut settings: Option<(&'static MenuItem, u32)> = None;
@@ -605,7 +693,8 @@ mod tests {
                 QuickItem::Group(title, children, start) => {
                     for (k, t) in leaf_titles(children).into_iter().enumerate() {
                         assert_eq!(
-                            all[start as usize + k].0, t,
+                            all[start as usize + k].0,
+                            t,
                             "quick group `{title}` child {k} misaligned with global leaves",
                         );
                     }
@@ -660,14 +749,28 @@ mod tests {
         let keys = default_reorderable_keys();
 
         // Empty order → the default tree verbatim (every separator included).
-        let empty: Vec<&str> = order_top_level_with(&[]).iter().map(|(it, _)| it.title()).collect();
-        assert_eq!(empty, default_titles, "empty order must be the default tree");
+        let empty: Vec<&str> = order_top_level_with(&[])
+            .iter()
+            .map(|(it, _)| it.title())
+            .collect();
+        assert_eq!(
+            empty, default_titles,
+            "empty order must be the default tree"
+        );
 
         // The factory tokens (items + divider markers) reproduce the default tree exactly.
-        let factory: Vec<String> = default_menu_tokens().iter().map(|s| s.to_string()).collect();
-        let factory_titles: Vec<&str> =
-            order_top_level_with(&factory).iter().map(|(it, _)| it.title()).collect();
-        assert_eq!(factory_titles, default_titles, "factory tokens must equal the default tree");
+        let factory: Vec<String> = default_menu_tokens()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let factory_titles: Vec<&str> = order_top_level_with(&factory)
+            .iter()
+            .map(|(it, _)| it.title())
+            .collect();
+        assert_eq!(
+            factory_titles, default_titles,
+            "factory tokens must equal the default tree"
+        );
 
         // Canonical leaf-start per top-level item.
         let mut canon = std::collections::HashMap::new();
@@ -686,41 +789,72 @@ mod tests {
         let out = order_top_level_with(&rev);
         for (it, start) in &out {
             if !it.title().is_empty() {
-                assert_eq!(*start, canon[it.title()], "id offset drifted for {}", it.title());
+                assert_eq!(
+                    *start,
+                    canon[it.title()],
+                    "id offset drifted for {}",
+                    it.title()
+                );
             }
         }
-        assert_eq!(out.first().unwrap().0.title(), "menu_wallpaper", "reversed → wallpaper first");
-        assert_eq!(out.last().unwrap().0.title(), "menu_settings", "Settings stays last");
         assert_eq!(
-            out.iter().filter(|(it, _)| matches!(it, MenuItem::Separator)).count(),
+            out.first().unwrap().0.title(),
+            "menu_wallpaper",
+            "reversed → wallpaper first"
+        );
+        assert_eq!(
+            out.last().unwrap().0.title(),
+            "menu_settings",
+            "Settings stays last"
+        );
+        assert_eq!(
+            out.iter()
+                .filter(|(it, _)| matches!(it, MenuItem::Separator))
+                .count(),
             1,
             "no divider tokens → only the Settings divider",
         );
         for k in &keys {
             assert_eq!(
-                out.iter().filter(|(it, _)| it.title() == k.as_str()).count(),
+                out.iter()
+                    .filter(|(it, _)| it.title() == k.as_str())
+                    .count(),
                 1,
                 "item {k} appears exactly once",
             );
         }
 
         // A user-placed divider renders exactly between the two items it sits between.
-        let custom: Vec<String> =
-            vec!["menu_resize".into(), MENU_SEP_TOKEN.into(), "menu_convert_into".into()];
-        let titles: Vec<&str> =
-            order_top_level_with(&custom).iter().map(|(it, _)| it.title()).collect();
+        let custom: Vec<String> = vec![
+            "menu_resize".into(),
+            MENU_SEP_TOKEN.into(),
+            "menu_convert_into".into(),
+        ];
+        let titles: Vec<&str> = order_top_level_with(&custom)
+            .iter()
+            .map(|(it, _)| it.title())
+            .collect();
         let ri = titles.iter().position(|t| *t == "menu_resize").unwrap();
         assert_eq!(titles[ri + 1], "", "divider must follow menu_resize");
-        assert_eq!(titles[ri + 2], "menu_convert_into", "convert_into after the divider");
+        assert_eq!(
+            titles[ri + 2],
+            "menu_convert_into",
+            "convert_into after the divider"
+        );
 
         // Leading / consecutive / trailing divider tokens normalize away.
         let mut messy: Vec<String> = vec![MENU_SEP_TOKEN.into(), MENU_SEP_TOKEN.into()];
         messy.extend(keys.iter().cloned());
         messy.push(MENU_SEP_TOKEN.into());
         let out2 = order_top_level_with(&messy);
-        assert!(!matches!(out2.first().unwrap().0, MenuItem::Separator), "no leading divider");
+        assert!(
+            !matches!(out2.first().unwrap().0, MenuItem::Separator),
+            "no leading divider"
+        );
         assert_eq!(
-            out2.iter().filter(|(it, _)| matches!(it, MenuItem::Separator)).count(),
+            out2.iter()
+                .filter(|(it, _)| matches!(it, MenuItem::Separator))
+                .count(),
             1,
             "messy dividers collapse to just the Settings divider",
         );
@@ -752,31 +886,60 @@ mod tests {
         // system-wide screen picker (works on any selection), so it's in this set too.
         assert_eq!(
             titles,
-            vec!["menu_rename", "menu_files_to_folder", "menu_sort", "menu_pick_color", "", "menu_settings"],
+            vec![
+                "menu_rename",
+                "menu_files_to_folder",
+                "menu_sort",
+                "menu_pick_color",
+                "",
+                "menu_settings"
+            ],
             "audio menu = rename / files-to-folder / sort / pick-color + divider + Settings",
         );
         assert_eq!(
-            out.iter().filter(|(it, _)| matches!(it, MenuItem::Separator)).count(),
+            out.iter()
+                .filter(|(it, _)| matches!(it, MenuItem::Separator))
+                .count(),
             1,
             "exactly one divider, before Settings",
         );
-        assert_eq!(out.last().unwrap().0.title(), "menu_settings", "Settings stays last");
+        assert_eq!(
+            out.last().unwrap().0.title(),
+            "menu_settings",
+            "Settings stays last"
+        );
 
         // Every non-divider item keeps its canonical leaf-start index → ids stay stable.
         for (it, start) in &out {
             if !it.title().is_empty() {
-                assert_eq!(*start, canon[it.title()], "id offset drifted for {}", it.title());
+                assert_eq!(
+                    *start,
+                    canon[it.title()],
+                    "id offset drifted for {}",
+                    it.title()
+                );
             }
         }
 
         // `top_level_audio_ok` matches `audio_top_level`'s set plus Settings, and rejects
         // the image-only verbs (which the surfaces hide on an audio-only selection).
-        for k in ["menu_files_to_folder", "menu_rename", "menu_sort", "menu_pick_color", "menu_settings"] {
+        for k in [
+            "menu_files_to_folder",
+            "menu_rename",
+            "menu_sort",
+            "menu_pick_color",
+            "menu_settings",
+        ] {
             assert!(top_level_audio_ok(k), "{k} should be audio-ok");
         }
         for k in [
-            "menu_convert_into", "menu_convert_dialog", "menu_resize", "menu_rotate",
-            "menu_wallpaper", "menu_copy", "menu_set_folder_icon",
+            "menu_convert_into",
+            "menu_convert_dialog",
+            "menu_resize",
+            "menu_rotate",
+            "menu_wallpaper",
+            "menu_copy",
+            "menu_set_folder_icon",
         ] {
             assert!(!top_level_audio_ok(k), "{k} is image-only");
         }

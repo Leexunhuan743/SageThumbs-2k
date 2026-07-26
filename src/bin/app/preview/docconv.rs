@@ -18,8 +18,14 @@ pub(super) struct Converted {
 /// convertible type (plain markdown flows through untouched).
 pub(super) fn to_markdown(ext: &str, text: &str) -> Option<Converted> {
     match ext {
-        "csv" => Some(Converted { md: delimited_table(text, sniff_delim(text)), attachments: Vec::new() }),
-        "tsv" => Some(Converted { md: delimited_table(text, b'\t'), attachments: Vec::new() }),
+        "csv" => Some(Converted {
+            md: delimited_table(text, sniff_delim(text)),
+            attachments: Vec::new(),
+        }),
+        "tsv" => Some(Converted {
+            md: delimited_table(text, b'\t'),
+            attachments: Vec::new(),
+        }),
         "ipynb" => Some(ipynb_md(text)),
         _ => None,
     }
@@ -82,7 +88,9 @@ fn delimited_table(text: &str, delim: u8) -> String {
             } else {
                 // multibyte-safe: push the raw byte run for this char
                 let ch_len = utf8_len(c);
-                field.push_str(std::str::from_utf8(&b[i..(i + ch_len).min(b.len())]).unwrap_or("\u{FFFD}"));
+                field.push_str(
+                    std::str::from_utf8(&b[i..(i + ch_len).min(b.len())]).unwrap_or("\u{FFFD}"),
+                );
                 i += ch_len;
                 continue;
             }
@@ -105,7 +113,9 @@ fn delimited_table(text: &str, delim: u8) -> String {
             }
         } else {
             let ch_len = utf8_len(c);
-            field.push_str(std::str::from_utf8(&b[i..(i + ch_len).min(b.len())]).unwrap_or("\u{FFFD}"));
+            field.push_str(
+                std::str::from_utf8(&b[i..(i + ch_len).min(b.len())]).unwrap_or("\u{FFFD}"),
+            );
             i += ch_len;
             continue;
         }
@@ -191,7 +201,10 @@ const MAX_ATTACHMENTS: usize = 64; // bound the pasted-image decode work per not
 /// namespaced per cell so the loader can render them inline. A file that doesn't parse as a
 /// notebook renders as a highlighted JSON block instead.
 fn ipynb_md(text: &str) -> Converted {
-    let plain = |md: String| Converted { md, attachments: Vec::new() };
+    let plain = |md: String| Converted {
+        md,
+        attachments: Vec::new(),
+    };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
         return plain(format!("```json\n{text}\n```"));
     };
@@ -241,7 +254,10 @@ fn ipynb_md(text: &str) -> Converted {
         }
     }
     if cells.len() > MAX_CELLS {
-        out.push_str(&format!("*Showing the first {MAX_CELLS} of {} cells.*\n", cells.len()));
+        out.push_str(&format!(
+            "*Showing the first {MAX_CELLS} of {} cells.*\n",
+            cells.len()
+        ));
     }
     let md = if out.trim().is_empty() {
         "*(empty notebook)*".to_string()
@@ -263,7 +279,9 @@ fn collect_attachments(cell: &serde_json::Value, idx: usize, out: &mut Vec<(Stri
         if out.len() >= MAX_ATTACHMENTS {
             break;
         }
-        let Some(map) = mimes.as_object() else { continue };
+        let Some(map) = mimes.as_object() else {
+            continue;
+        };
         let Some(b64) = map
             .iter()
             .find(|(mime, _)| mime.starts_with("image/"))
@@ -315,7 +333,12 @@ fn push_output(out: &mut String, o: &serde_json::Value) {
             let tb = o
                 .get("traceback")
                 .and_then(|t| t.as_array())
-                .map(|a| a.iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join("\n"))
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
                 .unwrap_or_default();
             strip_ansi(&tb)
         }
@@ -408,7 +431,11 @@ mod tests {
         );
         let conv = ipynb_md(&nb);
         // the ref is namespaced to the cell, and the decoded key matches it
-        assert!(conv.md.contains("](c0/attachment:img.png)"), "md was: {}", conv.md);
+        assert!(
+            conv.md.contains("](c0/attachment:img.png)"),
+            "md was: {}",
+            conv.md
+        );
         assert_eq!(conv.attachments.len(), 1);
         assert_eq!(conv.attachments[0].0, "c0/attachment:img.png");
         assert_eq!(conv.attachments[0].1, b"hi");

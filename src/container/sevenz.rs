@@ -570,17 +570,11 @@ mod tests {
             writer.set_encrypt_header(false);
             writer.set_content_methods(vec![EncoderConfiguration::new(EncoderMethod::COPY)]);
             writer
-                .push_archive_entry(
-                    ArchiveEntry::new_file("cover.png"),
-                    Some(b"FIRST" as &[u8]),
-                )
+                .push_archive_entry(ArchiveEntry::new_file("cover.png"), Some(b"FIRST" as &[u8]))
                 .expect("first entry");
             let later = vec![0xCC; NON_SOLID_COVERS_BUDGET as usize + 1];
             writer
-                .push_archive_entry(
-                    ArchiveEntry::new_file("cover.png"),
-                    Some(later.as_slice()),
-                )
+                .push_archive_entry(ArchiveEntry::new_file("cover.png"), Some(later.as_slice()))
                 .expect("duplicate entry");
             writer.finish().expect("finish");
         }

@@ -63,7 +63,10 @@ struct Report {
 
 impl Report {
     fn new() -> Self {
-        Report { out: String::new(), problems: Vec::new() }
+        Report {
+            out: String::new(),
+            problems: Vec::new(),
+        }
     }
 
     fn head(&mut self, title: &str) {
@@ -88,7 +91,10 @@ impl Report {
 
 /// Read a registry default (`""`) value as a string, from any of the three roots we use.
 fn hkcr_default(path: &str) -> Option<String> {
-    CLASSES_ROOT.open(path).ok().and_then(|k| k.get_string("").ok())
+    CLASSES_ROOT
+        .open(path)
+        .ok()
+        .and_then(|k| k.get_string("").ok())
 }
 
 /// The DLL path Windows would actually load for a CLSID, straight from the registry —
@@ -105,8 +111,11 @@ fn can_load(path: &Path) -> Result<(), String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::FreeLibrary;
     use windows::Win32::System::LibraryLoader::LoadLibraryW;
-    let wide: Vec<u16> =
-        path.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
     unsafe {
         match LoadLibraryW(PCWSTR(wide.as_ptr())) {
             Ok(h) => {
@@ -125,7 +134,10 @@ fn installed_dll() -> Option<PathBuf> {
     if let Some(p) = inproc_path(CLSID_THUMBNAIL_PROVIDER_STR) {
         return Some(PathBuf::from(p));
     }
-    std::env::current_exe().ok()?.parent().map(|d| d.join("sagethumbs2k.dll"))
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(|d| d.join("sagethumbs2k.dll"))
 }
 
 /// Windows-side switches that disable thumbnails for EVERY program, not just us. When
@@ -135,7 +147,10 @@ fn check_windows_switches(r: &mut Report) {
     r.head("Windows thumbnail settings");
 
     let advanced = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
-    let icons_only = CURRENT_USER.open(advanced).ok().and_then(|k| k.get_u32("IconsOnly").ok());
+    let icons_only = CURRENT_USER
+        .open(advanced)
+        .ok()
+        .and_then(|k| k.get_u32("IconsOnly").ok());
     match icons_only {
         Some(1) => r.fail_with_fix(
             "IconsOnly",
@@ -152,7 +167,11 @@ fn check_windows_switches(r: &mut Report) {
     let pol = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
     let mut any_policy = false;
     for (root, root_name) in [(CURRENT_USER, "HKCU"), (LOCAL_MACHINE, "HKLM")] {
-        for value in ["DisableThumbnails", "NoThumbnailCache", "DisableThumbnailCache"] {
+        for value in [
+            "DisableThumbnails",
+            "NoThumbnailCache",
+            "DisableThumbnailCache",
+        ] {
             if let Some(1) = root.open(pol).ok().and_then(|k| k.get_u32(value).ok()) {
                 any_policy = true;
                 r.fail_with_fix(
@@ -231,7 +250,10 @@ fn check_registration(r: &mut Report) -> bool {
         ("Approved: thumbnail", CLSID_THUMBNAIL_PROVIDER_STR),
         ("Approved: context menu", CLSID_CONTEXT_MENU_STR),
     ] {
-        let listed = approved.as_ref().and_then(|k| k.get_string(clsid).ok()).is_some();
+        let listed = approved
+            .as_ref()
+            .and_then(|k| k.get_string(clsid).ok())
+            .is_some();
         if listed {
             r.line(S::Ok, name, "listed");
         } else {
@@ -276,7 +298,11 @@ fn check_extensions(r: &mut Report) {
     }
 
     let enabled = ours + missing + stolen;
-    r.line(S::Info, "Formats enabled in settings", &format!("{enabled} (of {})", FORMATS.len()));
+    r.line(
+        S::Info,
+        "Formats enabled in settings",
+        &format!("{enabled} (of {})", FORMATS.len()),
+    );
     if disabled > 0 {
         r.line(S::Info, "Formats turned off by you", &format!("{disabled}"));
     }
@@ -291,7 +317,11 @@ fn check_extensions(r: &mut Report) {
     }
 
     if ours == enabled {
-        r.line(S::Ok, "Hooked by SageThumbs 2K", &format!("{ours}/{enabled}"));
+        r.line(
+            S::Ok,
+            "Hooked by SageThumbs 2K",
+            &format!("{ours}/{enabled}"),
+        );
     } else if ours == 0 {
         r.fail_with_fix(
             "Hooked by SageThumbs 2K",
@@ -300,11 +330,19 @@ fn check_extensions(r: &mut Report) {
              or reinstall.",
         );
     } else {
-        r.line(S::Warn, "Hooked by SageThumbs 2K", &format!("{ours}/{enabled}"));
+        r.line(
+            S::Warn,
+            "Hooked by SageThumbs 2K",
+            &format!("{ours}/{enabled}"),
+        );
     }
 
     if missing > 0 {
-        r.line(S::Warn, "  not hooked", &format!("{missing}  e.g. {}", missing_examples.join(", ")));
+        r.line(
+            S::Warn,
+            "  not hooked",
+            &format!("{missing}  e.g. {}", missing_examples.join(", ")),
+        );
     }
     if stolen > 0 {
         r.line(
@@ -328,12 +366,24 @@ fn check_settings(r: &mut Report) {
         );
     }
     let mb = crate::settings::max_file_size_bytes() / (1024 * 1024);
-    r.line(S::Info, "Max file size", &format!("{mb} MB (larger files are skipped)"));
-    r.line(S::Info, "Max thumbnail size", &format!("{} px", crate::settings::max_thumb_size()));
+    r.line(
+        S::Info,
+        "Max file size",
+        &format!("{mb} MB (larger files are skipped)"),
+    );
+    r.line(
+        S::Info,
+        "Max thumbnail size",
+        &format!("{} px", crate::settings::max_thumb_size()),
+    );
     r.line(
         S::Info,
         "Embedded previews preferred",
-        if crate::settings::use_embedded() { "yes" } else { "no" },
+        if crate::settings::use_embedded() {
+            "yes"
+        } else {
+            "no"
+        },
     );
 }
 
@@ -350,7 +400,11 @@ fn check_engine(r: &mut Report) {
         match image::DynamicImage::ImageRgba8(img).write_to(&mut buf, image::ImageFormat::Png) {
             Ok(()) => buf.into_inner(),
             Err(e) => {
-                r.line(S::Fail, "Self-test image", &format!("could not encode: {e}"));
+                r.line(
+                    S::Fail,
+                    "Self-test image",
+                    &format!("could not encode: {e}"),
+                );
                 return;
             }
         }
@@ -361,9 +415,11 @@ fn check_engine(r: &mut Report) {
             "Decode self-test",
             &format!("passed ({}x{} out)", img.width(), img.height()),
         ),
-        Err(e) => {
-            r.line(S::Fail, "Decode self-test", &format!("FAILED on a generated PNG: {e}"))
-        }
+        Err(e) => r.line(
+            S::Fail,
+            "Decode self-test",
+            &format!("FAILED on a generated PNG: {e}"),
+        ),
     }
 }
 
@@ -378,13 +434,25 @@ fn probe_file(r: &mut Report, path: &str) {
     let p = Path::new(path);
     r.line(S::Info, "Path", path);
     if !p.is_file() {
-        r.fail_with_fix("File", "does not exist / not a file", "check the path (quote it if it has spaces)");
+        r.fail_with_fix(
+            "File",
+            "does not exist / not a file",
+            "check the path (quote it if it has spaces)",
+        );
         return;
     }
 
-    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if ext.is_empty() {
-        r.line(S::Warn, "Extension", "none — Explorer keys thumbnails off the extension");
+        r.line(
+            S::Warn,
+            "Extension",
+            "none — Explorer keys thumbnails off the extension",
+        );
         return;
     }
     // Is this extension one SageThumbs hooks at all? If not, THAT is the whole answer —
@@ -418,7 +486,11 @@ fn probe_file(r: &mut Report, path: &str) {
             Ok(img) => r.line(
                 S::Ok,
                 "Decode this file",
-                &format!("OK ({}x{}) — a thumbnail CAN be produced", img.width(), img.height()),
+                &format!(
+                    "OK ({}x{}) — a thumbnail CAN be produced",
+                    img.width(),
+                    img.height()
+                ),
             ),
             Err(_) => {
                 // Registered + enabled, but the pixels won't come out. Point at the
@@ -432,7 +504,11 @@ fn probe_file(r: &mut Report, path: &str) {
                     "this format decodes only via ImageMagick, which is NOT installed here \
                      (use the full installer, or install ImageMagick)"
                 };
-                r.fail_with_fix("Decode this file", "FAILED — no thumbnail possible for this file", hint);
+                r.fail_with_fix(
+                    "Decode this file",
+                    "FAILED — no thumbnail possible for this file",
+                    hint,
+                );
             }
         },
     }
@@ -453,16 +529,28 @@ pub fn report(file: Option<&str>) -> String {
     match installed_dll() {
         Some(p) => {
             let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-            r.line(S::Info, "Shell extension DLL", &format!("{} ({size} bytes)", p.display()));
+            r.line(
+                S::Info,
+                "Shell extension DLL",
+                &format!("{} ({size} bytes)", p.display()),
+            );
         }
         None => r.line(S::Warn, "Shell extension DLL", "could not determine a path"),
     }
     match crate::safety::log_file() {
         Some(p) if p.exists() => {
             let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-            r.line(S::Info, "Diagnostics log", &format!("{} ({size} bytes)", p.display()));
+            r.line(
+                S::Info,
+                "Diagnostics log",
+                &format!("{} ({size} bytes)", p.display()),
+            );
         }
-        Some(p) => r.line(S::Info, "Diagnostics log", &format!("{} (not created yet)", p.display())),
+        Some(p) => r.line(
+            S::Info,
+            "Diagnostics log",
+            &format!("{} (not created yet)", p.display()),
+        ),
         None => r.line(S::Warn, "Diagnostics log", "LOCALAPPDATA is unset"),
     }
 
@@ -508,7 +596,10 @@ mod tests {
     fn report_runs_and_reaches_a_verdict() {
         let out = report(None);
         assert!(out.contains("Environment"), "missing environment section");
-        assert!(out.contains("COM registration"), "missing registration section");
+        assert!(
+            out.contains("COM registration"),
+            "missing registration section"
+        );
         assert!(out.contains("Verdict"), "missing verdict");
     }
 

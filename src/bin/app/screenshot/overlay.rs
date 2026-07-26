@@ -7,38 +7,38 @@ use core::ffi::c_void;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{
-    COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT,
+    GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT,
     WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     AlphaBlend, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GdiFlush, GetDC, GetDIBits, GetPixel,
-    IntersectClipRect, InvalidateRect, MonitorFromRect, ReleaseDC, RestoreDC, SaveDC, SelectObject,
-    SetBkMode, SetStretchBltMode, SetTextColor, StretchBlt, TextOutW,
-    AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, COLORONCOLOR, DIB_RGB_COLORS,
-    DT_CALCRECT, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBITMAP, HDC, HGDIOBJ, LOGFONTW,
-    MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GdiFlush, GetDC, GetDIBits,
+    GetPixel, IntersectClipRect, InvalidateRect, MonitorFromRect, ReleaseDC, RestoreDC, SaveDC,
+    SelectObject, SetBkMode, SetStretchBltMode, SetTextColor, StretchBlt, TextOutW, AC_SRC_OVER,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, COLORONCOLOR, DIB_RGB_COLORS, DT_CALCRECT,
+    DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBITMAP, HDC, HGDIOBJ, LOGFONTW, MONITOR_DEFAULTTONEAREST,
+    PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
-use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Controls::Dialogs::{
     ChooseColorW, ChooseFontW, CC_ANYCOLOR, CC_ENABLEHOOK, CC_FULLOPEN, CC_RGBINIT, CF_EFFECTS,
     CF_ENABLEHOOK, CF_INITTOLOGFONTSTRUCT, CF_SCREENFONTS, CHOOSECOLORW, CHOOSEFONTW,
 };
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetActiveWindow, SetFocus, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_F8, VK_RETURN,
     VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::System::SystemInformation::GetTickCount64;
-use windows::Win32::System::Threading::CreateMutexW;
 
 use crate::dark::rgb;
 use crate::win::{app_icon, gui_font, wide};
 
-use crate::gdip;
 use super::output;
 use super::toolbar::{self, Button, Swatch, TextItem};
 use super::tools::{self, Shape, Tool, PALETTE};
+use crate::gdip;
 
 /// All mutable capture state, owned by the window (`GWLP_USERDATA`).
 struct Shot {
@@ -133,7 +133,9 @@ impl Shot {
     /// Advance to the next palette colour (the `K` key) — wraps; jumps to the first
     /// entry if the current colour isn't a palette one (e.g. a custom pick).
     fn cycle_color(&mut self) {
-        let pos = PALETTE.iter().position(|&(r, g, b)| rgb(r, g, b) == self.cur_color);
+        let pos = PALETTE
+            .iter()
+            .position(|&(r, g, b)| rgb(r, g, b) == self.cur_color);
         let next = pos.map(|i| (i + 1) % PALETTE.len()).unwrap_or(0);
         let (r, g, b) = PALETTE[next];
         self.cur_color = rgb(r, g, b);
@@ -141,7 +143,10 @@ impl Shot {
 }
 
 fn pt(lparam: LPARAM) -> POINT {
-    POINT { x: (lparam.0 & 0xffff) as u16 as i16 as i32, y: ((lparam.0 >> 16) & 0xffff) as u16 as i16 as i32 }
+    POINT {
+        x: (lparam.0 & 0xffff) as u16 as i16 as i32,
+        y: ((lparam.0 >> 16) & 0xffff) as u16 as i16 as i32,
+    }
 }
 
 /// The effective DPI of the monitor the selection sits on. The overlay window itself
@@ -268,8 +273,7 @@ unsafe fn run_capture_inner(hinst: HINSTANCE, automation: bool) {
     // Claim one shared mutex before any window lookup or screen allocation. Two
     // near-simultaneous hotkey/test launches can both pass FindWindow; the kernel
     // mutex closes that TOCTOU race and covers normal + automation classes together.
-    let Ok(_overlay_lock) = CreateMutexW(None, true, w!("SageThumbs2K.ShotOverlay.Single"))
-    else {
+    let Ok(_overlay_lock) = CreateMutexW(None, true, w!("SageThumbs2K.ShotOverlay.Single")) else {
         return;
     };
     if GetLastError() == ERROR_ALREADY_EXISTS {
@@ -479,7 +483,15 @@ pub(crate) unsafe fn capture_instant() {
         return;
     }
     let mut buf = vec![0u8; n as usize];
-    let got = GetDIBits(mem, bmp, 0, vh as u32, Some(buf.as_mut_ptr() as *mut c_void), &mut bi, DIB_RGB_COLORS);
+    let got = GetDIBits(
+        mem,
+        bmp,
+        0,
+        vh as u32,
+        Some(buf.as_mut_ptr() as *mut c_void),
+        &mut bi,
+        DIB_RGB_COLORS,
+    );
     SelectObject(mem, old);
     let _ = DeleteObject(HGDIOBJ(bmp.0));
     let _ = DeleteDC(mem);
@@ -504,7 +516,9 @@ pub(crate) unsafe fn capture_instant() {
             ));
             crate::win::notify_toast(
                 "SageThumbs 2K",
-                crate::win::t("toast_shot_fail_save").replace("{dir}", &dir).as_str(),
+                crate::win::t("toast_shot_fail_save")
+                    .replace("{dir}", &dir)
+                    .as_str(),
                 std::time::Duration::from_secs(5),
             );
         }
@@ -535,8 +549,7 @@ pub(crate) unsafe fn capture_instant() {
 /// three quick alpha steps read as a camera flash without being a strobe.
 unsafe fn flash_screen(vx: i32, vy: i32, vw: i32, vh: i32) {
     let class = w!("SageThumbs2KShotFlash");
-    let hmod =
-        windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
+    let hmod = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
     let wc = WNDCLASSW {
         lpfnWndProc: Some(flash_wndproc),
         hInstance: HINSTANCE(hmod.0),
@@ -617,12 +630,19 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                         let buttons = toolbar::layout(sel, s.vw, s.vh, dpi);
                         // The open colour palette intercepts clicks first.
                         if s.color_flyout {
-                            if let Some((_, cbr)) = buttons.iter().find(|(b, _)| *b == Button::Color) {
-                                let (_, sw) = toolbar::color_flyout_layout(*cbr, s.vw, s.vh, &s.customs, dpi);
+                            if let Some((_, cbr)) =
+                                buttons.iter().find(|(b, _)| *b == Button::Color)
+                            {
+                                let (_, sw) =
+                                    toolbar::color_flyout_layout(*cbr, s.vw, s.vh, &s.customs, dpi);
                                 if let Some((swatch, _)) = sw.iter().find(|(_, r)| pt_in(*r, p)) {
                                     match *swatch {
-                                        Swatch::Color(c) | Swatch::Custom(Some(c)) => s.cur_color = c,
-                                        Swatch::Custom(None) | Swatch::Picker => pick_custom_color(hwnd, s),
+                                        Swatch::Color(c) | Swatch::Custom(Some(c)) => {
+                                            s.cur_color = c
+                                        }
+                                        Swatch::Custom(None) | Swatch::Picker => {
+                                            pick_custom_color(hwnd, s)
+                                        }
                                     }
                                     s.color_flyout = false;
                                     let _ = InvalidateRect(Some(hwnd), None, false);
@@ -639,13 +659,24 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                         }
                         // The open text settings flyout intercepts clicks too.
                         if s.text_flyout {
-                            if let Some((_, tbr)) = buttons.iter().find(|(b, _)| *b == Button::Tool(Tool::Text)) {
-                                let (_, its) = toolbar::text_flyout_layout(*tbr, s.vw, s.vh, s.font_dropdown, dpi);
+                            if let Some((_, tbr)) =
+                                buttons.iter().find(|(b, _)| *b == Button::Tool(Tool::Text))
+                            {
+                                let (_, its) = toolbar::text_flyout_layout(
+                                    *tbr,
+                                    s.vw,
+                                    s.vh,
+                                    s.font_dropdown,
+                                    dpi,
+                                );
                                 if let Some((item, _)) = its.iter().find(|(_, r)| pt_in(*r, p)) {
                                     match *item {
                                         TextItem::FontField => s.font_dropdown = !s.font_dropdown,
                                         TextItem::FontOption(i) => {
-                                            tools::set_face(&mut s.text_font, toolbar::PRESET_FONTS[i]);
+                                            tools::set_face(
+                                                &mut s.text_font,
+                                                toolbar::PRESET_FONTS[i],
+                                            );
                                             s.font_dropdown = false;
                                         }
                                         TextItem::SizeDown => {
@@ -657,10 +688,15 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                                             s.text_font.lfHeight = -sz;
                                         }
                                         TextItem::Bold => {
-                                            s.text_font.lfWeight = if s.text_font.lfWeight >= 700 { 400 } else { 700 };
+                                            s.text_font.lfWeight = if s.text_font.lfWeight >= 700 {
+                                                400
+                                            } else {
+                                                700
+                                            };
                                         }
                                         TextItem::Underline => {
-                                            s.text_font.lfUnderline = u8::from(s.text_font.lfUnderline == 0);
+                                            s.text_font.lfUnderline =
+                                                u8::from(s.text_font.lfUnderline == 0);
                                         }
                                         TextItem::More => {
                                             pick_text_font(hwnd, s);
@@ -839,7 +875,9 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     if let Some(hi) = s.pending_hi.take() {
                         // Expecting the low half of a surrogate pair.
                         if (0xDC00..=0xDFFF).contains(&u) {
-                            if let Some(ch) = char::decode_utf16([hi, u]).next().and_then(|r| r.ok()) {
+                            if let Some(ch) =
+                                char::decode_utf16([hi, u]).next().and_then(|r| r.ok())
+                            {
                                 if let Some((_, buf)) = s.typing.as_mut() {
                                     buf.push(ch);
                                 }
@@ -923,23 +961,25 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                     if s.color_flyout {
                         if let Some((_, cbr)) = buttons.iter().find(|(b, _)| *b == Button::Color) {
-                            let (panel, _) = toolbar::color_flyout_layout(*cbr, s.vw, s.vh, &s.customs, dpi);
+                            let (panel, _) =
+                                toolbar::color_flyout_layout(*cbr, s.vw, s.vh, &s.customs, dpi);
                             return pt_in(panel, p);
                         }
                     }
                     if s.text_flyout {
-                        if let Some((_, tbr)) = buttons.iter().find(|(b, _)| *b == Button::Tool(Tool::Text)) {
-                            let (panel, _) = toolbar::text_flyout_layout(*tbr, s.vw, s.vh, s.font_dropdown, dpi);
+                        if let Some((_, tbr)) =
+                            buttons.iter().find(|(b, _)| *b == Button::Tool(Tool::Text))
+                        {
+                            let (panel, _) =
+                                toolbar::text_flyout_layout(*tbr, s.vw, s.vh, s.font_dropdown, dpi);
                             return pt_in(panel, p);
                         }
                     }
                     false
                 });
                 let moving = ctrl || s.tool == Tool::Move;
-                let over_shape =
-                    moving && tools::hit_shape(&s.shapes, p.x, p.y).is_some();
-                let active_typing_move =
-                    ctrl && s.tool == Tool::Text && s.typing.is_some();
+                let over_shape = moving && tools::hit_shape(&s.shapes, p.x, p.y).is_some();
+                let active_typing_move = ctrl && s.tool == Tool::Text && s.typing.is_some();
                 // An already-active gesture wins over modifier changes and toolbar
                 // hover. When idle, match the pointer to what the next click would do.
                 let id = if s.typing_drag || s.move_from.is_some() {
@@ -1171,14 +1211,33 @@ fn finish_shape(s: &mut Shot, a: POINT, b: POINT) -> bool {
     let color = s.color();
     let w = s.thickness;
     let shape = match s.tool {
-        Tool::Rect => Shape::Rect { r: tools::norm(a, b), color, w },
-        Tool::Ellipse => Shape::Ellipse { r: tools::norm(a, b), color, w },
+        Tool::Rect => Shape::Rect {
+            r: tools::norm(a, b),
+            color,
+            w,
+        },
+        Tool::Ellipse => Shape::Ellipse {
+            r: tools::norm(a, b),
+            color,
+            w,
+        },
         Tool::Arrow => Shape::Arrow { a, b, color, w },
         Tool::Line => Shape::Line { a, b, color, w },
-        Tool::Pen => Shape::Pen { pts: std::mem::take(&mut s.pen_pts), color, w },
-        Tool::Highlight => Shape::Highlight { r: tools::norm(a, b), color },
-        Tool::Pixelate => Shape::Pixelate { r: tools::norm(a, b) },
-        Tool::Invert => Shape::Invert { r: tools::norm(a, b) },
+        Tool::Pen => Shape::Pen {
+            pts: std::mem::take(&mut s.pen_pts),
+            color,
+            w,
+        },
+        Tool::Highlight => Shape::Highlight {
+            r: tools::norm(a, b),
+            color,
+        },
+        Tool::Pixelate => Shape::Pixelate {
+            r: tools::norm(a, b),
+        },
+        Tool::Invert => Shape::Invert {
+            r: tools::norm(a, b),
+        },
         Tool::Text | Tool::Number | Tool::Eyedropper | Tool::Move => return false,
     };
     // Skip a tiny accidental drag for any rect-based shape.
@@ -1234,7 +1293,11 @@ unsafe fn shot_sample(shot: HDC, x: i32, y: i32, vw: i32, vh: i32) -> (u8, u8, u
     if c == 0xFFFF_FFFF {
         return (0, 0, 0);
     }
-    ((c & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, ((c >> 16) & 0xFF) as u8)
+    (
+        (c & 0xFF) as u8,
+        ((c >> 8) & 0xFF) as u8,
+        ((c >> 16) & 0xFF) as u8,
+    )
 }
 
 /// The loupe box (magnifier + label strip) for a cursor at `(cx, cy)`, nudged to
@@ -1251,7 +1314,12 @@ fn loupe_box(cx: i32, cy: i32, vw: i32, vh: i32, mag: i32, lbl: i32, gap: i32) -
     }
     bx = bx.clamp(0, (vw - bw).max(0));
     by = by.clamp(0, (vh - bh).max(0));
-    RECT { left: bx, top: by, right: bx + bw, bottom: by + bh }
+    RECT {
+        left: bx,
+        top: by,
+        right: bx + bw,
+        bottom: by + bh,
+    }
 }
 
 /// The on-screen rect the loupe occupies for a cursor at `(cx, cy)` — used to
@@ -1312,7 +1380,19 @@ unsafe fn draw_loupe(
 
     // Magnified pixels — nearest-neighbour so each screen pixel is a crisp block.
     SetStretchBltMode(hdc, COLORONCOLOR);
-    let _ = StretchBlt(hdc, bx, by, mag, mag, Some(shot), sx, sy, LOUPE_SPAN, LOUPE_SPAN, SRCCOPY);
+    let _ = StretchBlt(
+        hdc,
+        bx,
+        by,
+        mag,
+        mag,
+        Some(shot),
+        sx,
+        sy,
+        LOUPE_SPAN,
+        LOUPE_SPAN,
+        SRCCOPY,
+    );
 
     // Red ring on the cursor's cell (the pixel that gets picked). Boundaries are taken
     // per-edge from the StretchBlt grid so the ring stays aligned at any DPI.
@@ -1328,11 +1408,21 @@ unsafe fn draw_loupe(
 
     // Label strip: swatch + hex (row 1), then a status hint (row 2).
     let (r, g, b) = shot_sample(shot, cx, cy, vw, vh);
-    let strip = RECT { left: bx, top: by + mag, right: bx + mag, bottom: by + mag + lbl };
+    let strip = RECT {
+        left: bx,
+        top: by + mag,
+        right: bx + mag,
+        bottom: by + mag + lbl,
+    };
     let lbg = CreateSolidBrush(rgb(24, 24, 24));
     FillRect(hdc, &strip, lbg);
     let _ = DeleteObject(lbg.into());
-    let sw = RECT { left: bx + pad, top: by + mag + pad, right: bx + pad + swsz, bottom: by + mag + pad + swsz };
+    let sw = RECT {
+        left: bx + pad,
+        top: by + mag + pad,
+        right: bx + pad + swsz,
+        bottom: by + mag + pad + swsz,
+    };
     let swb = CreateSolidBrush(rgb(r, g, b));
     FillRect(hdc, &sw, swb);
     let _ = DeleteObject(swb.into());
@@ -1342,8 +1432,18 @@ unsafe fn draw_loupe(
     SetTextColor(hdc, rgb(240, 240, 240));
     let mut hex = wide(&format!("#{r:02X}{g:02X}{b:02X}"));
     let hn = hex.len().saturating_sub(1);
-    let mut hr = RECT { left: bx + pad * 2 + swsz, top: by + mag, right: bx + mag, bottom: by + mag + swsz + pad * 2 };
-    DrawTextW(hdc, &mut hex[..hn], &mut hr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    let mut hr = RECT {
+        left: bx + pad * 2 + swsz,
+        top: by + mag,
+        right: bx + mag,
+        bottom: by + mag + swsz + pad * 2,
+    };
+    DrawTextW(
+        hdc,
+        &mut hex[..hn],
+        &mut hr,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
     let (hint_txt, hint_col) = match (sampled_only, copied) {
         (true, true) => ("Sampled \u{2713}", rgb(120, 220, 120)),
         (true, false) => ("Click to sample", rgb(150, 150, 150)),
@@ -1353,13 +1453,41 @@ unsafe fn draw_loupe(
     SetTextColor(hdc, hint_col);
     let mut hint = wide(hint_txt);
     let hin = hint.len().saturating_sub(1);
-    let mut hir = RECT { left: bx + pad, top: by + mag + swsz + pad, right: bx + mag, bottom: by + mag + lbl };
-    DrawTextW(hdc, &mut hint[..hin], &mut hir, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    let mut hir = RECT {
+        left: bx + pad,
+        top: by + mag + swsz + pad,
+        right: bx + mag,
+        bottom: by + mag + lbl,
+    };
+    DrawTextW(
+        hdc,
+        &mut hint[..hin],
+        &mut hir,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
 
     // Outer + magnifier borders.
     let border = CreateSolidBrush(rgb(0, 0, 0));
-    FrameRect(hdc, &RECT { left: bx, top: by, right: bx + mag, bottom: by + mag + lbl }, border);
-    FrameRect(hdc, &RECT { left: bx, top: by, right: bx + mag, bottom: by + mag }, border);
+    FrameRect(
+        hdc,
+        &RECT {
+            left: bx,
+            top: by,
+            right: bx + mag,
+            bottom: by + mag + lbl,
+        },
+        border,
+    );
+    FrameRect(
+        hdc,
+        &RECT {
+            left: bx,
+            top: by,
+            right: bx + mag,
+            bottom: by + mag,
+        },
+        border,
+    );
     let _ = DeleteObject(border.into());
 }
 
@@ -1370,7 +1498,12 @@ fn commit_text(s: &mut Shot) {
         if !buf.is_empty() {
             let color = s.color();
             let font = s.text_font;
-            s.shapes.push(Shape::Text { at, s: buf, color, font });
+            s.shapes.push(Shape::Text {
+                at,
+                s: buf,
+                color,
+                font,
+            });
             s.redo.clear();
         }
     }
@@ -1392,10 +1525,25 @@ unsafe fn shot_paint(hwnd: HWND) {
     let sel = match s.sel {
         Some(r) => r,
         None if s.sel_dragging => tools::norm(s.sel_anchor, s.cur),
-        None => RECT { left: 0, top: 0, right: 0, bottom: 0 },
+        None => RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        },
     };
     if sel.right > sel.left && sel.bottom > sel.top {
-        let _ = BitBlt(mem, sel.left, sel.top, sel.right - sel.left, sel.bottom - sel.top, Some(s.shot), sel.left, sel.top, SRCCOPY);
+        let _ = BitBlt(
+            mem,
+            sel.left,
+            sel.top,
+            sel.right - sel.left,
+            sel.bottom - sel.top,
+            Some(s.shot),
+            sel.left,
+            sel.top,
+            SRCCOPY,
+        );
     }
 
     // Annotations + the move-selection highlight + the in-progress shape + caret.
@@ -1413,7 +1561,12 @@ unsafe fn shot_paint(hwnd: HWND) {
     }
     if let Some(sh) = s.selected.and_then(|i| s.shapes.get(i)) {
         let bb = tools::shape_bbox(sh);
-        let r = RECT { left: bb.left - 3, top: bb.top - 3, right: bb.right + 3, bottom: bb.bottom + 3 };
+        let r = RECT {
+            left: bb.left - 3,
+            top: bb.top - 3,
+            right: bb.right + 3,
+            bottom: bb.bottom + 3,
+        };
         tools::frame(mem, r, rgb(0, 200, 90), 1);
     }
     if let Some(a) = s.draw_from {
@@ -1448,7 +1601,8 @@ unsafe fn shot_paint(hwnd: HWND) {
         } else if s.text_flyout {
             // The text settings flyout.
             if let Some((_, tbr)) = buttons.iter().find(|(b, _)| *b == Button::Tool(Tool::Text)) {
-                let (panel, its) = toolbar::text_flyout_layout(*tbr, s.vw, s.vh, s.font_dropdown, dpi);
+                let (panel, its) =
+                    toolbar::text_flyout_layout(*tbr, s.vw, s.vh, s.font_dropdown, dpi);
                 toolbar::draw_text_flyout(mem, panel, &its, &s.text_font, dpi);
             }
         } else if s.tip_show {
@@ -1596,7 +1750,8 @@ unsafe fn draw_automation_canvas(dc: HDC, w: i32, h: i32) {
         &title[..title.len().saturating_sub(1)],
     );
     SetTextColor(dc, rgb(175, 205, 230));
-    let subtitle = wide("Safe test surface: no desktop pixels, clipboard, files, dialogs, or uploads");
+    let subtitle =
+        wide("Safe test surface: no desktop pixels, clipboard, files, dialogs, or uploads");
     let _ = TextOutW(
         dc,
         banner.left + 18,
@@ -1612,9 +1767,23 @@ unsafe fn apply_dim(dc: HDC, w: i32, h: i32) {
     let bmp = CreateCompatibleBitmap(dc, 1, 1);
     let old = SelectObject(tmp, HGDIOBJ(bmp.0));
     let br = CreateSolidBrush(rgb(0, 0, 0));
-    FillRect(tmp, &RECT { left: 0, top: 0, right: 1, bottom: 1 }, br);
+    FillRect(
+        tmp,
+        &RECT {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        },
+        br,
+    );
     let _ = DeleteObject(br.into());
-    let bf = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 140, AlphaFormat: 0 };
+    let bf = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 140,
+        AlphaFormat: 0,
+    };
     let _ = AlphaBlend(dc, 0, 0, w, h, tmp, 0, 0, 1, 1, bf);
     SelectObject(tmp, old);
     let _ = DeleteObject(HGDIOBJ(bmp.0));
@@ -1637,7 +1806,12 @@ unsafe fn draw_dim_badge(hdc: HDC, s: &Shot, sel: RECT) {
     let mut buf = wide(&txt);
     let n = buf.len().saturating_sub(1);
     let mut calc = RECT::default();
-    DrawTextW(hdc, &mut buf[..n], &mut calc, DT_CALCRECT | DT_SINGLELINE | DT_LEFT);
+    DrawTextW(
+        hdc,
+        &mut buf[..n],
+        &mut calc,
+        DT_CALCRECT | DT_SINGLELINE | DT_LEFT,
+    );
     let padx = crate::win::dpi_scale_dpi(8, dpi);
     let pady = crate::win::dpi_scale_dpi(3, dpi);
     let gap = crate::win::dpi_scale_dpi(6, dpi);
@@ -1649,7 +1823,12 @@ unsafe fn draw_dim_badge(hdc: HDC, s: &Shot, sel: RECT) {
     } else {
         (sel.top + gap).min(s.vh - bh).max(0) // no room above → just inside the top
     };
-    let bar = RECT { left: bx, top: by, right: bx + bw, bottom: by + bh };
+    let bar = RECT {
+        left: bx,
+        top: by,
+        right: bx + bw,
+        bottom: by + bh,
+    };
     let bg = CreateSolidBrush(rgb(20, 20, 20));
     FillRect(hdc, &bar, bg);
     let _ = DeleteObject(bg.into());
@@ -1658,8 +1837,18 @@ unsafe fn draw_dim_badge(hdc: HDC, s: &Shot, sel: RECT) {
     let _ = DeleteObject(border.into());
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, rgb(235, 235, 235));
-    let mut tr = RECT { left: bx + padx, top: by, right: bx + bw, bottom: by + bh };
-    DrawTextW(hdc, &mut buf[..n], &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    let mut tr = RECT {
+        left: bx + padx,
+        top: by,
+        right: bx + bw,
+        bottom: by + bh,
+    };
+    DrawTextW(
+        hdc,
+        &mut buf[..n],
+        &mut tr,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
 }
 
 /// The instructional strip. Pinned to the selection's top-left once a region is
@@ -1719,7 +1908,7 @@ unsafe fn draw_hint(hdc: HDC, s: &Shot) {
     let bar_h = crate::win::dpi_scale_dpi(26, dpi);
     let gap = crate::win::dpi_scale_dpi(6, dpi); // gap above the selection
     let inset = crate::win::dpi_scale_dpi(4, dpi); // inset when there's no room above
-    // Anchor to the selection's top-left if committed; else the screen corner.
+                                                   // Anchor to the selection's top-left if committed; else the screen corner.
     let (bx, by) = match s.sel {
         Some(sel) => {
             let x = sel.left.min(s.vw - bar_w).max(0);
@@ -1733,7 +1922,12 @@ unsafe fn draw_hint(hdc: HDC, s: &Shot) {
         None => (0, 0),
     };
     let bg = CreateSolidBrush(rgb(20, 20, 20));
-    let bar = RECT { left: bx, top: by, right: bx + bar_w, bottom: by + bar_h };
+    let bar = RECT {
+        left: bx,
+        top: by,
+        right: bx + bar_w,
+        bottom: by + bar_h,
+    };
     FillRect(hdc, &bar, bg);
     let _ = DeleteObject(bg.into());
     SelectObject(hdc, HGDIOBJ(gui_font().0));
@@ -1786,7 +1980,15 @@ unsafe fn compose(s: &Shot) -> Option<(Vec<u8>, i32, i32)> {
         return None;
     }
     let mut buf = vec![0u8; n as usize];
-    let got = GetDIBits(comp, cbmp, 0, h as u32, Some(buf.as_mut_ptr() as *mut c_void), &mut bi, DIB_RGB_COLORS);
+    let got = GetDIBits(
+        comp,
+        cbmp,
+        0,
+        h as u32,
+        Some(buf.as_mut_ptr() as *mut c_void),
+        &mut bi,
+        DIB_RGB_COLORS,
+    );
     SelectObject(comp, oldbmp);
     let _ = DeleteDC(comp);
     let _ = DeleteObject(HGDIOBJ(cbmp.0));
@@ -1815,7 +2017,9 @@ unsafe fn finish_save(hwnd: HWND, s: &Shot) -> bool {
     if s.automation.is_some() {
         return false;
     }
-    let Some((buf, w, h)) = compose(s) else { return false };
+    let Some((buf, w, h)) = compose(s) else {
+        return false;
+    };
     if sagethumbs2k_core::settings::screenshot_use_save_dir() {
         let dir = super::effective_save_dir();
         let ok = output::save_png_to_dir(std::path::Path::new(&dir), &buf, w, h);
@@ -1826,7 +2030,12 @@ unsafe fn finish_save(hwnd: HWND, s: &Shot) -> bool {
             with_modal(hwnd, || {
                 let m = wide(&crate::win::t("shot_save_failed").replace("{dir}", &dir));
                 let cap = wide("SageThumbs 2K");
-                MessageBoxW(Some(hwnd), PCWSTR(m.as_ptr()), PCWSTR(cap.as_ptr()), MB_OK | MB_ICONWARNING);
+                MessageBoxW(
+                    Some(hwnd),
+                    PCWSTR(m.as_ptr()),
+                    PCWSTR(cap.as_ptr()),
+                    MB_OK | MB_ICONWARNING,
+                );
             });
         }
         ok
@@ -1835,9 +2044,11 @@ unsafe fn finish_save(hwnd: HWND, s: &Shot) -> bool {
         // Drop the overlay's always-on-top so the picker isn't trapped behind the
         // fullscreen capture window (it pumps its own modal loop while shown).
         with_modal(hwnd, || {
-            if let Some(path) =
-                crate::win::pick_save_png(hwnd, &super::effective_save_dir(), &output::timestamped_name())
-            {
+            if let Some(path) = crate::win::pick_save_png(
+                hwnd,
+                &super::effective_save_dir(),
+                &output::timestamped_name(),
+            ) {
                 saved = output::save_png_to_path(std::path::Path::new(&path), &buf, w, h);
             }
         });
@@ -1955,16 +2166,37 @@ fn pt_in(r: RECT, p: POINT) -> bool {
 /// Drop the overlay's always-on-top so a modal common dialog isn't hidden behind it,
 /// run `f`, then restore topmost + repaint. (The dialog pumps its own message loop.)
 unsafe fn with_modal<F: FnOnce()>(hwnd: HWND, f: F) {
-    let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    let _ = SetWindowPos(
+        hwnd,
+        Some(HWND_NOTOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    );
     f();
-    let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    let _ = SetWindowPos(
+        hwnd,
+        Some(HWND_TOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    );
     let _ = SetForegroundWindow(hwnd);
     let _ = InvalidateRect(Some(hwnd), None, false);
 }
 
 /// Common-dialog hook: centre the dialog on the work area at init (without it the
 /// colour/font dialogs drift to the top-left over our fullscreen owner).
-unsafe extern "system" fn center_dialog_hook(hdlg: HWND, msg: u32, _w: WPARAM, _l: LPARAM) -> usize {
+unsafe extern "system" fn center_dialog_hook(
+    hdlg: HWND,
+    msg: u32,
+    _w: WPARAM,
+    _l: LPARAM,
+) -> usize {
     if msg == WM_INITDIALOG {
         let mut dr = RECT::default();
         if GetWindowRect(hdlg, &mut dr).is_ok() {
@@ -1978,7 +2210,15 @@ unsafe extern "system" fn center_dialog_hook(hdlg: HWND, msg: u32, _w: WPARAM, _
             );
             let x = wa.left + ((wa.right - wa.left) - dw) / 2;
             let y = wa.top + ((wa.bottom - wa.top) - dh) / 2;
-            let _ = SetWindowPos(hdlg, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            let _ = SetWindowPos(
+                hdlg,
+                None,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
         }
     }
     0

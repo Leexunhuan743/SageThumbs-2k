@@ -10,82 +10,84 @@
 use core::ffi::c_void;
 
 use windows::core::{w, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC,
-    DeleteObject, DrawTextW, EndPaint, FillRect, GetDC,
-    GetStockObject, GetTextExtentPoint32W, InvalidateRect, RedrawWindow, ReleaseDC,
-    ScreenToClient, SelectObject, SetBkMode, SetDCBrushColor,
-    SetTextCharacterExtra, SetTextColor, SetViewportOrgEx, DC_BRUSH, DT_CENTER,
-    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HGDIOBJ,
-    PAINTSTRUCT, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW, SRCCOPY, TRANSPARENT,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+    DrawTextW, EndPaint, FillRect, GetDC, GetStockObject, GetTextExtentPoint32W, InvalidateRect,
+    RedrawWindow, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetDCBrushColor,
+    SetTextCharacterExtra, SetTextColor, SetViewportOrgEx, DC_BRUSH, DT_CENTER, DT_END_ELLIPSIS,
+    DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HGDIOBJ, PAINTSTRUCT,
+    RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::UI::Controls::{
-    CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDIS_FOCUS, CDIS_HOT,
-    CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT,
-    CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT,
-    LVCFMT_LEFT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVIS_STATEIMAGEMASK,
-    LVIF_PARAM, LVIF_STATE, LVM_DELETEALLITEMS, LVM_GETITEMCOUNT,
-    LVITEMW, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETITEMSTATE, LVM_GETNEXTITEM, LVM_GETSELECTEDCOUNT,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNW, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETITEMW, LVN_ITEMCHANGED, NMLISTVIEW,
-    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_FOCUSED, LVNI_SELECTED, LVS_EX_CHECKBOXES,
-    LVS_EX_FULLROWSELECT,
-    LVS_NOCOLUMNHEADER, LVS_NOSORTHEADER, LVS_REPORT, LIST_VIEW_ITEM_STATE_FLAGS, DRAWITEMSTRUCT, MEASUREITEMSTRUCT,
-    NMCUSTOMDRAW, NMHDR, NMLINK, NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_RETURN, ODS_SELECTED,
-    ODT_MENU, ODT_STATIC, SetScrollInfo, WC_LISTVIEWW, TTTOOLINFOW, TTF_IDISHWND, TTF_SUBCLASS,
-    TTM_ADDTOOLW, TTM_POP, TTM_SETMAXTIPWIDTH, NMTTDISPINFOW, TTN_GETDISPINFOW,
+    SetScrollInfo, CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDIS_FOCUS,
+    CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW,
+    CDRF_NOTIFYPOSTPAINT, CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, DRAWITEMSTRUCT,
+    LIST_VIEW_ITEM_STATE_FLAGS, LVCFMT_LEFT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
+    LVIF_PARAM, LVIF_STATE, LVIF_TEXT, LVIS_STATEIMAGEMASK, LVITEMW, LVM_DELETEALLITEMS,
+    LVM_GETHEADER, LVM_GETITEMCOUNT, LVM_GETITEMRECT, LVM_GETITEMSTATE, LVM_GETNEXTITEM,
+    LVM_GETSELECTEDCOUNT, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNW,
+    LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETITEMW,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_FOCUSED, LVNI_SELECTED, LVN_ITEMCHANGED,
+    LVS_EX_CHECKBOXES, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_NOSORTHEADER, LVS_REPORT,
+    MEASUREITEMSTRUCT, NMCUSTOMDRAW, NMHDR, NMLINK, NMLISTVIEW, NMLVCUSTOMDRAW, NMTTDISPINFOW,
+    NM_CLICK, NM_CUSTOMDRAW, NM_RETURN, ODS_SELECTED, ODT_MENU, ODT_STATIC, TTF_IDISHWND,
+    TTF_SUBCLASS, TTM_ADDTOOLW, TTM_POP, TTM_SETMAXTIPWIDTH, TTN_GETDISPINFOW, TTTOOLINFOW,
+    WC_LISTVIEWW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::VK_SPACE;
-use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, ShellExecuteW};
+use windows::Win32::UI::Shell::{
+    DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, ShellExecuteW,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use sagethumbs2k_core::{default_menu_tokens, formats, i18n, settings, MENU_SEP_TOKEN};
 
+use crate::about::show_about;
+use crate::dark::{
+    dark_bg_brush, dark_control, dark_ctlcolor, dark_menu_brush, dark_menu_sel_brush,
+    dark_theme_combo, is_dark, ACCENT, ACCENT_HOT, ACCENT_PRESS, ACCENT_TEXT, BORDER,
+    BORDER_STRONG, BTN_FACE, BTN_FACE_HOT, BTN_FACE_PRESS, CHECK_BG, DARK_BG, DARK_TEXT,
+    DISABLED_TEXT, HEADER_TEXT, INPUT_BG, ON_ACCENT, SEL_BG, SURFACE, ZEBRA,
+};
 use crate::sponsors::{
     drop_sponsor_rotator, show_current_image, spawn_remote_sponsors, sponsors_enabled,
     SponsorRotator, BANNER_PNG, TIMER_BANNER, TIMER_ROTATE, WM_APP_SPONSORS,
 };
-use crate::about::show_about;
-use crate::dark::{
-    dark_bg_brush, dark_control, dark_ctlcolor, dark_menu_brush, dark_menu_sel_brush,
-    dark_theme_combo, is_dark,
-    ACCENT, ACCENT_HOT, ACCENT_PRESS, ACCENT_TEXT, BORDER, BORDER_STRONG, BTN_FACE, BTN_FACE_HOT,
-    BTN_FACE_PRESS, CHECK_BG, DARK_BG, DARK_TEXT, DISABLED_TEXT, HEADER_TEXT, INPUT_BG, ON_ACCENT,
-    SEL_BG, SURFACE, ZEBRA,
-};
 use crate::win::{
-    check, checked, ctl, dpi_scale, get_edit_text, gui_font, gui_font_for, gui_font_header, load_art,
-    message_box, open_url, set_static_bitmap, t, wide, wm_dpichanged, wstr_to_string, BTN_H, BUTTON,
-    COMBOBOX, EDIT, STATIC, SYSLINK, CHECKED, EDIT_X, IDCANCEL, IDOK, INDENT, LABEL_W, MARGIN,
-    SS_BITMAP, SS_NOTIFY, SS_OWNERDRAW, SS_REALSIZECONTROL,
-    TTS_ALWAYSTIP, TTS_NOPREFIX, UNCHECKED, URL_PARENT, URL_PRODUCT,
+    check, checked, ctl, dpi_scale, get_edit_text, gui_font, gui_font_for, gui_font_header,
+    load_art, message_box, open_url, set_static_bitmap, t, wide, wm_dpichanged, wstr_to_string,
+    BTN_H, BUTTON, CHECKED, COMBOBOX, EDIT, EDIT_X, IDCANCEL, IDOK, INDENT, LABEL_W, MARGIN,
+    SS_BITMAP, SS_NOTIFY, SS_OWNERDRAW, SS_REALSIZECONTROL, STATIC, SYSLINK, TTS_ALWAYSTIP,
+    TTS_NOPREFIX, UNCHECKED, URL_PARENT, URL_PRODUCT,
 };
 
 // Submodules split out of this (formerly ~2030-line) file. They're descendants of
 // this module, so they freely call its private helpers via `super::` (s, fill,
 // control_text, set_check, is_checked, …); the parent reaches their entry points
 // via the module path (restyle::…, scroll::…, list::…).
+mod list;
 mod restyle; // dark-mode owner-draw painting + the combo/scrollbar subclasses
-mod scroll; // the left-column scroll subsystem (incl. its clipping mask)
-mod list; // the self-contained ListView subclass + bulk-toggle context menu
+mod scroll; // the left-column scroll subsystem (incl. its clipping mask) // the self-contained ListView subclass + bulk-toggle context menu
 
 mod ids;
 pub(super) use ids::*;
 mod build;
 use build::*;
-mod navrail;
-mod localize;
-mod values;
-mod sync;
 mod helpers;
+mod localize;
+mod navrail;
 mod shot;
-use navrail::*;
-use localize::*;
-use values::*;
-use sync::*;
+mod sync;
+mod values;
 use helpers::*;
+use localize::*;
+use navrail::*;
 pub(crate) use shot::{run_shot, run_shot_gif};
+use sync::*;
+use values::*;
 // Win32 message consts the `windows` crate omits (local so they shadow the `WindowsAndMessaging::*` glob).
 const EM_SETCUEBANNER: u32 = 0x1501;
 const CB_SETDROPPEDWIDTH: u32 = 0x0160;
@@ -102,7 +104,11 @@ pub(super) fn sponsor_layout(_dark: bool, sponsors_on: bool) -> SponsorLayout {
     // left column scrolls and the window stays short regardless of theme.
     let banner_y = 460;
     let foot_y = if sponsors_on { 534 } else { 470 };
-    SponsorLayout { banner_y, foot_y, credit_y: foot_y + 6 }
+    SponsorLayout {
+        banner_y,
+        foot_y,
+        credit_y: foot_y + 6,
+    }
 }
 
 // Left-column vertical rhythm (96-dpi design px). These are TOP MARGINS — the gap
@@ -136,7 +142,9 @@ impl LeftCol {
     /// section gap (the topmost header sits at the column's start).
     unsafe fn header(&mut self, text: &str, style: WINDOW_STYLE, id: i32, first: bool) {
         self.y += if first { 0 } else { MT_SECTION };
-        ctl(self.hwnd, STATIC, text, style, MARGIN, self.y, 322, 18, id, self.hinst);
+        ctl(
+            self.hwnd, STATIC, text, style, MARGIN, self.y, 322, 18, id, self.hinst,
+        );
         self.y += 18;
     }
 
@@ -144,7 +152,9 @@ impl LeftCol {
     /// stack of left-column options stays short.
     unsafe fn checkbox(&mut self, text: &str, style: WINDOW_STYLE, w: i32, id: i32) {
         self.y += MT_CHECK;
-        ctl(self.hwnd, BUTTON, text, style, INDENT, self.y, w, 20, id, self.hinst);
+        ctl(
+            self.hwnd, BUTTON, text, style, INDENT, self.y, w, 20, id, self.hinst,
+        );
         self.y += 20;
     }
 
@@ -154,8 +164,21 @@ impl LeftCol {
     /// the label fires (a plain static is click-through, so its hint never showed).
     unsafe fn edit(&mut self, label: &str, lbl_id: i32, style: WINDOW_STYLE, id: i32) -> HWND {
         self.y += MT_FIELD;
-        ctl(self.hwnd, STATIC, label, WINDOW_STYLE(SS_NOTIFY), INDENT, self.y + 1, LABEL_W, 18, lbl_id, self.hinst);
-        let e = ctl(self.hwnd, EDIT, "", style, EDIT_X, self.y, 84, 18, id, self.hinst);
+        ctl(
+            self.hwnd,
+            STATIC,
+            label,
+            WINDOW_STYLE(SS_NOTIFY),
+            INDENT,
+            self.y + 1,
+            LABEL_W,
+            18,
+            lbl_id,
+            self.hinst,
+        );
+        let e = ctl(
+            self.hwnd, EDIT, "", style, EDIT_X, self.y, 84, 18, id, self.hinst,
+        );
         self.y += 18;
         e
     }
@@ -164,7 +187,18 @@ impl LeftCol {
     /// fill + theme. `lbl_id` keeps the label live-retranslatable.
     unsafe fn combo(&mut self, label: &str, lbl_id: i32, drop_h: i32, id: i32) -> HWND {
         self.y += MT_FIELD;
-        ctl(self.hwnd, STATIC, label, WINDOW_STYLE(0), INDENT, self.y + 4, 130, 18, lbl_id, self.hinst);
+        ctl(
+            self.hwnd,
+            STATIC,
+            label,
+            WINDOW_STYLE(0),
+            INDENT,
+            self.y + 4,
+            130,
+            18,
+            lbl_id,
+            self.hinst,
+        );
         let c = ctl(
             self.hwnd,
             COMBOBOX,
@@ -189,7 +223,18 @@ impl LeftCol {
         self.y += MT_CHECK;
         let base = LVS_REPORT | LVS_NOSORTHEADER | LVS_NOCOLUMNHEADER;
         let style = WINDOW_STYLE(base) | WS_TABSTOP;
-        let list = ctl(self.hwnd, WC_LISTVIEWW, "", style, MARGIN, self.y, 322, h, id, self.hinst);
+        let list = ctl(
+            self.hwnd,
+            WC_LISTVIEWW,
+            "",
+            style,
+            MARGIN,
+            self.y,
+            322,
+            h,
+            id,
+            self.hinst,
+        );
         SendMessageW(
             list,
             LVM_SETEXTENDEDLISTVIEWSTYLE,
@@ -199,9 +244,24 @@ impl LeftCol {
         // Theme the list surface (SURFACE()/DARK_TEXT() are theme-aware). NOT
         // applying DarkMode_Explorer in either theme — it gives dark check glyphs +
         // a scrollbar that vanishes on the surface.
-        SendMessageW(list, LVM_SETBKCOLOR, None, Some(LPARAM(SURFACE().0 as isize)));
-        SendMessageW(list, LVM_SETTEXTBKCOLOR, None, Some(LPARAM(SURFACE().0 as isize)));
-        SendMessageW(list, LVM_SETTEXTCOLOR, None, Some(LPARAM(DARK_TEXT().0 as isize)));
+        SendMessageW(
+            list,
+            LVM_SETBKCOLOR,
+            None,
+            Some(LPARAM(SURFACE().0 as isize)),
+        );
+        SendMessageW(
+            list,
+            LVM_SETTEXTBKCOLOR,
+            None,
+            Some(LPARAM(SURFACE().0 as isize)),
+        );
+        SendMessageW(
+            list,
+            LVM_SETTEXTCOLOR,
+            None,
+            Some(LPARAM(DARK_TEXT().0 as isize)),
+        );
         // Reuse the format list's subclass (SPACE bulk-toggle; header custom-draw is
         // a no-op with no header).
         let _ = SetWindowSubclass(list, Some(list::list_subclass), 0, 0);
@@ -214,7 +274,9 @@ impl LeftCol {
     /// cursor past the button so the NEXT section header isn't crowded.
     unsafe fn button(&mut self, text: &str, w: i32, id: i32) {
         self.y += MT_BUTTON;
-        ctl(self.hwnd, BUTTON, text, WS_TABSTOP, INDENT, self.y, w, 24, id, self.hinst);
+        ctl(
+            self.hwnd, BUTTON, text, WS_TABSTOP, INDENT, self.y, w, 24, id, self.hinst,
+        );
         self.y += 24;
     }
 
@@ -232,7 +294,9 @@ impl LeftCol {
             let w = (FULL_W - GAP * (n - 1)) / n;
             for (i, &(text, id)) in buttons.iter().enumerate() {
                 let x = MARGIN + i as i32 * (w + GAP);
-                ctl(self.hwnd, BUTTON, text, WS_TABSTOP, x, self.y, w, 24, id, self.hinst);
+                ctl(
+                    self.hwnd, BUTTON, text, WS_TABSTOP, x, self.y, w, 24, id, self.hinst,
+                );
             }
         }
         self.y += 24;
@@ -242,7 +306,18 @@ impl LeftCol {
     /// build time and filled later via SetDlgItemText. Checkbox-tight gap above.
     unsafe fn status(&mut self, id: i32) {
         self.y += MT_CHECK;
-        ctl(self.hwnd, STATIC, "", WINDOW_STYLE(0), INDENT, self.y + 2, 300, 18, id, self.hinst);
+        ctl(
+            self.hwnd,
+            STATIC,
+            "",
+            WINDOW_STYLE(0),
+            INDENT,
+            self.y + 2,
+            300,
+            18,
+            id,
+            self.hinst,
+        );
         self.y += 18;
     }
 }
@@ -252,13 +327,19 @@ impl LeftCol {
 /// `check(index)` state; a divider token becomes a `list::SEP_PARAM` row. Items are
 /// de-duped and any missing from a stale order are appended in default order, so every
 /// toggle appears exactly once.
-pub(super) fn menu_rows_from_tokens(tokens: &[String], check: impl Fn(usize) -> bool) -> Vec<(isize, bool)> {
+pub(super) fn menu_rows_from_tokens(
+    tokens: &[String],
+    check: impl Fn(usize) -> bool,
+) -> Vec<(isize, bool)> {
     let mut rows = Vec::with_capacity(tokens.len() + MENU_ITEM_TOGGLES.len());
     let mut seen = vec![false; MENU_ITEM_TOGGLES.len()];
     for tok in tokens {
         if tok == MENU_SEP_TOKEN {
             rows.push((list::SEP_PARAM, false));
-        } else if let Some(i) = MENU_ITEM_TOGGLES.iter().position(|(_, k)| *k == tok.as_str()) {
+        } else if let Some(i) = MENU_ITEM_TOGGLES
+            .iter()
+            .position(|(_, k)| *k == tok.as_str())
+        {
             if !seen[i] {
                 seen[i] = true;
                 rows.push((i as isize, check(i)));
@@ -280,17 +361,25 @@ pub(super) fn menu_rows_from_tokens(tokens: &[String], check: impl Fn(usize) -> 
 pub(super) fn saved_menu_rows() -> Vec<(isize, bool)> {
     let saved = settings::menu_order();
     let tokens: Vec<String> = if saved.is_empty() {
-        default_menu_tokens().iter().map(|s| s.to_string()).collect()
+        default_menu_tokens()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     } else {
         saved
     };
-    menu_rows_from_tokens(&tokens, |i| settings::menu_item_shown(MENU_ITEM_TOGGLES[i].1))
+    menu_rows_from_tokens(&tokens, |i| {
+        settings::menu_item_shown(MENU_ITEM_TOGGLES[i].1)
+    })
 }
 
 /// The factory (default) menu-list rows — items + dividers in tree order, each item
 /// checked per `check`. Backs "Reset order" (current checks) and "Defaults" (all on).
 pub(super) fn default_menu_rows(check: impl Fn(usize) -> bool) -> Vec<(isize, bool)> {
-    let tokens: Vec<String> = default_menu_tokens().iter().map(|s| s.to_string()).collect();
+    let tokens: Vec<String> = default_menu_tokens()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     menu_rows_from_tokens(&tokens, check)
 }
 
@@ -334,7 +423,6 @@ pub(super) unsafe fn menu_row_param(list: HWND, row: i32) -> isize {
         isize::MIN
     }
 }
-
 
 /// (control id, hint locale key) for every tooltip. Shared by `add_tooltips`
 /// (initial install) and `refresh_tooltips` (re-translate on a live language
@@ -436,7 +524,9 @@ pub(super) unsafe fn add_tooltips(hwnd: HWND, hinst: HINSTANCE) {
 
     // The fixed-text controls.
     for &(id, key) in TOOLTIPS {
-        let Ok(ctl) = GetDlgItem(Some(hwnd), id) else { continue };
+        let Ok(ctl) = GetDlgItem(Some(hwnd), id) else {
+            continue;
+        };
         // comctl32 copies the text on TTM_ADDTOOL, so this buffer can be temporary.
         let text = wide(t(key));
         let mut ti = TTTOOLINFOW {
@@ -447,7 +537,12 @@ pub(super) unsafe fn add_tooltips(hwnd: HWND, hinst: HINSTANCE) {
             lpszText: PWSTR(text.as_ptr() as *mut u16),
             ..Default::default()
         };
-        SendMessageW(tip, TTM_ADDTOOLW, Some(WPARAM(0)), Some(LPARAM(&mut ti as *mut _ as isize)));
+        SendMessageW(
+            tip,
+            TTM_ADDTOOLW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut ti as *mut _ as isize)),
+        );
     }
     // The banner's hint rotates with the ad, so it pulls live text via a
     // TTN_GETDISPINFO callback (handled in WM_NOTIFY) instead of fixed text.
@@ -460,7 +555,12 @@ pub(super) unsafe fn add_tooltips(hwnd: HWND, hinst: HINSTANCE) {
             lpszText: PWSTR((-1isize) as *mut u16), // LPSTR_TEXTCALLBACKW
             ..Default::default()
         };
-        SendMessageW(tip, TTM_ADDTOOLW, Some(WPARAM(0)), Some(LPARAM(&mut ti as *mut _ as isize)));
+        SendMessageW(
+            tip,
+            TTM_ADDTOOLW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut ti as *mut _ as isize)),
+        );
     }
 }
 
@@ -473,7 +573,9 @@ pub(super) unsafe fn refresh_tooltips(hwnd: HWND) {
         return;
     }
     for &(id, key) in TOOLTIPS {
-        let Ok(ctl) = GetDlgItem(Some(hwnd), id) else { continue };
+        let Ok(ctl) = GetDlgItem(Some(hwnd), id) else {
+            continue;
+        };
         let text = wide(t(key));
         let mut ti = TTTOOLINFOW {
             cbSize: core::mem::size_of::<TTTOOLINFOW>() as u32,
@@ -483,7 +585,12 @@ pub(super) unsafe fn refresh_tooltips(hwnd: HWND) {
             lpszText: PWSTR(text.as_ptr() as *mut u16),
             ..Default::default()
         };
-        SendMessageW(tip, TTM_UPDATETIPTEXTW, Some(WPARAM(0)), Some(LPARAM(&mut ti as *mut _ as isize)));
+        SendMessageW(
+            tip,
+            TTM_UPDATETIPTEXTW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut ti as *mut _ as isize)),
+        );
     }
 }
 
@@ -497,7 +604,12 @@ pub(super) unsafe fn insert_column(list: HWND, idx: i32, title: &str, cx: i32) {
         pszText: PWSTR(t.as_ptr() as *mut u16),
         ..Default::default()
     };
-    SendMessageW(list, LVM_INSERTCOLUMNW, Some(WPARAM(idx as usize)), Some(LPARAM(&mut col as *mut _ as isize)));
+    SendMessageW(
+        list,
+        LVM_INSERTCOLUMNW,
+        Some(WPARAM(idx as usize)),
+        Some(LPARAM(&mut col as *mut _ as isize)),
+    );
 }
 
 /// Set a ListView subitem's text (Category / Description columns).
@@ -510,7 +622,12 @@ pub(super) unsafe fn set_subitem(list: HWND, row: i32, col: i32, text: &str) {
         pszText: PWSTR(w.as_ptr() as *mut u16),
         ..Default::default()
     };
-    SendMessageW(list, LVM_SETITEMW, Some(WPARAM(0)), Some(LPARAM(&sub as *const _ as isize)));
+    SendMessageW(
+        list,
+        LVM_SETITEMW,
+        Some(WPARAM(0)),
+        Some(LPARAM(&sub as *const _ as isize)),
+    );
 }
 
 // ---- File-types list model + filter ------------------------------------
@@ -568,7 +685,12 @@ pub(super) unsafe fn populate_list(list: HWND, filter: &str) {
             lParam: LPARAM(i as isize),
             ..Default::default()
         };
-        SendMessageW(list, LVM_INSERTITEMW, Some(WPARAM(0)), Some(LPARAM(&mut item as *mut _ as isize)));
+        SendMessageW(
+            list,
+            LVM_INSERTITEMW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut item as *mut _ as isize)),
+        );
         set_subitem(list, row, 1, cat);
         set_subitem(list, row, 2, desc);
         set_check(list, row, *state.get(i).unwrap_or(&false));
@@ -584,7 +706,12 @@ pub(super) unsafe fn fit_columns(list: HWND) {
     let _ = GetClientRect(list, &mut crc);
     // 64 + 92 are the extension + category column widths.
     let descw = ((crc.right - crc.left) - 64 - 92).max(80);
-    SendMessageW(list, LVM_SETCOLUMNWIDTH, Some(WPARAM(2)), Some(LPARAM(descw as isize)));
+    SendMessageW(
+        list,
+        LVM_SETCOLUMNWIDTH,
+        Some(WPARAM(2)),
+        Some(LPARAM(descw as isize)),
+    );
 }
 
 pub(super) unsafe fn set_shot_status(hwnd: HWND, txt: &str) {
@@ -598,7 +725,10 @@ pub(super) unsafe fn set_shot_status(hwnd: HWND, txt: &str) {
 /// one, or the Desktop default). Called on load and after the folder picker.
 pub(super) unsafe fn set_shot_dir_label(hwnd: HWND) {
     if let Ok(h) = GetDlgItem(Some(hwnd), ID_SHOT_DIR) {
-        let w = wide(&format!("Folder: {}", crate::screenshot::effective_save_dir()));
+        let w = wide(&format!(
+            "Folder: {}",
+            crate::screenshot::effective_save_dir()
+        ));
         let _ = SetWindowTextW(h, PCWSTR(w.as_ptr()));
     }
 }
@@ -694,7 +824,10 @@ pub(super) unsafe fn on_resize(hwnd: HWND, client_h: i32) {
             if let Ok(h) = GetDlgItem(Some(hwnd), id) {
                 let mut r = RECT::default();
                 if GetWindowRect(h, &mut r).is_ok() {
-                    let mut tl = POINT { x: r.left, y: r.top };
+                    let mut tl = POINT {
+                        x: r.left,
+                        y: r.top,
+                    };
                     let _ = ScreenToClient(hwnd, &mut tl);
                     ctrls.push(ReflowCtl {
                         id,
@@ -722,11 +855,29 @@ pub(super) unsafe fn on_resize(hwnd: HWND, client_h: i32) {
         let Some(st) = s.as_ref() else { return };
         let delta = client_h - st.client_h0;
         for c in &st.ctrls {
-            let Ok(h) = GetDlgItem(Some(hwnd), c.id) else { continue };
+            let Ok(h) = GetDlgItem(Some(hwnd), c.id) else {
+                continue;
+            };
             if c.stretchy {
-                let _ = SetWindowPos(h, None, 0, 0, c.w, (c.h + delta).max(1), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                let _ = SetWindowPos(
+                    h,
+                    None,
+                    0,
+                    0,
+                    c.w,
+                    (c.h + delta).max(1),
+                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
             } else {
-                let _ = SetWindowPos(h, None, c.x, c.y + delta, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                let _ = SetWindowPos(
+                    h,
+                    None,
+                    c.x,
+                    c.y + delta,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
             }
         }
     });
@@ -735,7 +886,12 @@ pub(super) unsafe fn on_resize(hwnd: HWND, client_h: i32) {
     let _ = InvalidateRect(Some(hwnd), None, true);
 }
 
-pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+pub(crate) extern "system" fn wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     unsafe {
         // The Quick-save hotkey label stays ENABLED (a disabled static draws an
         // etched/blurry look in dark mode) but reads as greyed when instant
@@ -765,7 +921,11 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     txt.contains("Running") || txt.contains("Started")
                 })
                 .unwrap_or(false);
-            let col = if running { COLORREF(0x0059_C734) } else { COLORREF(0x004D_48E5) }; // green / red
+            let col = if running {
+                COLORREF(0x0059_C734)
+            } else {
+                COLORREF(0x004D_48E5)
+            }; // green / red
             SetTextColor(hdc, col);
             windows::Win32::Graphics::Gdi::SetBkColor(hdc, DARK_BG());
             SetBkMode(hdc, TRANSPARENT);
@@ -797,7 +957,10 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 // Bring up GDI+ for this window's lifetime so the dark-mode owner-draw can
                 // render its toggle switches / icons / rounded buttons anti-aliased.
                 GDIP_TOKEN.with(|t| t.set(crate::gdip::startup()));
-                let hinst: HINSTANCE = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap().into();
+                let hinst: HINSTANCE =
+                    windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
+                        .unwrap()
+                        .into();
                 build_controls(hwnd, hinst);
                 // Keep the hotkey-service status line live (so a self-heal on open,
                 // or a later stop, is reflected without reopening).
@@ -858,7 +1021,9 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             WM_GETMINMAXINFO => {
                 // Lock the WIDTH (vertical resize only) + a minimum height = the design
                 // size. (No-op until the first WM_SIZE captures the design dimensions.)
-                if let Some((w, h0)) = RESIZE.with(|s| s.borrow().as_ref().map(|st| (st.win_w, st.win_h0))) {
+                if let Some((w, h0)) =
+                    RESIZE.with(|s| s.borrow().as_ref().map(|st| (st.win_w, st.win_h0)))
+                {
                     let mmi = &mut *(lparam.0 as *mut MINMAXINFO);
                     mmi.ptMinTrackSize.x = w;
                     mmi.ptMaxTrackSize.x = w;
@@ -880,6 +1045,7 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                         spawn_sync_push(hwnd); // if signed in, mirror the change to the cloud
                     }
                     IDCANCEL => {
+                        crate::sync_client::flush_pending(std::time::Duration::from_secs(6));
                         let _ = DestroyWindow(hwnd);
                     }
                     ID_SELECT_ALL | ID_CLEAR_ALL => {
@@ -956,7 +1122,9 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     ID_REBUILD_CACHE => rebuild_thumbnail_cache(hwnd),
                     ID_REPAIR_ASSOC => repair_associations(hwnd),
                     ID_CHECK_UPDATES => show_about(hwnd),
-                    nav if (ID_NAV_BASE..ID_NAV_BASE + NCAT as i32).contains(&nav) && notify == STN_CLICKED => {
+                    nav if (ID_NAV_BASE..ID_NAV_BASE + NCAT as i32).contains(&nav)
+                        && notify == STN_CLICKED =>
+                    {
                         switch_category(hwnd, (nav - ID_NAV_BASE) as usize);
                     }
                     ID_BANNER if notify == STN_CLICKED => {
@@ -984,7 +1152,8 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 let code = (*nmhdr).code;
                 // Drag-to-reorder the "Menu items" checklist: begin on LVN_BEGINDRAG.
                 if code == windows::Win32::UI::Controls::LVN_BEGINDRAG
-                    && (*nmhdr).hwndFrom == GetDlgItem(Some(hwnd), ID_MENU_ITEMS_LIST).unwrap_or_default()
+                    && (*nmhdr).hwndFrom
+                        == GetDlgItem(Some(hwnd), ID_MENU_ITEMS_LIST).unwrap_or_default()
                 {
                     let nmlv = lparam.0 as *const NMLISTVIEW;
                     list::begin_menu_drag((*nmhdr).hwndFrom, (*nmlv).iItem);
@@ -999,7 +1168,10 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                         return LRESULT(restyle::draw_list_item(lparam.0 as *mut NMLVCUSTOMDRAW));
                     }
                     if is_button_class(from) {
-                        return LRESULT(restyle::draw_button_cd(hwnd, lparam.0 as *const NMCUSTOMDRAW));
+                        return LRESULT(restyle::draw_button_cd(
+                            hwnd,
+                            lparam.0 as *const NMCUSTOMDRAW,
+                        ));
                     }
                     // SysLink credit etc. — let it draw itself.
                     return LRESULT(CDRF_DODEFAULT as isize);
@@ -1050,7 +1222,10 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 LRESULT(0)
             }
             // Right-click / Shift+F10 on the format list → bulk check/uncheck menu.
-            WM_CONTEXTMENU if HWND(wparam.0 as *mut c_void) == GetDlgItem(Some(hwnd), ID_LIST).unwrap_or_default() => {
+            WM_CONTEXTMENU
+                if HWND(wparam.0 as *mut c_void)
+                    == GetDlgItem(Some(hwnd), ID_LIST).unwrap_or_default() =>
+            {
                 list::list_context_menu(HWND(wparam.0 as *mut c_void), hwnd, lparam);
                 LRESULT(0)
             }
@@ -1077,7 +1252,11 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 let d = &*(lparam.0 as *const DRAWITEMSTRUCT);
                 if d.CtlType == ODT_MENU {
                     let selected = (d.itemState.0 & ODS_SELECTED.0) != 0;
-                    let bg = if selected { dark_menu_sel_brush() } else { dark_menu_brush() };
+                    let bg = if selected {
+                        dark_menu_sel_brush()
+                    } else {
+                        dark_menu_brush()
+                    };
                     FillRect(d.hDC, &d.rcItem, bg);
                     SetBkMode(d.hDC, TRANSPARENT);
                     SetTextColor(d.hDC, DARK_TEXT());
@@ -1086,7 +1265,12 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     let n = label.len().saturating_sub(1);
                     let mut rc = d.rcItem;
                     rc.left += 14;
-                    DrawTextW(d.hDC, &mut label[..n], &mut rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                    DrawTextW(
+                        d.hDC,
+                        &mut label[..n],
+                        &mut rc,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                    );
                     LRESULT(1)
                 } else if d.CtlType == ODT_STATIC {
                     let cid = d.CtlID as i32;
@@ -1095,7 +1279,8 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     } else if cid == ID_PANE_HEADER {
                         draw_pane_header(hwnd, d);
                     } else if (ID_NAV_BASE..ID_NAV_BASE + NCAT as i32).contains(&cid) {
-                        let active = NAV.with(|n| n.borrow().active) == (cid - ID_NAV_BASE) as usize;
+                        let active =
+                            NAV.with(|n| n.borrow().active) == (cid - ID_NAV_BASE) as usize;
                         draw_nav_item(hwnd, d, active);
                     } else {
                         // The owner-drawn section headers (uppercase label + divider).
@@ -1107,7 +1292,10 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 }
             }
             // Hand cursor over the clickable banner (so it reads as clickable).
-            WM_SETCURSOR if HWND(wparam.0 as *mut c_void) == GetDlgItem(Some(hwnd), ID_BANNER).unwrap_or_default() => {
+            WM_SETCURSOR
+                if HWND(wparam.0 as *mut c_void)
+                    == GetDlgItem(Some(hwnd), ID_BANNER).unwrap_or_default() =>
+            {
                 let _ = SetCursor(LoadCursorW(None, IDC_HAND).ok());
                 LRESULT(1)
             }
@@ -1159,11 +1347,20 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 if let Some((banner, rot)) = banner_rotator(hwnd) {
                     let r = &mut *rot;
                     let (cur, imgi) = (r.cur, r.img);
-                    let nframes = r.sponsors.get(cur).and_then(|a| a.images.get(imgi)).map_or(0, |im| im.frames.len());
+                    let nframes = r
+                        .sponsors
+                        .get(cur)
+                        .and_then(|a| a.images.get(imgi))
+                        .map_or(0, |im| im.frames.len());
                     if nframes > 1 {
                         r.frame = (r.frame + 1) % nframes;
                         let f = r.sponsors[cur].images[imgi].frames[r.frame];
-                        SendMessageW(banner, STM_SETIMAGE, Some(WPARAM(IMAGE_BITMAP.0 as usize)), Some(LPARAM(f)));
+                        SendMessageW(
+                            banner,
+                            STM_SETIMAGE,
+                            Some(WPARAM(IMAGE_BITMAP.0 as usize)),
+                            Some(LPARAM(f)),
+                        );
                     }
                 }
                 LRESULT(0)
@@ -1203,7 +1400,11 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     // Map client coords onto the dirty-rect-sized buffer so paint_chrome
                     // (which works in client coords) draws into the right place.
                     let _ = SetViewportOrgEx(mem, -pr.left, -pr.top, None);
-                    let br = if is_dark() { dark_bg_brush() } else { HBRUSH(16isize as *mut c_void) };
+                    let br = if is_dark() {
+                        dark_bg_brush()
+                    } else {
+                        HBRUSH(16isize as *mut c_void)
+                    };
                     FillRect(mem, &pr, br);
                     restyle::paint_chrome(hwnd, mem);
                     let _ = SetViewportOrgEx(mem, 0, 0, None);
@@ -1231,6 +1432,7 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 LRESULT(0)
             }
             WM_CLOSE => {
+                crate::sync_client::flush_pending(std::time::Duration::from_secs(6));
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
@@ -1276,4 +1478,3 @@ pub(crate) extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
     }
 }
-

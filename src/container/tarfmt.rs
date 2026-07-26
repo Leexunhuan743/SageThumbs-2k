@@ -23,7 +23,11 @@ pub fn extract(bytes: &[u8]) -> Option<Vec<u8>> {
         // typeflag at offset 156: '0' or NUL = a regular file.
         let is_regular = matches!(header[156], b'0' | 0);
         if is_regular && !name.is_empty() && super::is_image_name(&name) {
-            entries.push(Entry { name, is_dir: false, size: size as u64 });
+            entries.push(Entry {
+                name,
+                is_dir: false,
+                size: size as u64,
+            });
             ranges.push((data_off, size));
         }
         // Advance past this entry's (padded) data.

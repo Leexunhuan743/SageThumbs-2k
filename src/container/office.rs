@@ -54,7 +54,11 @@ fn ooxml_thumbnail<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Option<Vec<u8>> {
         }
     }
     // Fallback to the conventional path desktop PowerPoint uses.
-    for name in ["docProps/thumbnail.jpeg", "docProps/thumbnail.jpg", "docProps/thumbnail.png"] {
+    for name in [
+        "docProps/thumbnail.jpeg",
+        "docProps/thumbnail.jpg",
+        "docProps/thumbnail.png",
+    ] {
         if let Some(data) = read_named(zip, name) {
             return decodable_image(data);
         }

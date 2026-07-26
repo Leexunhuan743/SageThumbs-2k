@@ -50,7 +50,12 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
         let w = wide(t(key));
         SendMessageW(prev, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
     }
-    SendMessageW(prev, CB_SETCURSEL, Some(WPARAM(settings::menu_preview() as usize)), None);
+    SendMessageW(
+        prev,
+        CB_SETCURSEL,
+        Some(WPARAM(settings::menu_preview() as usize)),
+        None,
+    );
     // Widen the dropdown beyond the closed box so longer option labels (and longer
     // translations) aren't clipped.
     SendMessageW(prev, CB_SETDROPPEDWIDTH, Some(WPARAM(230)), None);
@@ -75,9 +80,9 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     let list_y_before = lc.y;
     let mlist = lc.checklist(20, ID_MENU_ITEMS_LIST); // provisional; exact-fit resize below
     insert_column(mlist, 0, "", 300); // single full-width column, no header title
-    // Seed the rows in the saved DISPLAY order: item rows (tagged with their toggle index
-    // in lParam) interleaved with divider rows (tagged `list::SEP_PARAM`), so a
-    // drag-reorder of either round-trips on save. Falls back to the factory order.
+                                      // Seed the rows in the saved DISPLAY order: item rows (tagged with their toggle index
+                                      // in lParam) interleaved with divider rows (tagged `list::SEP_PARAM`), so a
+                                      // drag-reorder of either round-trips on save. Falls back to the factory order.
     let rows = saved_menu_rows();
     list::rebuild_rows(mlist, &rows, None);
     // Exact-fit: resize the list to its REAL measured report-row height × N rows
@@ -94,7 +99,15 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
         let row_dev = (r.bottom - r.top).max(1);
         let needed_dev = rows.len() as i32 * row_dev + 2; // +2px guards a rounding scrollbar
         let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd).max(96) as i32;
-        let _ = SetWindowPos(mlist, None, 0, 0, dpi_scale(hwnd, 322), needed_dev, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(
+            mlist,
+            None,
+            0,
+            0,
+            dpi_scale(hwnd, 322),
+            needed_dev,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
         lc.y = list_y_before + MT_CHECK + needed_dev * 96 / dpi;
     }
     // A subtle "Reset order" button under the list — restores the default drag order
@@ -124,14 +137,22 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     // Select the preset matching the stored hotkey (default = first = Ctrl+PrtScn).
     let (m, v) = settings::screenshot_hotkey();
     let packed = (m << 8) | v;
-    let sel = SHOT_PRESETS.iter().position(|&(_, p)| p == packed).unwrap_or(0);
+    let sel = SHOT_PRESETS
+        .iter()
+        .position(|&(_, p)| p == packed)
+        .unwrap_or(0);
     SendMessageW(shot, CB_SETCURSEL, Some(WPARAM(sel)), None);
     dark_theme_combo(shot);
     restyle::dark_combo_subclass(shot, ID_SHOT_HOTKEY);
     // Quick-save hotkey picker — grouped directly under the capture-hotkey combo.
     // Gated by the "instant screenshot" checkbox above (see `update_quick_enabled`);
     // greyed out while that box is unchecked.
-    let quick = lc.combo(t("lbl_shot_quick_hotkey"), ID_LBL_SHOT_QUICK_HK, 200, ID_SHOT_QUICK_HOTKEY);
+    let quick = lc.combo(
+        t("lbl_shot_quick_hotkey"),
+        ID_LBL_SHOT_QUICK_HK,
+        200,
+        ID_SHOT_QUICK_HOTKEY,
+    );
     for &(label, _) in SHOT_PRESETS {
         let w = wide(label);
         SendMessageW(quick, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
@@ -141,9 +162,15 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     let (qm, qv) = settings::screenshot_quick_hotkey();
     let qpacked = (qm << 8) | qv;
     let qsel = if qpacked == 0 {
-        SHOT_PRESETS.iter().position(|&(l, _)| l == QUICK_DEFAULT_LABEL).unwrap_or(0)
+        SHOT_PRESETS
+            .iter()
+            .position(|&(l, _)| l == QUICK_DEFAULT_LABEL)
+            .unwrap_or(0)
     } else {
-        SHOT_PRESETS.iter().position(|&(_, p)| p == qpacked).unwrap_or(0)
+        SHOT_PRESETS
+            .iter()
+            .position(|&(_, p)| p == qpacked)
+            .unwrap_or(0)
     };
     SendMessageW(quick, CB_SETCURSEL, Some(WPARAM(qsel)), None);
     dark_theme_combo(quick);
@@ -153,20 +180,38 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     // same daemon. The action combo lists the curated `hotkey::ACTIONS`; the hotkey combo is
     // a "(none)" entry + the SHOT_PRESETS chords, where "(none)" = unbound. Seeded inline
     // from settings; persisted in apply_settings; reset in load_defaults.
-    let act = lc.combo(t("lbl_custom_action"), ID_LBL_SHOT_ACTION, 200, ID_SHOT_ACTION);
+    let act = lc.combo(
+        t("lbl_custom_action"),
+        ID_LBL_SHOT_ACTION,
+        200,
+        ID_SHOT_ACTION,
+    );
     for &(_, label) in crate::hotkey::ACTIONS {
         let w = wide(label);
         SendMessageW(act, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
     }
     let cur_action = settings::custom_action();
-    let asel = crate::hotkey::ACTIONS.iter().position(|&(id, _)| id == cur_action).unwrap_or(0);
+    let asel = crate::hotkey::ACTIONS
+        .iter()
+        .position(|&(id, _)| id == cur_action)
+        .unwrap_or(0);
     SendMessageW(act, CB_SETCURSEL, Some(WPARAM(asel)), None);
     dark_theme_combo(act);
     restyle::dark_combo_subclass(act, ID_SHOT_ACTION);
     // Its hotkey: item 0 is "(none)" (unbound); items 1.. mirror SHOT_PRESETS.
-    let ahk = lc.combo(t("lbl_custom_action_hk"), ID_LBL_SHOT_ACTION_HK, 220, ID_SHOT_ACTION_HK);
+    let ahk = lc.combo(
+        t("lbl_custom_action_hk"),
+        ID_LBL_SHOT_ACTION_HK,
+        220,
+        ID_SHOT_ACTION_HK,
+    );
     let none_w = wide(t("opt_none_unassigned"));
-    SendMessageW(ahk, CB_ADDSTRING, None, Some(LPARAM(none_w.as_ptr() as isize)));
+    SendMessageW(
+        ahk,
+        CB_ADDSTRING,
+        None,
+        Some(LPARAM(none_w.as_ptr() as isize)),
+    );
     for &(label, _) in SHOT_PRESETS {
         let w = wide(label);
         SendMessageW(ahk, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
@@ -176,7 +221,10 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     let hksel = if cav == 0 {
         0
     } else {
-        SHOT_PRESETS.iter().position(|&(_, p)| p == cpacked).map_or(0, |i| i + 1)
+        SHOT_PRESETS
+            .iter()
+            .position(|&(_, p)| p == cpacked)
+            .map_or(0, |i| i + 1)
     };
     SendMessageW(ahk, CB_SETCURSEL, Some(WPARAM(hksel)), None);
     dark_theme_combo(ahk);
@@ -235,7 +283,12 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     // behavior prefs. All are placed into the "Quick preview" nav category by cat_rows.
     lc.checkbox(t("chk_preview_enabled"), cb, 312, ID_PREVIEW_ENABLED);
     lc.checkbox(t("chk_preview_hold_peek"), cb, 312, ID_PREVIEW_HOLD_PEEK);
-    lc.checkbox(t("chk_preview_close_focus"), cb, 312, ID_PREVIEW_CLOSE_FOCUS);
+    lc.checkbox(
+        t("chk_preview_close_focus"),
+        cb,
+        312,
+        ID_PREVIEW_CLOSE_FOCUS,
+    );
     lc.checkbox(t("chk_preview_topmost"), cb, 312, ID_PREVIEW_TOPMOST);
     lc.checkbox(t("chk_preview_text"), cb, 312, ID_PREVIEW_TEXT);
     lc.checkbox(t("chk_preview_markdown"), cb, 312, ID_PREVIEW_MARKDOWN);
@@ -257,17 +310,77 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
 
     // ===== Right column: supported file types =====
     let rx = 348;
-    ctl(hwnd, STATIC, t("lbl_formats"), hdr, rx, 12, 356, 18, ID_LBL_FORMATS, hinst);
-    ctl(hwnd, BUTTON, t("btn_select_all"), WS_TABSTOP, rx, 34, 84, 26, ID_SELECT_ALL, hinst);
-    ctl(hwnd, BUTTON, t("btn_clear_all"), WS_TABSTOP, rx + 90, 34, 84, 26, ID_CLEAR_ALL, hinst);
-    ctl(hwnd, BUTTON, t("btn_defaults"), WS_TABSTOP, rx + 180, 34, 84, 26, ID_DEFAULTS, hinst);
+    ctl(
+        hwnd,
+        STATIC,
+        t("lbl_formats"),
+        hdr,
+        rx,
+        12,
+        356,
+        18,
+        ID_LBL_FORMATS,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_select_all"),
+        WS_TABSTOP,
+        rx,
+        34,
+        84,
+        26,
+        ID_SELECT_ALL,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_clear_all"),
+        WS_TABSTOP,
+        rx + 90,
+        34,
+        84,
+        26,
+        ID_CLEAR_ALL,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_defaults"),
+        WS_TABSTOP,
+        rx + 180,
+        34,
+        84,
+        26,
+        ID_DEFAULTS,
+        hinst,
+    );
 
     // Live search box (filters the list as you type). Borderless + rounded panel in
     // dark mode (like the other inputs); native bordered edit in light mode.
     let search_style = WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_TABSTOP;
-    let search = ctl(hwnd, EDIT, "", search_style, rx, 70, 356, 18, ID_SEARCH, hinst);
+    let search = ctl(
+        hwnd,
+        EDIT,
+        "",
+        search_style,
+        rx,
+        70,
+        356,
+        18,
+        ID_SEARCH,
+        hinst,
+    );
     let cue = wide(t("search_formats"));
-    SendMessageW(search, EM_SETCUEBANNER, Some(WPARAM(1)), Some(LPARAM(cue.as_ptr() as isize)));
+    SendMessageW(
+        search,
+        EM_SETCUEBANNER,
+        Some(WPARAM(1)),
+        Some(LPARAM(cue.as_ptr() as isize)),
+    );
 
     // Dark mode drops the square WS_BORDER — a rounded card frame is drawn behind
     // the list in WM_PAINT. Light mode keeps the native border.
@@ -275,7 +388,18 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     // Shorter list in dark mode (scrollable left column lets the window be shorter);
     // y=98 leaves room (with padding) for the search box above. Dark bottom = 442.
     let list_h = 344;
-    let list = ctl(hwnd, WC_LISTVIEWW, "", list_style, rx, 98, 356, list_h, ID_LIST, hinst);
+    let list = ctl(
+        hwnd,
+        WC_LISTVIEWW,
+        "",
+        list_style,
+        rx,
+        98,
+        356,
+        list_h,
+        ID_LIST,
+        hinst,
+    );
     SendMessageW(
         list,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
@@ -284,9 +408,24 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     );
     // Lift the list onto SURFACE() (a card) so the zebra alternates against it —
     // theme-aware: a white card in light, a near-black one in dark.
-    SendMessageW(list, LVM_SETBKCOLOR, None, Some(LPARAM(SURFACE().0 as isize)));
-    SendMessageW(list, LVM_SETTEXTBKCOLOR, None, Some(LPARAM(SURFACE().0 as isize)));
-    SendMessageW(list, LVM_SETTEXTCOLOR, None, Some(LPARAM(DARK_TEXT().0 as isize)));
+    SendMessageW(
+        list,
+        LVM_SETBKCOLOR,
+        None,
+        Some(LPARAM(SURFACE().0 as isize)),
+    );
+    SendMessageW(
+        list,
+        LVM_SETTEXTBKCOLOR,
+        None,
+        Some(LPARAM(SURFACE().0 as isize)),
+    );
+    SendMessageW(
+        list,
+        LVM_SETTEXTCOLOR,
+        None,
+        Some(LPARAM(DARK_TEXT().0 as isize)),
+    );
     if is_dark() {
         // Native dark item-view theme is dark-only; light keeps the native light header.
         let header = HWND(SendMessageW(list, LVM_GETHEADER, None, None).0 as *mut c_void);
@@ -306,7 +445,10 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     // so the search can rebuild the list view without losing toggles. Seed it from
     // settings, then populate the (unfiltered) view.
     FMT_STATE.with(|s| {
-        *s.borrow_mut() = formats::FORMATS.iter().map(|&(ext, _)| settings::format_enabled(ext)).collect();
+        *s.borrow_mut() = formats::FORMATS
+            .iter()
+            .map(|&(ext, _)| settings::format_enabled(ext))
+            .collect();
     });
     populate_list(list, "");
 
@@ -329,10 +471,26 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
             ID_SCROLLBAR,
             hinst,
         );
-        let _ = SetWindowSubclass(scroll, Some(restyle::scrollbar_subclass), ID_SCROLLBAR as usize, 0);
+        let _ = SetWindowSubclass(
+            scroll,
+            Some(restyle::scrollbar_subclass),
+            ID_SCROLLBAR as usize,
+            0,
+        );
         // Full-width, owner-drawn (opaque) mask below the viewport — hides scrolled
         // controls + their field panels, and draws the divider above the banner.
-        ctl(hwnd, STATIC, "", WINDOW_STYLE(SS_OWNERDRAW), 0, LEFT_VIEW_BOTTOM, 730, 70, ID_LEFT_MASK, hinst);
+        ctl(
+            hwnd,
+            STATIC,
+            "",
+            WINDOW_STYLE(SS_OWNERDRAW),
+            0,
+            LEFT_VIEW_BOTTOM,
+            730,
+            70,
+            ID_LEFT_MASK,
+            hinst,
+        );
     }
 
     // ===== Sponsor promotion =====
@@ -373,29 +531,124 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     }
 
     // ===== Bottom row: About + credit (left), inline with Save / Cancel (right) =====
-    ctl(hwnd, BUTTON, t("btn_about"), WS_TABSTOP, MARGIN, layout.foot_y, 96, BTN_H, ID_ABOUT, hinst);
-    let credit = format!("{} <a href=\"{URL_PARENT}\">Lunarwerx</a>", t("promo_made_by"));
-    ctl(hwnd, SYSLINK, &credit, WS_TABSTOP, 122, layout.credit_y, 240, 20, ID_PROMO_LINK, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_about"),
+        WS_TABSTOP,
+        MARGIN,
+        layout.foot_y,
+        96,
+        BTN_H,
+        ID_ABOUT,
+        hinst,
+    );
+    let credit = format!(
+        "{} <a href=\"{URL_PARENT}\">Lunarwerx</a>",
+        t("promo_made_by")
+    );
+    ctl(
+        hwnd,
+        SYSLINK,
+        &credit,
+        WS_TABSTOP,
+        122,
+        layout.credit_y,
+        240,
+        20,
+        ID_PROMO_LINK,
+        hinst,
+    );
     // Close (secondary) on the left, Save (primary, wider + accent) rightmost —
     // a clear prominence/size difference, matching the mockup.
     // "Close", not "Cancel": Save applies immediately and leaves the window open, so
     // this button only dismisses it. Labelling it Cancel implied it would revert.
     // (`btn_cancel` stays for Convert / Files-to-folder / Tags-to-folders, which do
     // genuinely cancel an operation.)
-    ctl(hwnd, BUTTON, t("btn_close"), WS_TABSTOP, 508, layout.foot_y, 92, BTN_H, IDCANCEL, hinst);
-    ctl(hwnd, BUTTON, t("btn_ok"), WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP, 608, layout.foot_y, 104, BTN_H, IDOK, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_close"),
+        WS_TABSTOP,
+        508,
+        layout.foot_y,
+        92,
+        BTN_H,
+        IDCANCEL,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_ok"),
+        WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP,
+        608,
+        layout.foot_y,
+        104,
+        BTN_H,
+        IDOK,
+        hinst,
+    );
 
     // v3 reorg extras (repositioned by apply_v3_layout): the custom-action enable
     // toggle + the new group sub-headers for the merged General / regrouped Advanced.
-    ctl(hwnd, BUTTON, t("chk_custom_action"), cb, 0, 0, 300, 20, ID_CUSTOM_ACTION_ENABLE, hinst);
-    ctl(hwnd, STATIC, t("grp_updates"), hdr, 0, 0, 322, 18, ID_LBL_UPDATES, hinst);
-    ctl(hwnd, STATIC, t("grp_backup"), hdr, 0, 0, 322, 18, ID_LBL_BACKUP, hinst);
-    ctl(hwnd, STATIC, t("grp_hotkey_svc"), hdr, 0, 0, 322, 18, ID_LBL_HOTKEY_SVC, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("chk_custom_action"),
+        cb,
+        0,
+        0,
+        300,
+        20,
+        ID_CUSTOM_ACTION_ENABLE,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        t("grp_updates"),
+        hdr,
+        0,
+        0,
+        322,
+        18,
+        ID_LBL_UPDATES,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        t("grp_backup"),
+        hdr,
+        0,
+        0,
+        322,
+        18,
+        ID_LBL_BACKUP,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        t("grp_hotkey_svc"),
+        hdr,
+        0,
+        0,
+        322,
+        18,
+        ID_LBL_HOTKEY_SVC,
+        hinst,
+    );
 
     set_window_title(hwnd);
     load_values(hwnd);
     // The custom-action toggle reflects whether a hotkey is bound; it gates the two combos.
-    check(hwnd, ID_CUSTOM_ACTION_ENABLE, settings::custom_action_hotkey().1 != 0);
+    check(
+        hwnd,
+        ID_CUSTOM_ACTION_ENABLE,
+        settings::custom_action_hotkey().1 != 0,
+    );
     update_custom_action_enabled(hwnd);
     add_tooltips(hwnd, hinst);
     // v3 layout: relocate the controls created above into a category nav-rail +
@@ -403,4 +656,3 @@ pub(super) unsafe fn build_controls(hwnd: HWND, hinst: HINSTANCE) {
     // post-creation reposition so all the seeding/combo/list logic stays intact.
     apply_v3_layout(hwnd, hinst);
 }
-

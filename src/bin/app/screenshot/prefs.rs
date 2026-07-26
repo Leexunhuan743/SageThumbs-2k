@@ -12,7 +12,12 @@ const MAX: usize = 4;
 /// COLORREF (0x00BBGGRR) → `"RRGGBB"`.
 fn to_hex(c: COLORREF) -> String {
     let v = c.0;
-    format!("{:02X}{:02X}{:02X}", v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF)
+    format!(
+        "{:02X}{:02X}{:02X}",
+        v & 0xFF,
+        (v >> 8) & 0xFF,
+        (v >> 16) & 0xFF
+    )
 }
 
 /// `"RRGGBB"` → COLORREF.
@@ -40,7 +45,11 @@ pub(super) fn remember_custom_color(c: COLORREF) {
     list.retain(|x| x.0 != c.0);
     list.insert(0, c);
     list.truncate(MAX);
-    let joined = list.iter().map(|&c| to_hex(c)).collect::<Vec<_>>().join(",");
+    let joined = list
+        .iter()
+        .map(|&c| to_hex(c))
+        .collect::<Vec<_>>()
+        .join(",");
     if let Ok(k) = windows_registry::CURRENT_USER.create(KEY) {
         let _ = k.set_string(VAL, &joined);
     }

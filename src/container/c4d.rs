@@ -109,7 +109,11 @@ mod tests {
         let c4d = fake_c4d(37, &preview, &swatch);
         let got = extract(&c4d).expect("preview");
         let d = image::load_from_memory(&got).unwrap();
-        assert_eq!((d.width(), d.height()), (500, 278), "should pick the 500px doc preview");
+        assert_eq!(
+            (d.width(), d.height()),
+            (500, 278),
+            "should pick the 500px doc preview"
+        );
     }
 
     #[test]

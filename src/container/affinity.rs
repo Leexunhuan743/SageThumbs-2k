@@ -102,7 +102,11 @@ mod tests {
 
         let got = extract(&bytes).expect("embedded png");
         let d = image::load_from_memory(&got).unwrap();
-        assert_eq!((d.width(), d.height()), (256, 256), "should pick the ≤512 preview");
+        assert_eq!(
+            (d.width(), d.height()),
+            (256, 256),
+            "should pick the ≤512 preview"
+        );
         assert!(extract(b"no png in here").is_none());
     }
 }

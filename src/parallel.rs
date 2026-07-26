@@ -70,7 +70,9 @@ where
     if n == 0 {
         return Vec::new();
     }
-    let auto = std::thread::available_parallelism().map(|w| w.get()).unwrap_or(4);
+    let auto = std::thread::available_parallelism()
+        .map(|w| w.get())
+        .unwrap_or(4);
     let want = if max_workers == 0 { auto } else { max_workers };
     let workers = want.clamp(1, n);
 
@@ -114,7 +116,10 @@ where
             .collect();
         // join() can't observe a panic under panic=abort (a worker panic aborts the
         // whole process), so unwrap_or_default is just belt-and-suspenders.
-        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
     });
     indexed.sort_by_key(|(i, _)| *i);
     indexed.into_iter().map(|(_, r)| r).collect()

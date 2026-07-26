@@ -28,7 +28,10 @@ USAGE:
 ";
 
 fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn has_flag(args: &[String], name: &str) -> bool {
@@ -43,14 +46,24 @@ fn run(args: &[String]) -> Result<String, String> {
     match verb {
         "thumbnail" | "thumb" => {
             let (i, o) = (need(&pos, 0)?, need(&pos, 1)?);
-            let size = flag(rest, "--size").and_then(|s| s.parse().ok()).unwrap_or(256);
+            let size = flag(rest, "--size")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(256);
             cli::thumbnail(i, o, size)
         }
         "convert" => {
             let (i, o) = (need(&pos, 0)?, need(&pos, 1)?);
-            let q = flag(rest, "--quality").and_then(|s| s.parse().ok()).unwrap_or(90u8);
+            let q = flag(rest, "--quality")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(90u8);
             let wq = flag(rest, "--webp-quality").and_then(|s| s.parse::<u8>().ok());
-            cli::convert(i, o, q, wq, cli::parse_resize(flag(rest, "--resize").as_deref())?)
+            cli::convert(
+                i,
+                o,
+                q,
+                wq,
+                cli::parse_resize(flag(rest, "--resize").as_deref())?,
+            )
         }
         "batch" => {
             // batch <op> <inputs...> [--out DIR] [--size N] [--to EXT] [--quality N] [--resize ...]
@@ -59,8 +72,12 @@ fn run(args: &[String]) -> Result<String, String> {
             if inputs.is_empty() {
                 return Err("batch needs at least one input file or directory".to_string());
             }
-            let size = flag(rest, "--size").and_then(|s| s.parse().ok()).unwrap_or(256);
-            let q = flag(rest, "--quality").and_then(|s| s.parse().ok()).unwrap_or(90u8);
+            let size = flag(rest, "--size")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(256);
+            let q = flag(rest, "--quality")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(90u8);
             cli::batch(
                 op,
                 &inputs,
@@ -95,7 +112,9 @@ fn run(args: &[String]) -> Result<String, String> {
         // a user running this already has something broken. An optional file path adds a
         // per-file probe ("st2k doctor C:\path\to\that.xcf") that actually tries to decode
         // THAT file — the check that explains "registered fine but this one file is blank".
-        "doctor" | "diag" => Ok(sagethumbs2k_core::doctor::report(pos.first().map(|s| s.as_str()))),
+        "doctor" | "diag" => Ok(sagethumbs2k_core::doctor::report(
+            pos.first().map(|s| s.as_str()),
+        )),
         "upload-hosts" | "upload-host" => {
             let open = has_flag(rest, "--open") || pos.first().map(|s| s.as_str()) == Some("open");
             cli::upload_hosts(open)
@@ -107,7 +126,9 @@ fn run(args: &[String]) -> Result<String, String> {
 }
 
 fn need<'a>(pos: &'a [&'a String], i: usize) -> Result<&'a str, String> {
-    pos.get(i).map(|s| s.as_str()).ok_or_else(|| format!("missing argument #{}", i + 1))
+    pos.get(i)
+        .map(|s| s.as_str())
+        .ok_or_else(|| format!("missing argument #{}", i + 1))
 }
 
 fn main() {

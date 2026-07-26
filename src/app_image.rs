@@ -88,8 +88,11 @@ pub fn image_to_hbitmap_sized(bytes: &[u8], w: u32, h: u32) -> Option<isize> {
     // Bomb guard: probe the source canvas before `load_from_memory` allocates it.
     remote_art_dims_ok(bytes)?;
     let img = image::load_from_memory(bytes).ok()?;
-    let rgba = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3).to_rgba8();
-    let hbmp = unsafe { crate::dib::create_premultiplied_dib(w as i32, h as i32, rgba.as_raw()) }.ok()?;
+    let rgba = img
+        .resize_exact(w, h, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    let hbmp =
+        unsafe { crate::dib::create_premultiplied_dib(w as i32, h as i32, rgba.as_raw()) }.ok()?;
     Some(OwnedHbitmap(hbmp.0 as isize).into_raw())
 }
 
@@ -132,8 +135,12 @@ pub fn decode_gif_frames_sized(bytes: &[u8], w: u32, h: u32) -> Option<(Vec<isiz
     let mut handles: Vec<OwnedHbitmap> = Vec::with_capacity(frames.len());
     for frame in &frames {
         let img = image::DynamicImage::ImageRgba8(frame.buffer().clone());
-        let rgba = img.resize_exact(w, h, image::imageops::FilterType::Triangle).to_rgba8();
-        let hbmp = unsafe { crate::dib::create_premultiplied_dib(w as i32, h as i32, rgba.as_raw()) }.ok()?;
+        let rgba = img
+            .resize_exact(w, h, image::imageops::FilterType::Triangle)
+            .to_rgba8();
+        let hbmp =
+            unsafe { crate::dib::create_premultiplied_dib(w as i32, h as i32, rgba.as_raw()) }
+                .ok()?;
         handles.push(OwnedHbitmap(hbmp.0 as isize));
     }
     let raw: Vec<isize> = handles.into_iter().map(OwnedHbitmap::into_raw).collect();

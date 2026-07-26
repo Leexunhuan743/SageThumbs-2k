@@ -60,9 +60,7 @@ enum PreparedMode {
 }
 
 fn can_cover(sw: u32, sh: u32, w: u32, h: u32) -> bool {
-    sw > 0
-        && sh > 0
-        && (w as f32 / sw as f32).max(h as f32 / sh as f32) <= MAX_UPSCALE
+    sw > 0 && sh > 0 && (w as f32 / sw as f32).max(h as f32 / sh as f32) <= MAX_UPSCALE
 }
 
 /// Render one freshly-decoded cover into a bounded representation.
@@ -167,12 +165,8 @@ pub fn compose_prepared(images: &[PreparedSheetImage], edge: u32) -> Option<Rgba
     for (&(x, y, w, h), img) in layout(n, edge).iter().zip(images) {
         let cell = match img.mode {
             PreparedMode::Cover => fit_cover(&img.image, w, h),
-            PreparedMode::Letterbox => {
-                fit_letterbox_prepared(&img.image, img.original, w, h)
-            }
-            PreparedMode::Mixed if h > w => {
-                fit_letterbox_prepared(&img.image, img.original, w, h)
-            }
+            PreparedMode::Letterbox => fit_letterbox_prepared(&img.image, img.original, w, h),
+            PreparedMode::Mixed if h > w => fit_letterbox_prepared(&img.image, img.original, w, h),
             PreparedMode::Mixed => {
                 let square = img.alternate_square.as_ref()?;
                 image::imageops::resize(square, w, h, FilterType::Triangle)
@@ -203,12 +197,7 @@ where
 
 /// Letterbox a bounded source using its ORIGINAL dimensions for the same 2x
 /// decision and output geometry as [`fit_cell`].
-fn fit_letterbox_prepared(
-    img: &RgbaImage,
-    (sw, sh): (u32, u32),
-    w: u32,
-    h: u32,
-) -> RgbaImage {
+fn fit_letterbox_prepared(img: &RgbaImage, (sw, sh): (u32, u32), w: u32, h: u32) -> RgbaImage {
     let mut cell = RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 0]));
     if w == 0 || h == 0 || sw == 0 || sh == 0 || img.width() == 0 || img.height() == 0 {
         return cell;

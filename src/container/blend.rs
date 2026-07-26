@@ -38,10 +38,16 @@ pub fn extract(bytes: &[u8]) -> Option<DynamicImage> {
         }
         let (len, hdr) = if v1 {
             // LargeBHead8: code i32, sdna i32, old u64, len i64@16, count i64
-            (i64::from_le_bytes(bytes.get(off + 16..off + 24)?.try_into().ok()?) as usize, 32usize)
+            (
+                i64::from_le_bytes(bytes.get(off + 16..off + 24)?.try_into().ok()?) as usize,
+                32usize,
+            )
         } else {
             // BHead4 / SmallBHead8: len i32 at +4
-            (i32::from_le_bytes(bytes.get(off + 4..off + 8)?.try_into().ok()?) as usize, legacy_hdr)
+            (
+                i32::from_le_bytes(bytes.get(off + 4..off + 8)?.try_into().ok()?) as usize,
+                legacy_hdr,
+            )
         };
 
         if code == b"TEST" {
@@ -78,11 +84,11 @@ mod tests {
         b.push(b'_'); // 32-bit pointers
         b.push(b'v'); // little-endian
         b.extend_from_slice(b"277"); // 3 version digits → 12-byte header
-        // BHead4 (20 bytes): code, len, old(4), sdna, nr
+                                     // BHead4 (20 bytes): code, len, old(4), sdna, nr
         b.extend_from_slice(b"TEST");
         b.extend_from_slice(&((8 + w * h * 4) as i32).to_le_bytes());
         b.extend_from_slice(&[0u8; 12]); // old(4) + sdna(4) + nr(4)
-        // body: width, height, RGBA
+                                         // body: width, height, RGBA
         b.extend_from_slice(&(w as i32).to_le_bytes());
         b.extend_from_slice(&(h as i32).to_le_bytes());
         b.extend_from_slice(&px);
@@ -100,7 +106,13 @@ mod tests {
         let mut padded = b.clone();
         padded.extend_from_slice(&vec![0u8; 4096]); // simulated giant tail
         let full_end = b.len() - 20; // prefix that still contains all of TEST
-        assert!(extract(&padded[..full_end]).is_some(), "prefix containing TEST extracts");
-        assert!(extract(&padded[..40]).is_none(), "prefix truncating TEST is a clean miss");
+        assert!(
+            extract(&padded[..full_end]).is_some(),
+            "prefix containing TEST extracts"
+        );
+        assert!(
+            extract(&padded[..40]).is_none(),
+            "prefix truncating TEST is a clean miss"
+        );
     }
 }

@@ -41,7 +41,11 @@ impl Drop for InfoCard {
 /// detail (modified date + size for a file, item count for a folder).
 pub(super) unsafe fn gather(path: &str) -> InfoCard {
     let p = std::path::Path::new(path);
-    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or(path).to_string();
+    let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+        .to_string();
     let icon = shell_icon(path);
     let detail = if p.is_dir() {
         let count = std::fs::read_dir(p).map(|it| it.count()).unwrap_or(0);
@@ -97,15 +101,24 @@ pub(super) unsafe fn paint(
     let name_font = crate::win::gui_font_sized(hwnd, 15, 600);
     let oldf = SelectObject(hdc, name_font.into());
     SetTextColor(hdc, COLORREF(text));
-    let mut name_rc = RECT { left: tx, top: name_top, right: tx + text_w, bottom: name_top + line_h };
+    let mut name_rc = RECT {
+        left: tx,
+        top: name_top,
+        right: tx + text_w,
+        bottom: name_top + line_h,
+    };
     let mut name_w: Vec<u16> = card.name.encode_utf16().collect();
     draw_text(hdc, &mut name_w, &mut name_rc, fmt);
 
     let det_font = crate::win::gui_font_sized(hwnd, 12, 400);
     SelectObject(hdc, det_font.into());
     SetTextColor(hdc, COLORREF(subtle));
-    let mut det_rc =
-        RECT { left: tx, top: name_top + line_h, right: tx + text_w, bottom: name_top + line_h * 2 };
+    let mut det_rc = RECT {
+        left: tx,
+        top: name_top + line_h,
+        right: tx + text_w,
+        bottom: name_top + line_h * 2,
+    };
     let mut det_w: Vec<u16> = card.detail.encode_utf16().collect();
     draw_text(hdc, &mut det_w, &mut det_rc, fmt);
 

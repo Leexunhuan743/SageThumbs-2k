@@ -11,9 +11,9 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
-    FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
-    SHCreateItemFromParsingName, SHGetKnownFolderPath, FOLDERID_Desktop, FOS_FORCEFILESYSTEM,
-    FOS_PICKFOLDERS, KF_FLAG_DEFAULT, SIGDN_FILESYSPATH,
+    FOLDERID_Desktop, FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
+    SHCreateItemFromParsingName, SHGetKnownFolderPath, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS,
+    KF_FLAG_DEFAULT, SIGDN_FILESYSPATH,
 };
 
 use super::wide;
@@ -41,9 +41,11 @@ pub(crate) unsafe fn pick_folder(owner: HWND) -> Option<String> {
     }
 
     let _com = ComGuard(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-    let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+    let dlg: IFileOpenDialog =
+        CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
     let opts = dlg.GetOptions().ok()?;
-    dlg.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).ok()?;
+    dlg.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM)
+        .ok()?;
     dlg.Show(Some(owner)).ok()?;
     let item: IShellItem = dlg.GetResult().ok()?;
     let pw = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
@@ -67,7 +69,8 @@ pub(crate) unsafe fn pick_save_png(owner: HWND, dir: &str, name: &str) -> Option
     }
 
     let _com = ComGuard(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-    let dlg: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+    let dlg: IFileSaveDialog =
+        CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
     let spec_name = wide("PNG image");
     let spec_ext = wide("*.png");
     let specs = [COMDLG_FILTERSPEC {
@@ -81,7 +84,8 @@ pub(crate) unsafe fn pick_save_png(owner: HWND, dir: &str, name: &str) -> Option
     let _ = dlg.SetFileName(PCWSTR(nm.as_ptr()));
     if !dir.is_empty() {
         let dw = wide(dir);
-        if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(dw.as_ptr()), None) {
+        if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(dw.as_ptr()), None)
+        {
             let _ = dlg.SetFolder(&item);
         }
     }
@@ -106,7 +110,8 @@ pub(crate) unsafe fn pick_save_settings(owner: HWND, name: &str) -> Option<Strin
     }
 
     let _com = ComGuard(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-    let dlg: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+    let dlg: IFileSaveDialog =
+        CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
     let spec_name = wide("SageThumbs 2K settings");
     let spec_ext = wide("*.json");
     let specs = [COMDLG_FILTERSPEC {
@@ -139,7 +144,8 @@ pub(crate) unsafe fn pick_open_settings(owner: HWND) -> Option<String> {
     }
 
     let _com = ComGuard(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-    let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+    let dlg: IFileOpenDialog =
+        CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
     if let Ok(opts) = dlg.GetOptions() {
         let _ = dlg.SetOptions(opts | FOS_FORCEFILESYSTEM);
     }
@@ -162,5 +168,8 @@ pub(crate) unsafe fn pick_open_settings(owner: HWND) -> Option<String> {
 /// HGLOBAL ownership dance to the one shared writer in the lib's `clipboard` module.
 pub(crate) unsafe fn set_clipboard_text(text: &str) -> bool {
     let bytes = sagethumbs2k_core::clipboard::utf16_nul_bytes(text);
-    sagethumbs2k_core::clipboard::set_clipboard(sagethumbs2k_core::clipboard::CF_UNICODETEXT, &bytes)
+    sagethumbs2k_core::clipboard::set_clipboard(
+        sagethumbs2k_core::clipboard::CF_UNICODETEXT,
+        &bytes,
+    )
 }

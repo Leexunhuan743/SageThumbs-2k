@@ -12,7 +12,6 @@
 
 use core::cell::RefCell;
 
-use windows_implement::implement;
 use windows::core::{Error, Ref, Result};
 use windows::Win32::Foundation::{E_FAIL, E_POINTER};
 use windows::Win32::Graphics::Gdi::HBITMAP;
@@ -21,8 +20,9 @@ use windows::Win32::UI::Shell::PropertiesSystem::{
     IInitializeWithStream, IInitializeWithStream_Impl,
 };
 use windows::Win32::UI::Shell::{
-    IThumbnailProvider, IThumbnailProvider_Impl, WTS_ALPHATYPE, WTSAT_ARGB, WTSAT_UNKNOWN,
+    IThumbnailProvider, IThumbnailProvider_Impl, WTSAT_ARGB, WTSAT_UNKNOWN, WTS_ALPHATYPE,
 };
+use windows_implement::implement;
 
 use crate::streamsrc::{self, StreamSource};
 use crate::{decode, dib, safety, settings};
@@ -50,7 +50,10 @@ impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
             let stream = pstream.ok()?;
             // try_borrow_mut turns any (even theoretical) re-entrant borrow into an
             // HRESULT instead of a panic across the COM ABI.
-            let mut slot = self.stream.try_borrow_mut().map_err(|_| Error::from(E_FAIL))?;
+            let mut slot = self
+                .stream
+                .try_borrow_mut()
+                .map_err(|_| Error::from(E_FAIL))?;
             *slot = Some(stream.clone());
             safety::log_debug("Initialize: stream stored");
             Ok(())
@@ -131,9 +134,13 @@ impl ThumbnailProvider_Impl {
                 decode::thumbnail_from_covers(&covers, cx)?
             }
         };
-        safety::log_debug(&format!("GetThumbnail: decoded {}x{}", img.width, img.height));
-        let hbmp =
-            unsafe { dib::create_premultiplied_dib(img.width as i32, img.height as i32, &img.rgba)? };
+        safety::log_debug(&format!(
+            "GetThumbnail: decoded {}x{}",
+            img.width, img.height
+        ));
+        let hbmp = unsafe {
+            dib::create_premultiplied_dib(img.width as i32, img.height as i32, &img.rgba)?
+        };
 
         unsafe {
             *phbmp = hbmp;

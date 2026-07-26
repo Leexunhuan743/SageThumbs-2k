@@ -16,18 +16,26 @@ use crate::{decode, formats, ocr, settings, strip, topdf, verbs};
 pub fn devmode(sub: &str) -> Result<String, String> {
     match sub {
         "on" | "enable" | "1" => {
-            settings::set_dev_machine(true).map_err(|_| "couldn't write the DevMachine flag".to_string())?;
+            settings::set_dev_machine(true)
+                .map_err(|_| "couldn't write the DevMachine flag".to_string())?;
             Ok("dev mode ON (this machine's manifest request carries &dev=1).".into())
         }
         "off" | "disable" | "0" => {
-            settings::set_dev_machine(false).map_err(|_| "couldn't clear the DevMachine flag".to_string())?;
+            settings::set_dev_machine(false)
+                .map_err(|_| "couldn't clear the DevMachine flag".to_string())?;
             Ok("dev mode OFF (this machine's manifest request is unmodified).".into())
         }
         "status" | "" => Ok(format!(
             "dev mode is {} (HKCU\\Software\\SageThumbs2K\\DevMachine)",
-            if settings::is_dev_machine() { "ON" } else { "OFF" }
+            if settings::is_dev_machine() {
+                "ON"
+            } else {
+                "OFF"
+            }
         )),
-        other => Err(format!("unknown devmode '{other}' (use: on | off | status)")),
+        other => Err(format!(
+            "unknown devmode '{other}' (use: on | off | status)"
+        )),
     }
 }
 
@@ -35,7 +43,10 @@ pub fn devmode(sub: &str) -> Result<String, String> {
 /// `max_dim` px on the long edge (`0` = full size). The headline verb: produces
 /// previews for the formats Windows itself can't.
 pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, String> {
-    let archive_ext = Path::new(input).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let archive_ext = Path::new(input)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     if crate::formats::is_archive(archive_ext) {
         reject_oversized_archive(input, crate::settings::max_file_size_bytes())?;
     }
@@ -45,7 +56,11 @@ pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, Stri
     // decode if it isn't really an archive (renamed file) so the magic-dispatch
     // tiers still get their shot.
     if let Some(img) = archive_thumbnail(input) {
-        let out = if max_dim > 0 { img.thumbnail(max_dim, max_dim) } else { img };
+        let out = if max_dim > 0 {
+            img.thumbnail(max_dim, max_dim)
+        } else {
+            img
+        };
         out.save(output).map_err(|e| e.to_string())?;
         return Ok(output.to_string());
     }
@@ -57,7 +72,11 @@ pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, Stri
     // Preview fidelity (embedded/container previews OK) — that's what a
     // thumbnail is; `convert` is the full-fidelity verb.
     let img = decode::decode_preview(&bytes).map_err(|_| format!("cannot decode {input}"))?;
-    let out = if max_dim > 0 { img.thumbnail(max_dim, max_dim) } else { img };
+    let out = if max_dim > 0 {
+        img.thumbnail(max_dim, max_dim)
+    } else {
+        img
+    };
     out.save(output).map_err(|e| e.to_string())?;
     Ok(output.to_string())
 }
@@ -84,11 +103,18 @@ fn reject_oversized_archive(input: &str, configured_max: u64) -> Result<(), Stri
 /// stock-icon fallback). 1024px edge matches the preview pane's compose target.
 fn archive_thumbnail(input: &str) -> Option<image::DynamicImage> {
     use std::io::Read;
-    let ext = Path::new(input).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = Path::new(input)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     if !crate::formats::is_archive(ext) {
         return None;
     }
-    let want = if crate::settings::archive_collage() { 4 } else { 1 };
+    let want = if crate::settings::archive_collage() {
+        4
+    } else {
+        1
+    };
     let mut f = std::fs::File::open(input).ok()?;
     let mut head = [0u8; 8];
     f.read_exact(&mut head).ok()?;
@@ -108,8 +134,15 @@ fn archive_thumbnail(input: &str) -> Option<image::DynamicImage> {
 /// Convert `input` to the exact `output` path at `quality`, optional `resize`.
 /// `webp_quality = Some(q)` writes lossy WebP at quality `q` (only meaningful when
 /// `output` is a `.webp`); `None` keeps WebP lossless.
-pub fn convert(input: &str, output: &str, quality: u8, webp_quality: Option<u8>, resize: verbs::Resize) -> Result<String, String> {
-    verbs::convert_to(input, Path::new(output), quality, webp_quality, resize).map_err(|_| format!("convert failed: {input}"))?;
+pub fn convert(
+    input: &str,
+    output: &str,
+    quality: u8,
+    webp_quality: Option<u8>,
+    resize: verbs::Resize,
+) -> Result<String, String> {
+    verbs::convert_to(input, Path::new(output), quality, webp_quality, resize)
+        .map_err(|_| format!("convert failed: {input}"))?;
     Ok(output.to_string())
 }
 
@@ -121,7 +154,11 @@ pub fn rotate(input: &str, by: &str) -> Result<String, String> {
         "180" => verbs::Transform::Rotate180,
         "fliph" => verbs::Transform::FlipH,
         "flipv" => verbs::Transform::FlipV,
-        _ => return Err(format!("unknown rotation '{by}' (right|left|180|fliph|flipv)")),
+        _ => {
+            return Err(format!(
+                "unknown rotation '{by}' (right|left|180|fliph|flipv)"
+            ))
+        }
     };
     verbs::transform_file(input, t)
         .map(|p| p.display().to_string())
@@ -134,7 +171,11 @@ pub fn rotate(input: &str, by: &str) -> Result<String, String> {
 pub fn view_png(input: &str, max_dim: u32) -> Result<Vec<u8>, String> {
     let bytes = decode::read_preview_capped(input).map_err(|e| e.to_string())?;
     let img = decode::decode_preview(&bytes).map_err(|_| format!("cannot decode {input}"))?;
-    let img = if max_dim > 0 { img.thumbnail(max_dim, max_dim) } else { img };
+    let img = if max_dim > 0 {
+        img.thumbnail(max_dim, max_dim)
+    } else {
+        img
+    };
     let mut out = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
@@ -209,7 +250,10 @@ pub fn info(input: &str, json: bool) -> Result<String, String> {
     if json {
         // A malformed EXIF rational (0 denominator) can produce inf/NaN; drop it
         // rather than emit `NaN`, which is not valid JSON.
-        let gps = i.gps.filter(|(a, b)| a.is_finite() && b.is_finite()).map(|(a, b)| [a, b]);
+        let gps = i
+            .gps
+            .filter(|(a, b)| a.is_finite() && b.is_finite())
+            .map(|(a, b)| [a, b]);
         Ok(serde_json::json!({
             "width": i.width,
             "height": i.height,
@@ -249,9 +293,17 @@ pub fn parse_resize(s: Option<&str>) -> Result<verbs::Resize, String> {
         let pct: u32 = p.trim().parse().map_err(|_| format!("bad percent '{v}'"))?;
         return Ok(verbs::Resize::Percent(pct.clamp(1, 1000)));
     }
-    let (w, h) = v.split_once(['x', 'X']).ok_or_else(|| format!("bad resize '{v}' (use WxH or N%)"))?;
-    let w: u32 = w.trim().parse().map_err(|_| format!("bad width in '{v}'"))?;
-    let h: u32 = h.trim().parse().map_err(|_| format!("bad height in '{v}'"))?;
+    let (w, h) = v
+        .split_once(['x', 'X'])
+        .ok_or_else(|| format!("bad resize '{v}' (use WxH or N%)"))?;
+    let w: u32 = w
+        .trim()
+        .parse()
+        .map_err(|_| format!("bad width in '{v}'"))?;
+    let h: u32 = h
+        .trim()
+        .parse()
+        .map_err(|_| format!("bad height in '{v}'"))?;
     Ok(verbs::Resize::Fit(w.max(1), h.max(1)))
 }
 
@@ -260,7 +312,9 @@ pub fn parse_resize(s: Option<&str>) -> Result<verbs::Resize, String> {
 fn expand_inputs(inputs: &[String]) -> Vec<String> {
     fn supported(p: &Path) -> bool {
         // `is_known` is ASCII-case-insensitive — no lowercase allocation needed.
-        p.extension().and_then(|e| e.to_str()).is_some_and(formats::is_known)
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(formats::is_known)
     }
     let mut out = Vec::new();
     for i in inputs {
@@ -303,7 +357,10 @@ pub fn batch(
         other => return Err(format!("unknown batch op '{other}' (thumbnail|convert)")),
     };
     let ext = if is_convert {
-        to_ext.ok_or("batch convert needs --to <ext>")?.trim_start_matches('.').to_ascii_lowercase()
+        to_ext
+            .ok_or("batch convert needs --to <ext>")?
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
     } else {
         "png".to_string()
     };
@@ -325,7 +382,10 @@ pub fn batch(
         let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
         let dir = match out_dir {
             Some(d) => std::path::PathBuf::from(d),
-            None => src.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from(".")),
+            None => src
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from(".")),
         };
         let mut out = dir.join(format!("{stem}.{ext}"));
         let mut n = 1u32;
@@ -354,7 +414,10 @@ pub fn batch(
         return Err(format!("0/{total} succeeded"));
     }
     if done < total {
-        return Ok(format!("{done}/{total} succeeded ({} failed)", total - done));
+        return Ok(format!(
+            "{done}/{total} succeeded ({} failed)",
+            total - done
+        ));
     }
     Ok(format!("{done}/{total} succeeded"))
 }
@@ -375,9 +438,18 @@ pub fn upload_hosts(open: bool) -> Result<String, String> {
             use windows::Win32::UI::Shell::ShellExecuteW;
             use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
             let file = crate::wide(&p);
-            ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+            ShellExecuteW(
+                None,
+                w!("open"),
+                PCWSTR(file.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            );
         }
-        Ok(format!("Opening upload-hosts config in your default editor:\n{p}"))
+        Ok(format!(
+            "Opening upload-hosts config in your default editor:\n{p}"
+        ))
     } else {
         Ok(format!(
             "Upload-hosts config file:\n{p}\n\n\
@@ -422,7 +494,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("st2k_cli_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("a.png");
-        image::DynamicImage::ImageRgba8(image::RgbaImage::new(400, 300)).save(&src).unwrap();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(400, 300))
+            .save(&src)
+            .unwrap();
         let sp = src.to_str().unwrap();
 
         let out = dir.join("t.png");
@@ -431,7 +505,14 @@ mod tests {
         assert!(d.width() <= 128 && d.height() <= 128 && d.width() == 128);
 
         let cv = dir.join("a.jpg");
-        convert(sp, cv.to_str().unwrap(), 85, None, verbs::Resize::Fit(100, 100)).unwrap();
+        convert(
+            sp,
+            cv.to_str().unwrap(),
+            85,
+            None,
+            verbs::Resize::Fit(100, 100),
+        )
+        .unwrap();
         assert!(image::open(&cv).unwrap().width() <= 100);
 
         assert!(info(sp, true).unwrap().contains("\"width\":400"));

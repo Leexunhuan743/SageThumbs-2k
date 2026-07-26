@@ -62,10 +62,27 @@ unsafe fn dpapi(input: &[u8], protect: bool) -> Option<Vec<u8>> {
     };
     let mut out = CRYPT_INTEGER_BLOB::default();
     let ok = if protect {
-        CryptProtectData(&in_blob, PCWSTR::null(), None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
-            .is_ok()
+        CryptProtectData(
+            &in_blob,
+            PCWSTR::null(),
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out,
+        )
+        .is_ok()
     } else {
-        CryptUnprotectData(&in_blob, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out).is_ok()
+        CryptUnprotectData(
+            &in_blob,
+            None,
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out,
+        )
+        .is_ok()
     };
     if !ok || out.pbData.is_null() {
         return None;
@@ -92,8 +109,13 @@ pub(crate) fn save_refresh_token(token: &str) -> bool {
 /// Load + DPAPI-decrypt the refresh token, or `None` if absent/undecryptable (e.g. the
 /// blob was copied from another machine/user — treated as "not signed in").
 pub(crate) fn load_refresh_token() -> Option<String> {
-    let b64 = CURRENT_USER.open(oauth_key()).and_then(|k| k.get_string(V_REFRESH)).ok()?;
-    let enc = base64::engine::general_purpose::STANDARD.decode(b64.trim()).ok()?;
+    let b64 = CURRENT_USER
+        .open(oauth_key())
+        .and_then(|k| k.get_string(V_REFRESH))
+        .ok()?;
+    let enc = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .ok()?;
     let plain = unsafe { dpapi(&enc, false) }?;
     String::from_utf8(plain).ok()
 }
@@ -120,7 +142,12 @@ pub(crate) fn load_identity() -> Option<Identity> {
     if sub.is_empty() && email.is_empty() {
         return None;
     }
-    Some(Identity { sub, email, name, picture })
+    Some(Identity {
+        sub,
+        email,
+        name,
+        picture,
+    })
 }
 
 /// Whether a refresh token is present (a decryptable one — a foreign blob reads as no).

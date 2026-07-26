@@ -119,7 +119,14 @@ fn parse_tag(s: &str, i: usize) -> Option<HtmlTag> {
         }
         match bytes.get(j) {
             None => return None, // unterminated tag
-            Some(b'>') => return Some(HtmlTag { end: j + 1, closing, name, attrs }),
+            Some(b'>') => {
+                return Some(HtmlTag {
+                    end: j + 1,
+                    closing,
+                    name,
+                    attrs,
+                })
+            }
             Some(b'/') => {
                 j += 1; // self-closing slash — the '>' comes next
                 continue;
@@ -128,7 +135,10 @@ fn parse_tag(s: &str, i: usize) -> Option<HtmlTag> {
         }
         // attribute name
         let an_start = j;
-        while j < bytes.len() && !bytes[j].is_ascii_whitespace() && !matches!(bytes[j], b'=' | b'>' | b'/') {
+        while j < bytes.len()
+            && !bytes[j].is_ascii_whitespace()
+            && !matches!(bytes[j], b'=' | b'>' | b'/')
+        {
             j += 1;
         }
         if j == an_start {
@@ -171,7 +181,10 @@ fn parse_tag(s: &str, i: usize) -> Option<HtmlTag> {
 }
 
 fn attr<'a>(t: &'a HtmlTag, name: &str) -> Option<&'a str> {
-    t.attrs.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
+    t.attrs
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.as_str())
 }
 
 /// Does this tag center its contents (`align="center"` / `style="text-align:center"`)?
@@ -190,10 +203,15 @@ fn parse_width(v: Option<&str>) -> ImgW {
     let Some(v) = v else { return ImgW::Natural };
     let v = v.trim();
     if let Some(p) = v.strip_suffix('%') {
-        return p.trim().parse::<u32>().map_or(ImgW::Natural, |n| ImgW::Pct(n.clamp(1, 100)));
+        return p
+            .trim()
+            .parse::<u32>()
+            .map_or(ImgW::Natural, |n| ImgW::Pct(n.clamp(1, 100)));
     }
     let digits: String = v.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse::<i32>().map_or(ImgW::Natural, |n| ImgW::Px(n.clamp(1, 4000)))
+    digits
+        .parse::<i32>()
+        .map_or(ImgW::Natural, |n| ImgW::Px(n.clamp(1, 4000)))
 }
 
 fn dispatch(b: &mut Builder, t: &HtmlTag) {
@@ -213,7 +231,11 @@ fn dispatch(b: &mut Builder, t: &HtmlTag) {
         "img" if !closing => {
             if let Some(src) = attr(t, "src") {
                 if !src.is_empty() {
-                    b.image(src, attr(t, "alt").unwrap_or(""), parse_width(attr(t, "width")));
+                    b.image(
+                        src,
+                        attr(t, "alt").unwrap_or(""),
+                        parse_width(attr(t, "width")),
+                    );
                 }
             }
         }
@@ -275,7 +297,9 @@ fn dispatch(b: &mut Builder, t: &HtmlTag) {
             if closing {
                 b.close_list();
             } else {
-                let start = attr(t, "start").and_then(|v| v.trim().parse().ok()).unwrap_or(1);
+                let start = attr(t, "start")
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(1);
                 b.open_list(true, start);
             }
         }
@@ -349,7 +373,10 @@ fn decode_entities(s: &str) -> String {
         rest = &rest[p..];
         // Byte-wise ';' scan — a `&str` slice of the first 12 BYTES would panic (=abort) when a
         // multibyte char straddles the cut (e.g. `"&ééééé…"`); ';' is ASCII so this is safe.
-        let semi = match rest.as_bytes()[..rest.len().min(12)].iter().position(|&b| b == b';') {
+        let semi = match rest.as_bytes()[..rest.len().min(12)]
+            .iter()
+            .position(|&b| b == b';')
+        {
             Some(q) => q,
             None => {
                 out.push('&');

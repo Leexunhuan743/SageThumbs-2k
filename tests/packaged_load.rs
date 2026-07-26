@@ -36,7 +36,7 @@ use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, BITMAP};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{
-    SHCreateItemFromParsingName, IShellItem, IShellItemImageFactory, SIIGBF_THUMBNAILONLY,
+    IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_THUMBNAILONLY,
 };
 
 #[test]
@@ -59,7 +59,11 @@ fn packaged_thumbnail_handler_loads_in_shell() {
             .save_with_format(&probe, image::ImageFormat::Qoi)
             .unwrap();
 
-        let wide: Vec<u16> = probe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let wide: Vec<u16> = probe
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         let item: IShellItem =
             SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None).expect("shell item");
         let factory: IShellItemImageFactory = item.cast().expect("IShellItemImageFactory");
@@ -86,7 +90,9 @@ fn packaged_thumbnail_handler_loads_in_shell() {
             }
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&dir);
-                panic!("PACKAGED-LOAD FAILED: GetImage(THUMBNAILONLY) -> {e:?} (handler did not load)");
+                panic!(
+                    "PACKAGED-LOAD FAILED: GetImage(THUMBNAILONLY) -> {e:?} (handler did not load)"
+                );
             }
         }
         let _ = std::fs::remove_dir_all(&dir);

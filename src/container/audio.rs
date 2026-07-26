@@ -127,7 +127,9 @@ fn parse_apev2_cover(buf: &[u8], count: usize) -> Option<Vec<u8>> {
         p = p.checked_add(1)?; // skip the key's NUL
         let value = buf.get(p..p.checked_add(vsize)?)?;
         p += vsize;
-        if key.eq_ignore_ascii_case(b"cover art (front)") || key.eq_ignore_ascii_case(b"cover art (back)") {
+        if key.eq_ignore_ascii_case(b"cover art (front)")
+            || key.eq_ignore_ascii_case(b"cover art (back)")
+        {
             let nul = value.iter().position(|&b| b == 0)?; // description\0image
             let img = value.get(nul + 1..)?;
             if super::looks_like_raster(img) && img.len() as u64 <= super::MAX_COVER {
@@ -150,26 +152,33 @@ fn parse_apev2_cover(buf: &[u8], count: usize) -> Option<Vec<u8>> {
 /// Extended Content Description Object is a direct child of the Header Object,
 /// but the Metadata / Metadata Library Objects are nested one level deeper inside
 /// the Header Extension Object — so we have to descend into that too.
-const ASF_HEADER_GUID: [u8; 16] =
-    [0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C];
+const ASF_HEADER_GUID: [u8; 16] = [
+    0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
 // Header Extension Object = GUID 5FBF03B5-A92E-11CF-8EE3-00C00C205365 (verified against
 // the ASF spec AND real ffmpeg/mutagen/WMP files — do NOT "correct" the Data1/Data2 bytes).
-const ASF_HDR_EXT_GUID: [u8; 16] =
-    [0xB5, 0x03, 0xBF, 0x5F, 0x2E, 0xA9, 0xCF, 0x11, 0x8E, 0xE3, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65];
-const ASF_ECD_GUID: [u8; 16] =
-    [0x40, 0xA4, 0xD0, 0xD2, 0x07, 0xE3, 0xD2, 0x11, 0x97, 0xF0, 0x00, 0xA0, 0xC9, 0x5E, 0xA8, 0x50];
-const ASF_MDLIB_GUID: [u8; 16] =
-    [0x94, 0x1C, 0x23, 0x44, 0x98, 0x94, 0xD1, 0x49, 0xA1, 0x41, 0x1D, 0x13, 0x4E, 0x45, 0x70, 0x54];
-const ASF_META_GUID: [u8; 16] =
-    [0xEA, 0xCB, 0xF8, 0xC5, 0xAF, 0x5B, 0x77, 0x48, 0x84, 0x67, 0xAA, 0x8C, 0x44, 0xFA, 0x4C, 0xCA];
+const ASF_HDR_EXT_GUID: [u8; 16] = [
+    0xB5, 0x03, 0xBF, 0x5F, 0x2E, 0xA9, 0xCF, 0x11, 0x8E, 0xE3, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65,
+];
+const ASF_ECD_GUID: [u8; 16] = [
+    0x40, 0xA4, 0xD0, 0xD2, 0x07, 0xE3, 0xD2, 0x11, 0x97, 0xF0, 0x00, 0xA0, 0xC9, 0x5E, 0xA8, 0x50,
+];
+const ASF_MDLIB_GUID: [u8; 16] = [
+    0x94, 0x1C, 0x23, 0x44, 0x98, 0x94, 0xD1, 0x49, 0xA1, 0x41, 0x1D, 0x13, 0x4E, 0x45, 0x70, 0x54,
+];
+const ASF_META_GUID: [u8; 16] = [
+    0xEA, 0xCB, 0xF8, 0xC5, 0xAF, 0x5B, 0x77, 0x48, 0x84, 0x67, 0xAA, 0x8C, 0x44, 0xFA, 0x4C, 0xCA,
+];
 /// Content Description Object — the fixed Title/Author/Copyright/Description/Rating
 /// fields. Same GUID as the Header Object except the first byte (0x33 vs 0x30).
-const ASF_CONTENT_DESC_GUID: [u8; 16] =
-    [0x33, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C];
+const ASF_CONTENT_DESC_GUID: [u8; 16] = [
+    0x33, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
 /// File Properties Object — GUID 8CABDCA1-A947-11CF-8EE4-00C00C205365. Carries Play Duration
 /// (100-ns) and Maximum Bitrate (bps), which lofty can't read for ASF (no ASF support at all).
-const ASF_FILE_PROPS_GUID: [u8; 16] =
-    [0xA1, 0xDC, 0xAB, 0x8C, 0x47, 0xA9, 0xCF, 0x11, 0x8E, 0xE4, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65];
+const ASF_FILE_PROPS_GUID: [u8; 16] = [
+    0xA1, 0xDC, 0xAB, 0x8C, 0x47, 0xA9, 0xCF, 0x11, 0x8E, 0xE4, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65,
+];
 
 /// Max ASF Header Object we'll read into memory (cover + slack; bomb guard). The
 /// art lives inside this header, so we never touch the (huge) media body.
@@ -205,7 +214,9 @@ fn asf_header_buf<R: Read + Seek>(r: &mut R) -> Option<Vec<u8>> {
 fn asf_cover<R: Read + Seek>(r: &mut R) -> Option<Vec<u8>> {
     let buf = asf_header_buf(r)?;
     let mut pics: Vec<(u8, Vec<u8>)> = Vec::new();
-    walk_objects(&buf, 0, &mut |guid, payload| collect_pictures(guid, payload, &mut pics));
+    walk_objects(&buf, 0, &mut |guid, payload| {
+        collect_pictures(guid, payload, &mut pics)
+    });
     pics.iter()
         .find(|(t, _)| *t == 3)
         .or_else(|| pics.first())
@@ -234,7 +245,9 @@ pub(crate) struct AsfTags {
 pub(crate) fn asf_tags<R: Read + Seek>(r: &mut R) -> Option<AsfTags> {
     let buf = asf_header_buf(r)?;
     let mut tags = AsfTags::default();
-    walk_objects(&buf, 0, &mut |guid, payload| collect_tags(guid, payload, &mut tags));
+    walk_objects(&buf, 0, &mut |guid, payload| {
+        collect_tags(guid, payload, &mut tags)
+    });
     Some(tags)
 }
 
@@ -297,9 +310,13 @@ fn collect_tags(guid: &[u8], payload: &[u8], tags: &mut AsfTags) {
     if guid == ASF_CONTENT_DESC_GUID {
         cd_text(payload, tags);
     } else if guid == ASF_ECD_GUID {
-        ecd_attrs(payload, |name, dtype, val| apply_text_attr(name, dtype, val, tags));
+        ecd_attrs(payload, |name, dtype, val| {
+            apply_text_attr(name, dtype, val, tags)
+        });
     } else if guid == ASF_MDLIB_GUID || guid == ASF_META_GUID {
-        mdlib_attrs(payload, |name, dtype, val| apply_text_attr(name, dtype, val, tags));
+        mdlib_attrs(payload, |name, dtype, val| {
+            apply_text_attr(name, dtype, val, tags)
+        });
     } else if guid == ASF_FILE_PROPS_GUID {
         file_props(payload, tags);
     }
@@ -425,7 +442,10 @@ fn name_eq(name: &[u8], want: &[u8]) -> bool {
 /// Decode UTF-16LE bytes to a String, trimmed of trailing NULs/whitespace. `None`
 /// if empty after trimming.
 fn utf16_string(bytes: &[u8]) -> Option<String> {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
     let s = String::from_utf16_lossy(&units);
     let s = s.trim_end_matches('\0').trim().to_string();
     (!s.is_empty()).then_some(s)
@@ -555,13 +575,19 @@ fn parse_apic(d: &[u8]) -> Option<(u8, Vec<u8>)> {
         p += 1;
     }
     let img = d.get(p..)?;
-    (super::looks_like_raster(img) && img.len() as u64 <= super::MAX_COVER).then(|| (ptype, img.to_vec()))
+    (super::looks_like_raster(img) && img.len() as u64 <= super::MAX_COVER)
+        .then(|| (ptype, img.to_vec()))
 }
 
 /// Decode a 4-byte ID3v2 synchsafe integer (the high bit of each byte is zero).
 fn id3_synchsafe(b: &[u8]) -> Option<u32> {
     let b = b.get(0..4)?;
-    Some(((b[0] as u32 & 0x7f) << 21) | ((b[1] as u32 & 0x7f) << 14) | ((b[2] as u32 & 0x7f) << 7) | (b[3] as u32 & 0x7f))
+    Some(
+        ((b[0] as u32 & 0x7f) << 21)
+            | ((b[1] as u32 & 0x7f) << 14)
+            | ((b[2] as u32 & 0x7f) << 7)
+            | (b[3] as u32 & 0x7f),
+    )
 }
 
 /// Cheap magic sniff so we only run lofty on actual audio containers. (Cover art
@@ -583,7 +609,7 @@ pub fn looks_like_audio(b: &[u8]) -> bool {
             && matches!(&b[8..12], b"M4A " | b"M4B " | b"M4P " | b"mp42" | b"mp41" | b"isom" | b"iso2" | b"dash"))
         || (b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WAVE") // WAV
         || (b.len() >= 12 && &b[0..4] == b"FORM" && matches!(&b[8..12], b"AIFF" | b"AIFC")) // AIFF
-        || b.starts_with(&[0x30, 0x26, 0xB2, 0x75])             // ASF / WMA
+        || b.starts_with(&[0x30, 0x26, 0xB2, 0x75]) // ASF / WMA
 }
 
 #[cfg(test)]
@@ -674,7 +700,12 @@ mod tests {
 
     /// Build a 4-byte ID3v2 synchsafe size (high bit of each byte is zero).
     fn synchsafe_bytes(n: u32) -> [u8; 4] {
-        [((n >> 21) & 0x7f) as u8, ((n >> 14) & 0x7f) as u8, ((n >> 7) & 0x7f) as u8, (n & 0x7f) as u8]
+        [
+            ((n >> 21) & 0x7f) as u8,
+            ((n >> 14) & 0x7f) as u8,
+            ((n >> 7) & 0x7f) as u8,
+            (n & 0x7f) as u8,
+        ]
     }
 
     /// A minimal `.dsf`: the 28-byte `DSD ` header pointing at a trailing ID3v2.4 tag
@@ -705,7 +736,10 @@ mod tests {
     /// hand-rolled `dsf_cover` must pull the front-cover APIC out.
     #[test]
     fn dsf_cover_reads_id3v2_apic() {
-        assert_eq!(extract(&dsf_with_cover(FAKE_JPEG)), Some(FAKE_JPEG.to_vec()));
+        assert_eq!(
+            extract(&dsf_with_cover(FAKE_JPEG)),
+            Some(FAKE_JPEG.to_vec())
+        );
     }
 
     #[test]
@@ -738,14 +772,20 @@ mod tests {
     fn asf_cover_ignores_non_picture_attributes_and_non_asf() {
         // A WM/Picture whose payload isn't a decodable raster → rejected.
         let junk = wm_picture(&[0u8; 16]);
-        let file = asf_file(&asf_object(ASF_MDLIB_GUID, &mdlib_payload("WM/Picture", &junk)));
+        let file = asf_file(&asf_object(
+            ASF_MDLIB_GUID,
+            &mdlib_payload("WM/Picture", &junk),
+        ));
         assert_eq!(asf_cover(&mut Cursor::new(file)), None);
         // A non-picture attribute name → ignored.
         let pic = wm_picture(FAKE_JPEG);
         let file = asf_file(&asf_object(ASF_ECD_GUID, &ecd_payload("WM/Author", &pic)));
         assert_eq!(asf_cover(&mut Cursor::new(file)), None);
         // Non-ASF bytes bail immediately.
-        assert_eq!(asf_cover(&mut Cursor::new(b"ID3\x04not an asf file".to_vec())), None);
+        assert_eq!(
+            asf_cover(&mut Cursor::new(b"ID3\x04not an asf file".to_vec())),
+            None
+        );
     }
 
     #[test]
@@ -818,7 +858,10 @@ mod tests {
     #[test]
     fn asf_tags_reads_attrs_nested_in_metadata_library() {
         // Album/track can live in the Header-Extension-nested Metadata Library too.
-        let mdlib = asf_object(ASF_MDLIB_GUID, &mdlib_str_payload("WM/AlbumTitle", "Nested Album"));
+        let mdlib = asf_object(
+            ASF_MDLIB_GUID,
+            &mdlib_str_payload("WM/AlbumTitle", "Nested Album"),
+        );
         let tags = asf_tags(&mut Cursor::new(asf_file_n(&[hdr_ext(&mdlib)]))).unwrap();
         assert_eq!(tags.album.as_deref(), Some("Nested Album"));
     }
@@ -841,7 +884,10 @@ mod tests {
     fn asf_tags_prefers_track_author_over_album_artist() {
         // Real files store the ECD before the Content Description Object, so without
         // care WM/AlbumArtist would win. The track Author must win regardless of order.
-        let ecd = asf_object(ASF_ECD_GUID, &ecd_str_payload(&[("WM/AlbumArtist", "Various Artists")]));
+        let ecd = asf_object(
+            ASF_ECD_GUID,
+            &ecd_str_payload(&[("WM/AlbumArtist", "Various Artists")]),
+        );
         let cd = asf_object(ASF_CONTENT_DESC_GUID, &cd_payload("Song", "Real Artist"));
         let tags = asf_tags(&mut Cursor::new(asf_file_n(&[ecd, cd]))).unwrap();
         assert_eq!(tags.artist.as_deref(), Some("Real Artist"));

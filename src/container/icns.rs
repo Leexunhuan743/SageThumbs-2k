@@ -10,7 +10,9 @@
 //! those (pre-2007 icons) return None and fall back to the default icon.
 
 /// JPEG 2000 signature box (JP2 container).
-const JP2_MAGIC: [u8; 12] = [0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A];
+const JP2_MAGIC: [u8; 12] = [
+    0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A,
+];
 
 /// Extract the largest PNG (preferred) or JPEG 2000 member, or None.
 pub fn extract(bytes: &[u8]) -> Option<Vec<u8>> {
@@ -84,6 +86,9 @@ mod tests {
         assert_eq!((img.width(), img.height()), (64, 64));
 
         assert!(extract(b"not an icns").is_none());
-        assert!(extract(&icns[..20]).is_none(), "truncated icns is a clean miss");
+        assert!(
+            extract(&icns[..20]).is_none(),
+            "truncated icns is a clean miss"
+        );
     }
 }

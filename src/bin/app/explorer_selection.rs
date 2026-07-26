@@ -19,9 +19,9 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
     FileOpenDialog, IFileOpenDialog, IShellBrowser, IShellFolderViewDual, IShellItem,
-    IShellItemArray, IShellLinkW, IShellWindows, IWebBrowser2, ShellLink, ShellWindows,
-    FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH,
-    SID_STopLevelBrowser, SVGIO_BACKGROUND, SWC_DESKTOP, SWFO_NEEDDISPATCH,
+    IShellItemArray, IShellLinkW, IShellWindows, IWebBrowser2, SID_STopLevelBrowser, ShellLink,
+    ShellWindows, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH,
+    SVGIO_BACKGROUND, SWC_DESKTOP, SWFO_NEEDDISPATCH,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, GetClassNameW, GetForegroundWindow, IsWindowVisible,
@@ -96,15 +96,21 @@ unsafe fn foreground_explorer_selection() -> Vec<String> {
     let count = shell_windows.Count().unwrap_or(0);
     let mut fallback: Option<Vec<String>> = None;
     for i in 0..count {
-        let Ok(disp) = shell_windows.Item(&VARIANT::from(i)) else { continue };
-        let Ok(wb) = disp.cast::<IWebBrowser2>() else { continue };
+        let Ok(disp) = shell_windows.Item(&VARIANT::from(i)) else {
+            continue;
+        };
+        let Ok(wb) = disp.cast::<IWebBrowser2>() else {
+            continue;
+        };
         // Only the window the user is actually looking at.
         let Ok(handle) = wb.HWND() else { continue };
         if HWND(handle.0 as *mut c_void) != fg {
             continue;
         }
         let Ok(doc) = wb.Document() else { continue };
-        let Ok(view) = doc.cast::<IShellFolderViewDual>() else { continue };
+        let Ok(view) = doc.cast::<IShellFolderViewDual>() else {
+            continue;
+        };
         let tab_match = match (active_tab, browser_window(&wb)) {
             (Some(tab), Some(bw)) => bw == tab,
             _ => true, // can't disambiguate — accept the frame match as before
@@ -126,8 +132,13 @@ unsafe fn foreground_explorer_selection() -> Vec<String> {
 unsafe fn active_shell_tab(frame: HWND) -> Option<HWND> {
     let mut child: Option<HWND> = None;
     loop {
-        let next =
-            FindWindowExW(Some(frame), child, w!("ShellTabWindowClass"), PCWSTR::null()).ok()?;
+        let next = FindWindowExW(
+            Some(frame),
+            child,
+            w!("ShellTabWindowClass"),
+            PCWSTR::null(),
+        )
+        .ok()?;
         if next.0.is_null() {
             return None;
         }
@@ -142,7 +153,9 @@ unsafe fn active_shell_tab(frame: HWND) -> Option<HWND> {
 /// `ShellTabWindowClass` window (each tab has its own top-level browser object).
 unsafe fn browser_window(wb: &IWebBrowser2) -> Option<HWND> {
     let sp = wb.cast::<IServiceProvider>().ok()?;
-    let browser = sp.QueryService::<IShellBrowser>(&SID_STopLevelBrowser).ok()?;
+    let browser = sp
+        .QueryService::<IShellBrowser>(&SID_STopLevelBrowser)
+        .ok()?;
     browser.GetWindow().ok()
 }
 
@@ -165,23 +178,33 @@ unsafe fn foreground_desktop_selection() -> Vec<String> {
     else {
         return Vec::new();
     };
-    let Ok(sp) = disp.cast::<IServiceProvider>() else { return Vec::new() };
+    let Ok(sp) = disp.cast::<IServiceProvider>() else {
+        return Vec::new();
+    };
     let Ok(browser) = sp.QueryService::<IShellBrowser>(&SID_STopLevelBrowser) else {
         return Vec::new();
     };
-    let Ok(view) = browser.QueryActiveShellView() else { return Vec::new() };
+    let Ok(view) = browser.QueryActiveShellView() else {
+        return Vec::new();
+    };
     // GetItemObject(SVGIO_BACKGROUND, IID_IDispatch) yields an IDispatch we QI to the folder's
     // IShellFolderViewDual (requesting the dual's IID directly from GetItemObject returns
     // E_NOINTERFACE — the background item is only handed out as an IDispatch).
-    let Ok(bg) = view.GetItemObject::<IDispatch>(SVGIO_BACKGROUND) else { return Vec::new() };
-    let Ok(sfvd) = bg.cast::<IShellFolderViewDual>() else { return Vec::new() };
+    let Ok(bg) = view.GetItemObject::<IDispatch>(SVGIO_BACKGROUND) else {
+        return Vec::new();
+    };
+    let Ok(sfvd) = bg.cast::<IShellFolderViewDual>() else {
+        return Vec::new();
+    };
     paths_from_view(&sfvd)
 }
 
 /// Extract the filesystem paths of the SELECTED items from a shell folder view. Virtual items
 /// (Recycle Bin, This PC, …) have no `Path()` and are skipped.
 unsafe fn paths_from_view(view: &IShellFolderViewDual) -> Vec<String> {
-    let Ok(items) = view.SelectedItems() else { return Vec::new() };
+    let Ok(items) = view.SelectedItems() else {
+        return Vec::new();
+    };
     let n = items.Count().unwrap_or(0);
     let mut out = Vec::with_capacity(n.max(0) as usize);
     for j in 0..n {
@@ -241,12 +264,15 @@ unsafe fn resolve_lnk(path: &str) -> String {
 /// Returns the chosen paths, or `None` if the user cancelled. COM is already initialised by
 /// the caller ([`selection_or_pick`]).
 unsafe fn pick_files(images_only: bool) -> Option<Vec<String>> {
-    let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+    let dlg: IFileOpenDialog =
+        CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
     if let Ok(opts) = dlg.GetOptions() {
-        let _ = dlg.SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM);
+        let _ =
+            dlg.SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM);
     }
     let name = wide("Images");
-    let spec = wide("*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.avif;*.heic;*.heif;*.ico;*.tga");
+    let spec =
+        wide("*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.avif;*.heic;*.heif;*.ico;*.tga");
     if images_only {
         let specs = [COMDLG_FILTERSPEC {
             pszName: PCWSTR(name.as_ptr()),
@@ -259,7 +285,9 @@ unsafe fn pick_files(images_only: bool) -> Option<Vec<String>> {
     let n = results.GetCount().ok()?;
     let mut out = Vec::with_capacity(n as usize);
     for i in 0..n {
-        let Ok(item): windows::core::Result<IShellItem> = results.GetItemAt(i) else { continue };
+        let Ok(item): windows::core::Result<IShellItem> = results.GetItemAt(i) else {
+            continue;
+        };
         if let Ok(pw) = item.GetDisplayName(SIGDN_FILESYSPATH) {
             let s = pw.to_string().unwrap_or_default();
             CoTaskMemFree(Some(pw.0 as *const c_void));

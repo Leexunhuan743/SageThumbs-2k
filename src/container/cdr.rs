@@ -70,9 +70,14 @@ mod tests {
         dib.extend_from_slice(&0i32.to_le_bytes()); // yppm
         dib.extend_from_slice(&4u32.to_le_bytes()); // clrUsed = 4
         dib.extend_from_slice(&0u32.to_le_bytes()); // clrImportant
-        // BGRA palette (RGBQUAD: blue, green, red, reserved). Entry 1 = red, 2 = green,
-        // 3 = blue — so the red/green channels must be in the 3rd/2nd byte, not the 1st.
-        for c in [[0u8, 0, 0, 0], [0, 0, 255, 0], [0, 255, 0, 0], [255, 0, 0, 0]] {
+                                                    // BGRA palette (RGBQUAD: blue, green, red, reserved). Entry 1 = red, 2 = green,
+                                                    // 3 = blue — so the red/green channels must be in the 3rd/2nd byte, not the 1st.
+        for c in [
+            [0u8, 0, 0, 0],
+            [0, 0, 255, 0],
+            [0, 255, 0, 0],
+            [255, 0, 0, 0],
+        ] {
             dib.extend_from_slice(&c); // black, red, green, blue
         }
         // 2×2 rows, padded to 4 bytes each: pixels {1,2 / 3,0}
@@ -108,8 +113,16 @@ mod tests {
         let img = image::load_from_memory(&bmp).expect("valid BMP").to_rgba8();
         assert_eq!((img.width(), img.height()), (2, 2));
         // BMP rows are bottom-up: top row in the image is the LAST DIB row {1,2} = red,green.
-        assert_eq!(img.get_pixel(0, 0).0, [255, 0, 0, 255], "top-left = red (palette 1)");
-        assert_eq!(img.get_pixel(1, 0).0, [0, 255, 0, 255], "top-right = green (palette 2)");
+        assert_eq!(
+            img.get_pixel(0, 0).0,
+            [255, 0, 0, 255],
+            "top-left = red (palette 1)"
+        );
+        assert_eq!(
+            img.get_pixel(1, 0).0,
+            [0, 255, 0, 255],
+            "top-right = green (palette 2)"
+        );
     }
 
     #[test]

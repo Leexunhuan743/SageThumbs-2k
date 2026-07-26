@@ -7,7 +7,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use windows_implement::implement;
 use windows::core::{Error, Ref, Result, BOOL, GUID, HRESULT, PWSTR};
 use windows::Win32::Foundation::{E_NOTIMPL, E_OUTOFMEMORY, E_POINTER, S_FALSE, S_OK};
 use windows::Win32::System::Com::{CoTaskMemAlloc, CoTaskMemFree, IBindCtx};
@@ -15,6 +14,7 @@ use windows::Win32::UI::Shell::{
     IEnumExplorerCommand, IEnumExplorerCommand_Impl, IExplorerCommand, IExplorerCommand_Impl,
     IShellItemArray, ECF_DEFAULT, ECF_HASSUBCOMMANDS, ECS_ENABLED, ECS_HIDDEN, SIGDN_FILESYSPATH,
 };
+use windows_implement::implement;
 
 use crate::{safety, settings, verbs};
 
@@ -23,7 +23,10 @@ fn alloc_pwstr(s: &str) -> Result<PWSTR> {
     let wide = crate::wide(s);
     // Overflow-safe byte count (len * size_of::<u16>()); can't actually overflow for
     // any real string, but keep the allocation provably sound rather than wrapping.
-    let bytes = wide.len().checked_mul(2).ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
+    let bytes = wide
+        .len()
+        .checked_mul(2)
+        .ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
     let p = unsafe { CoTaskMemAlloc(bytes) } as *mut u16;
     if p.is_null() {
         return Err(Error::from(E_OUTOFMEMORY));
@@ -187,10 +190,26 @@ unsafe fn menu_item_state(
 /// verbs and the classic `quick_items()` stay the same set; the verb ids must match the `Id="…"`
 /// attributes in `packaging/AppxManifest.xml`.
 const QUICK_VERBS: &[(GUID, &str, &str)] = &[
-    (crate::guids::CLSID_QUICK_CONVERT_INTO, "menu_convert_into", "SageThumbs2KConvertInto"),
-    (crate::guids::CLSID_QUICK_CONVERT_DIALOG, "menu_convert_dialog", "SageThumbs2KConvertDialog"),
-    (crate::guids::CLSID_QUICK_RESIZE, "menu_resize", "SageThumbs2KResize"),
-    (crate::guids::CLSID_QUICK_ROTATE, "menu_rotate", "SageThumbs2KRotate"),
+    (
+        crate::guids::CLSID_QUICK_CONVERT_INTO,
+        "menu_convert_into",
+        "SageThumbs2KConvertInto",
+    ),
+    (
+        crate::guids::CLSID_QUICK_CONVERT_DIALOG,
+        "menu_convert_dialog",
+        "SageThumbs2KConvertDialog",
+    ),
+    (
+        crate::guids::CLSID_QUICK_RESIZE,
+        "menu_resize",
+        "SageThumbs2KResize",
+    ),
+    (
+        crate::guids::CLSID_QUICK_ROTATE,
+        "menu_rotate",
+        "SageThumbs2KRotate",
+    ),
 ];
 
 /// Whether `clsid` is one of the modern-menu quick-verb coclasses (so the DLL hands it out).
@@ -201,7 +220,10 @@ pub fn is_quick_clsid(clsid: GUID) -> bool {
 /// The `MENU` item a quick-verb `clsid` surfaces, or `None` if `clsid` isn't a quick verb.
 /// Looks the CLSID's key up in [`QUICK_VERBS`], then finds that top-level item in `MENU`.
 pub fn quick_root_item(clsid: GUID) -> Option<&'static verbs::MenuItem> {
-    let key = QUICK_VERBS.iter().find(|(c, _, _)| *c == clsid).map(|(_, k, _)| *k)?;
+    let key = QUICK_VERBS
+        .iter()
+        .find(|(c, _, _)| *c == clsid)
+        .map(|(_, k, _)| *k)?;
     verbs::MENU.iter().find(|it| it.title() == key)
 }
 
@@ -237,7 +259,8 @@ impl IExplorerCommand_Impl for ExplorerCommand_Impl {
             // The companion EXE carries the app icon as resource 1; the modern
             // menu takes "<module>,-<resid>" icon references. Installed next to
             // the DLL — if it isn't there, no icon (E_NOTIMPL), never an error.
-            let exe = crate::sibling_of_dll(crate::APP_EXE).ok_or_else(|| Error::from(E_NOTIMPL))?;
+            let exe =
+                crate::sibling_of_dll(crate::APP_EXE).ok_or_else(|| Error::from(E_NOTIMPL))?;
             alloc_pwstr(&format!("{},-1", exe.display()))
         })
     }
@@ -356,7 +379,13 @@ impl MenuCommand {
     // ModuleRef::default()'s side effect (live-object add-ref) must run; keep the Default call.
     #[allow(clippy::default_constructed_unit_structs)]
     fn new(item: &'static verbs::MenuItem, top_level: bool, condensed: bool) -> Self {
-        Self { _ref: crate::ModuleRef::default(), item, top_level, condensed, quick_root: false }
+        Self {
+            _ref: crate::ModuleRef::default(),
+            item,
+            top_level,
+            condensed,
+            quick_root: false,
+        }
     }
 
     /// A top-level modern-menu quick verb wrapping a `MENU` group/leaf (see [`QUICK_VERBS`]).
@@ -384,7 +413,8 @@ impl IExplorerCommand_Impl for MenuCommand_Impl {
             return Err(Error::from(E_NOTIMPL));
         }
         safety::guard_val(|| {
-            let exe = crate::sibling_of_dll(crate::APP_EXE).ok_or_else(|| Error::from(E_NOTIMPL))?;
+            let exe =
+                crate::sibling_of_dll(crate::APP_EXE).ok_or_else(|| Error::from(E_NOTIMPL))?;
             alloc_pwstr(&format!("{},-1", exe.display()))
         })
     }
@@ -545,7 +575,11 @@ mod tests {
     #[test]
     fn quick_verbs_match_quick_keys() {
         let keys: Vec<&str> = QUICK_VERBS.iter().map(|(_, k, _)| *k).collect();
-        assert_eq!(keys, verbs::QUICK_KEYS, "QUICK_VERBS keys must equal verbs::QUICK_KEYS");
+        assert_eq!(
+            keys,
+            verbs::QUICK_KEYS,
+            "QUICK_VERBS keys must equal verbs::QUICK_KEYS"
+        );
     }
 
     /// Every quick-verb CLSID resolves to a real top-level `MENU` item, and `is_quick_clsid`
@@ -555,7 +589,11 @@ mod tests {
         for (clsid, key, _) in QUICK_VERBS {
             assert!(is_quick_clsid(*clsid), "is_quick_clsid missed {key}");
             let item = quick_root_item(*clsid).unwrap_or_else(|| panic!("no MENU item for {key}"));
-            assert_eq!(item.title(), *key, "quick_root_item returned the wrong MENU node for {key}");
+            assert_eq!(
+                item.title(),
+                *key,
+                "quick_root_item returned the wrong MENU node for {key}"
+            );
         }
         assert!(!is_quick_clsid(crate::guids::CLSID_EXPLORER_COMMAND));
         assert!(quick_root_item(crate::guids::CLSID_EXPLORER_COMMAND).is_none());

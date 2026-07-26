@@ -25,7 +25,11 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Always use this instead of `Command::new("cmd").args(["/c", line])`: see the module
 /// docs for what the escaping does to any line containing a quote.
 pub fn cmd_c(line: &str) -> std::io::Result<Child> {
-    Command::new("cmd").arg("/c").raw_arg(line).creation_flags(CREATE_NO_WINDOW).spawn()
+    Command::new("cmd")
+        .arg("/c")
+        .raw_arg(line)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
 }
 
 /// The taskkill → delete-thumbcache → relaunch sequence shared by the "Rebuild
@@ -54,7 +58,11 @@ mod tests {
             .output()
             .expect("spawn cmd");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(stdout.trim(), "\"quoted\"", "cmd saw a mangled line: {stdout:?}");
+        assert_eq!(
+            stdout.trim(),
+            "\"quoted\"",
+            "cmd saw a mangled line: {stdout:?}"
+        );
     }
 
     /// The specific token that broke: `start ""` must not become `start \"\"`, whose
@@ -70,6 +78,9 @@ mod tests {
             .output()
             .expect("spawn cmd");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(!stdout.contains('\\'), "backslash escaping leaked into cmd: {stdout:?}");
+        assert!(
+            !stdout.contains('\\'),
+            "backslash escaping leaked into cmd: {stdout:?}"
+        );
     }
 }

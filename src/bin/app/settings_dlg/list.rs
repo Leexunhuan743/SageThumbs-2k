@@ -13,7 +13,13 @@ unsafe fn list_header(list: HWND) -> HWND {
 }
 
 unsafe fn lv_next(list: HWND, start: i32, flags: u32) -> i32 {
-    SendMessageW(list, LVM_GETNEXTITEM, Some(WPARAM(start as usize)), Some(LPARAM(flags as isize))).0 as i32
+    SendMessageW(
+        list,
+        LVM_GETNEXTITEM,
+        Some(WPARAM(start as usize)),
+        Some(LPARAM(flags as isize)),
+    )
+    .0 as i32
 }
 
 unsafe fn bulk_set_selected(list: HWND, target: bool) {
@@ -28,7 +34,11 @@ unsafe fn bulk_set_selected(list: HWND, target: bool) {
 /// inverse of the focused row — so a mixed selection collapses predictably.
 unsafe fn bulk_toggle_selected(list: HWND) {
     let focus = lv_next(list, -1, LVNI_FOCUSED);
-    let target = if focus >= 0 { !is_checked(list, focus) } else { true };
+    let target = if focus >= 0 {
+        !is_checked(list, focus)
+    } else {
+        true
+    };
     bulk_set_selected(list, target);
 }
 
@@ -78,7 +88,15 @@ pub(super) unsafe fn list_context_menu(list: HWND, owner: HWND, l: LPARAM) {
     // Foreground + WM_NULL bracket: the documented fix for the "menu shows then
     // immediately vanishes" quirk. Owner is the top-level dialog, not the list.
     let _ = SetForegroundWindow(owner);
-    let cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, px, py, Some(0), owner, None);
+    let cmd = TrackPopupMenu(
+        menu,
+        TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+        px,
+        py,
+        Some(0),
+        owner,
+        None,
+    );
     let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
     let _ = DestroyMenu(menu);
     match cmd.0 {
@@ -122,7 +140,10 @@ pub(super) unsafe fn begin_menu_drag(list: HWND, source: i32) {
 
 /// Client-point → row index (LVM_HITTEST); -1 if past the last row.
 unsafe fn hit_row(list: HWND, x: i32, y: i32) -> i32 {
-    let mut ht = windows::Win32::UI::Controls::LVHITTESTINFO { pt: POINT { x, y }, ..Default::default() };
+    let mut ht = windows::Win32::UI::Controls::LVHITTESTINFO {
+        pt: POINT { x, y },
+        ..Default::default()
+    };
     SendMessageW(
         list,
         windows::Win32::UI::Controls::LVM_HITTEST,
@@ -183,7 +204,12 @@ unsafe fn invalidate_mark_band(list: HWND, anchor: i32, after: bool) {
     let y = if after { ir.bottom } else { ir.top };
     let mut cr = RECT::default();
     let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(list, &mut cr);
-    let band = RECT { left: cr.left, top: y - 2, right: cr.right, bottom: y + 2 };
+    let band = RECT {
+        left: cr.left,
+        top: y - 2,
+        right: cr.right,
+        bottom: y + 2,
+    };
     let _ = InvalidateRect(Some(list), Some(&band), true);
 }
 
@@ -200,11 +226,21 @@ unsafe fn draw_insert_line(list: HWND) {
         return;
     }
     let mut ir = RECT::default(); // .left = LVIR_BOUNDS (0)
-    SendMessageW(list, LVM_GETITEMRECT, Some(WPARAM(anchor as usize)), Some(LPARAM(&mut ir as *mut _ as isize)));
+    SendMessageW(
+        list,
+        LVM_GETITEMRECT,
+        Some(WPARAM(anchor as usize)),
+        Some(LPARAM(&mut ir as *mut _ as isize)),
+    );
     let y = if after { ir.bottom } else { ir.top };
     let mut cr = RECT::default();
     let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(list, &mut cr);
-    let line = RECT { left: cr.left + 2, top: y - 1, right: cr.right - 2, bottom: y + 1 };
+    let line = RECT {
+        left: cr.left + 2,
+        top: y - 1,
+        right: cr.right - 2,
+        bottom: y + 1,
+    };
     let hdc = GetDC(Some(list));
     let br = CreateSolidBrush(crate::dark::ACCENT());
     FillRect(hdc, &line, br);
@@ -236,8 +272,17 @@ unsafe fn snapshot_rows(list: HWND) -> Vec<(isize, bool)> {
     let count = SendMessageW(list, LVM_GETITEMCOUNT, None, None).0 as i32;
     let mut rows = Vec::with_capacity(count.max(0) as usize);
     for r in 0..count {
-        let mut it = LVITEMW { mask: LVIF_PARAM, iItem: r, ..Default::default() };
-        SendMessageW(list, LVM_GETITEMW, Some(WPARAM(0)), Some(LPARAM(&mut it as *mut _ as isize)));
+        let mut it = LVITEMW {
+            mask: LVIF_PARAM,
+            iItem: r,
+            ..Default::default()
+        };
+        SendMessageW(
+            list,
+            LVM_GETITEMW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut it as *mut _ as isize)),
+        );
         rows.push((it.lParam.0, is_checked(list, r)));
     }
     rows
@@ -262,7 +307,11 @@ pub(super) unsafe fn rebuild_rows(list: HWND, rows: &[(isize, bool)], select: Op
         if !is_sep && ti >= MENU_ITEM_TOGGLES.len() {
             continue;
         }
-        let label = wide(if is_sep { SEP_LABEL } else { t(MENU_ITEM_TOGGLES[ti].1) });
+        let label = wide(if is_sep {
+            SEP_LABEL
+        } else {
+            t(MENU_ITEM_TOGGLES[ti].1)
+        });
         let mut it = LVITEMW {
             mask: LVIF_TEXT | LVIF_PARAM,
             iItem: row as i32,
@@ -270,7 +319,12 @@ pub(super) unsafe fn rebuild_rows(list: HWND, rows: &[(isize, bool)], select: Op
             lParam: LPARAM(param),
             ..Default::default()
         };
-        SendMessageW(list, LVM_INSERTITEMW, Some(WPARAM(0)), Some(LPARAM(&mut it as *mut _ as isize)));
+        SendMessageW(
+            list,
+            LVM_INSERTITEMW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut it as *mut _ as isize)),
+        );
         if is_sep {
             clear_checkbox(list, row as i32);
         } else {
@@ -280,8 +334,17 @@ pub(super) unsafe fn rebuild_rows(list: HWND, rows: &[(isize, bool)], select: Op
     if let Some(key) = select {
         if let Some(idx) = rows.iter().position(|&(p, _)| p == key) {
             let f = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
-            let sel = LVITEMW { stateMask: f, state: f, ..Default::default() };
-            SendMessageW(list, LVM_SETITEMSTATE, Some(WPARAM(idx)), Some(LPARAM(&sel as *const _ as isize)));
+            let sel = LVITEMW {
+                stateMask: f,
+                state: f,
+                ..Default::default()
+            };
+            SendMessageW(
+                list,
+                LVM_SETITEMSTATE,
+                Some(WPARAM(idx)),
+                Some(LPARAM(&sel as *const _ as isize)),
+            );
         }
     }
 }

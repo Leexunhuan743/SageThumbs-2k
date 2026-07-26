@@ -177,19 +177,29 @@ fn eye_sample(x: i32, y: i32) -> (u8, u8, u8) {
     let Some(&dc) = EYE_SHOT.get() else {
         return (0, 0, 0);
     };
-    let (vw, vh) = (EYE_VW.load(Ordering::Relaxed), EYE_VH.load(Ordering::Relaxed));
+    let (vw, vh) = (
+        EYE_VW.load(Ordering::Relaxed),
+        EYE_VH.load(Ordering::Relaxed),
+    );
     let x = x.clamp(0, (vw - 1).max(0));
     let y = y.clamp(0, (vh - 1).max(0));
     let c = unsafe { GetPixel(HDC(dc as *mut c_void), x, y) }.0; // 0x00BBGGRR, or CLR_INVALID
     if c == 0xFFFF_FFFF {
         return (0, 0, 0);
     }
-    ((c & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, ((c >> 16) & 0xFF) as u8)
+    (
+        (c & 0xFF) as u8,
+        ((c >> 8) & 0xFF) as u8,
+        ((c >> 16) & 0xFF) as u8,
+    )
 }
 
 /// The loupe's box rect for a cursor at (cx, cy), nudged to stay on-screen.
 fn eye_loupe_box(cx: i32, cy: i32) -> RECT {
-    let (vw, vh) = (EYE_VW.load(Ordering::Relaxed), EYE_VH.load(Ordering::Relaxed));
+    let (vw, vh) = (
+        EYE_VW.load(Ordering::Relaxed),
+        EYE_VH.load(Ordering::Relaxed),
+    );
     let (bw, bh) = (EYE_MAG, EYE_MAG + EYE_LBL);
     let gap = 18;
     let mut bx = cx + gap;
@@ -202,10 +212,20 @@ fn eye_loupe_box(cx: i32, cy: i32) -> RECT {
     }
     bx = bx.clamp(0, (vw - bw).max(0));
     by = by.clamp(0, (vh - bh).max(0));
-    RECT { left: bx, top: by, right: bx + bw, bottom: by + bh }
+    RECT {
+        left: bx,
+        top: by,
+        right: bx + bw,
+        bottom: by + bh,
+    }
 }
 
-extern "system" fn eyedropper_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+extern "system" fn eyedropper_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     unsafe {
         match msg {
             WM_ERASEBKGND => LRESULT(1), // the snapshot covers every pixel
@@ -271,7 +291,17 @@ unsafe fn eye_paint(hwnd: HWND) {
         let shotdc = HDC(shot as *mut c_void);
         let pr = ps.rcPaint;
         // Restore the snapshot under the invalid region (erasing the old loupe).
-        let _ = BitBlt(hdc, pr.left, pr.top, pr.right - pr.left, pr.bottom - pr.top, Some(shotdc), pr.left, pr.top, SRCCOPY);
+        let _ = BitBlt(
+            hdc,
+            pr.left,
+            pr.top,
+            pr.right - pr.left,
+            pr.bottom - pr.top,
+            Some(shotdc),
+            pr.left,
+            pr.top,
+            SRCCOPY,
+        );
         // Draw the loupe at the current cursor.
         let cx = EYE_LAST_X.load(Ordering::Relaxed);
         let cy = EYE_LAST_Y.load(Ordering::Relaxed);
@@ -290,7 +320,19 @@ unsafe fn eye_draw_loupe(hdc: HDC, shotdc: HDC, cx: i32, cy: i32) {
 
     // Magnified pixels — nearest-neighbor so each screen pixel is a crisp block.
     SetStretchBltMode(hdc, COLORONCOLOR);
-    let _ = StretchBlt(hdc, bx, by, EYE_MAG, EYE_MAG, Some(shotdc), cx - EYE_K, cy - EYE_K, EYE_SPAN, EYE_SPAN, SRCCOPY);
+    let _ = StretchBlt(
+        hdc,
+        bx,
+        by,
+        EYE_MAG,
+        EYE_MAG,
+        Some(shotdc),
+        cx - EYE_K,
+        cy - EYE_K,
+        EYE_SPAN,
+        EYE_SPAN,
+        SRCCOPY,
+    );
 
     // Crosshair on the center cell (the pixel that gets picked).
     let cell = EYE_MAG / EYE_SPAN;
@@ -306,11 +348,21 @@ unsafe fn eye_draw_loupe(hdc: HDC, shotdc: HDC, cx: i32, cy: i32) {
 
     // Label strip: swatch + hex (top row), then a "Press Space to copy" hint.
     let (r, g, b) = eye_sample(cx, cy);
-    let lbl = RECT { left: bx, top: by + EYE_MAG, right: bx + EYE_MAG, bottom: by + EYE_MAG + EYE_LBL };
+    let lbl = RECT {
+        left: bx,
+        top: by + EYE_MAG,
+        right: bx + EYE_MAG,
+        bottom: by + EYE_MAG + EYE_LBL,
+    };
     let lbg = CreateSolidBrush(rgb(24, 24, 24));
     FillRect(hdc, &lbl, lbg);
     let _ = DeleteObject(lbg.into());
-    let sw = RECT { left: bx + 5, top: by + EYE_MAG + 5, right: bx + 21, bottom: by + EYE_MAG + 21 };
+    let sw = RECT {
+        left: bx + 5,
+        top: by + EYE_MAG + 5,
+        right: bx + 21,
+        bottom: by + EYE_MAG + 21,
+    };
     let swb = CreateSolidBrush(rgb(r, g, b));
     FillRect(hdc, &sw, swb);
     let _ = DeleteObject(swb.into());
@@ -321,20 +373,50 @@ unsafe fn eye_draw_loupe(hdc: HDC, shotdc: HDC, cx: i32, cy: i32) {
     SetTextColor(hdc, rgb(240, 240, 240));
     let mut hex = wide(&format!("#{r:02X}{g:02X}{b:02X}"));
     let hn = hex.len().saturating_sub(1);
-    let mut hr = RECT { left: bx + 28, top: by + EYE_MAG + 2, right: bx + EYE_MAG, bottom: by + EYE_MAG + 24 };
-    DrawTextW(hdc, &mut hex[..hn], &mut hr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    let mut hr = RECT {
+        left: bx + 28,
+        top: by + EYE_MAG + 2,
+        right: bx + EYE_MAG,
+        bottom: by + EYE_MAG + 24,
+    };
+    DrawTextW(
+        hdc,
+        &mut hex[..hn],
+        &mut hr,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
     // Hint (row 2).
     SetTextColor(hdc, rgb(150, 150, 150));
     let mut hint = wide(t("eye_hint"));
     let hin = hint.len().saturating_sub(1);
-    let mut hir = RECT { left: bx + 6, top: by + EYE_MAG + 24, right: bx + EYE_MAG, bottom: by + EYE_MAG + EYE_LBL };
-    DrawTextW(hdc, &mut hint[..hin], &mut hir, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    let mut hir = RECT {
+        left: bx + 6,
+        top: by + EYE_MAG + 24,
+        right: bx + EYE_MAG,
+        bottom: by + EYE_MAG + EYE_LBL,
+    };
+    DrawTextW(
+        hdc,
+        &mut hint[..hin],
+        &mut hir,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
 
     // Outer + magnifier borders.
     let border = CreateSolidBrush(rgb(0, 0, 0));
-    let outer = RECT { left: bx, top: by, right: bx + EYE_MAG, bottom: by + EYE_MAG + EYE_LBL };
+    let outer = RECT {
+        left: bx,
+        top: by,
+        right: bx + EYE_MAG,
+        bottom: by + EYE_MAG + EYE_LBL,
+    };
     FrameRect(hdc, &outer, border);
-    let mag = RECT { left: bx, top: by, right: bx + EYE_MAG, bottom: by + EYE_MAG };
+    let mag = RECT {
+        left: bx,
+        top: by,
+        right: bx + EYE_MAG,
+        bottom: by + EYE_MAG,
+    };
     FrameRect(hdc, &mag, border);
     let _ = DeleteObject(border.into());
 }

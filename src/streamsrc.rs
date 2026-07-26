@@ -254,7 +254,9 @@ unsafe fn peek_is_7z(stream: &IStream) -> bool {
         Some(&mut got),
     );
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
-    result.is_ok() && got as usize == signature.len() && signature == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]
+    result.is_ok()
+        && got as usize == signature.len()
+        && signature == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]
 }
 
 /// Sniff the stream head for a video container we can frame-grab (Matroska/WebM, MP4/MOV,
@@ -834,13 +836,13 @@ mod tests {
     fn generic_archive_requires_a_known_size_before_parse() {
         assert_eq!(checked_generic_archive_size(None, u64::MAX), None);
         assert_eq!(
-            checked_generic_archive_size(
-                Some(decode::limits::MAX_INPUT_BYTES + 1),
-                u64::MAX
-            ),
+            checked_generic_archive_size(Some(decode::limits::MAX_INPUT_BYTES + 1), u64::MAX),
             None
         );
-        assert_eq!(checked_generic_archive_size(Some(4096), u64::MAX), Some(4096));
+        assert_eq!(
+            checked_generic_archive_size(Some(4096), u64::MAX),
+            Some(4096)
+        );
         assert_eq!(checked_generic_archive_size(Some(4096), 1024), None);
     }
 
@@ -866,8 +868,8 @@ mod tests {
         assert_eq!(got as usize, first.len());
         assert_eq!(first, SIGNATURE);
 
-        let not_7z = unsafe { SHCreateMemStream(Some(b"PK\x03\x04zip")) }
-            .expect("SHCreateMemStream");
+        let not_7z =
+            unsafe { SHCreateMemStream(Some(b"PK\x03\x04zip")) }.expect("SHCreateMemStream");
         assert!(!unsafe { peek_is_7z(&not_7z) });
     }
 

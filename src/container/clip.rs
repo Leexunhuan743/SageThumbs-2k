@@ -110,7 +110,10 @@ fn chunk_header<R: Read + Seek>(r: &mut R, pos: u64) -> Option<([u8; 8], u64)> {
     r.seek(SeekFrom::Start(pos)).ok()?;
     let mut h = [0u8; 16];
     r.read_exact(&mut h).ok()?;
-    Some((h[..8].try_into().ok()?, u64::from_be_bytes(h[8..16].try_into().ok()?)))
+    Some((
+        h[..8].try_into().ok()?,
+        u64::from_be_bytes(h[8..16].try_into().ok()?),
+    ))
 }
 
 /// Find the largest PNG blob in the SQLite database's table-leaf cells.
@@ -135,15 +138,21 @@ fn read_sqlite_preview(db: &[u8]) -> Option<Vec<u8>> {
         let page_off = (pg - 1) * page_size;
         // Page 1's b-tree header sits after the 100-byte file header.
         let hdr_off = if pg == 1 { page_off + 100 } else { page_off };
-        let Some(&ptype) = db.get(hdr_off) else { continue };
+        let Some(&ptype) = db.get(hdr_off) else {
+            continue;
+        };
         if ptype != 0x0D {
             continue; // table-leaf pages only (where row payloads live)
         }
-        let (Some(&nh), Some(&nl)) = (db.get(hdr_off + 3), db.get(hdr_off + 4)) else { continue };
+        let (Some(&nh), Some(&nl)) = (db.get(hdr_off + 3), db.get(hdr_off + 4)) else {
+            continue;
+        };
         let num_cells = u16::from_be_bytes([nh, nl]) as usize;
         for c in 0..num_cells {
             let cpo = hdr_off + 8 + c * 2;
-            let (Some(&ph), Some(&pl)) = (db.get(cpo), db.get(cpo + 1)) else { break };
+            let (Some(&ph), Some(&pl)) = (db.get(cpo), db.get(cpo + 1)) else {
+                break;
+            };
             let cell_off = page_off + u16::from_be_bytes([ph, pl]) as usize;
             if let Some(png) = cell_png(db, cell_off, page_size, usable) {
                 if best.as_ref().is_none_or(|b: &Vec<u8>| png.len() > b.len()) {
@@ -173,7 +182,11 @@ fn cell_png(db: &[u8], cell_off: usize, page_size: usize, usable: usize) -> Opti
     } else {
         let min_local = (usable - 12) * 32 / 255 - 23;
         let k = min_local + (payload_len - min_local) % (usable - 4);
-        if k <= max_local { k } else { min_local }
+        if k <= max_local {
+            k
+        } else {
+            min_local
+        }
     };
 
     let mut payload = Vec::with_capacity(payload_len);
@@ -306,7 +319,11 @@ pub(crate) mod testutil {
         f.extend_from_slice(b"CHNKHead");
         f.extend_from_slice(&40u64.to_be_bytes());
         let mut head = [0u8; 40];
-        let ptr = if poison_ptr { u64::MAX / 2 } else { sqli_off as u64 };
+        let ptr = if poison_ptr {
+            u64::MAX / 2
+        } else {
+            sqli_off as u64
+        };
         head[8..16].copy_from_slice(&ptr.to_be_bytes());
         f.extend_from_slice(&head);
         f.extend_from_slice(b"CHNKExta");
@@ -355,7 +372,10 @@ mod tests {
     #[test]
     fn seek_extract_reaches_tail_db_via_head_pointer() {
         let clip = testutil::synthetic_clip(PNG, 4 * 1024 * 1024, false);
-        assert_eq!(extract_seek(std::io::Cursor::new(&clip)).as_deref(), Some(PNG));
+        assert_eq!(
+            extract_seek(std::io::Cursor::new(&clip)).as_deref(),
+            Some(PNG)
+        );
         // The in-memory API is the same code path (Cursor delegation).
         assert_eq!(extract(&clip).as_deref(), Some(PNG));
     }
@@ -365,7 +385,10 @@ mod tests {
     #[test]
     fn seek_extract_falls_back_to_chunk_walk_on_bad_pointer() {
         let clip = testutil::synthetic_clip(PNG, 512 * 1024, true);
-        assert_eq!(extract_seek(std::io::Cursor::new(&clip)).as_deref(), Some(PNG));
+        assert_eq!(
+            extract_seek(std::io::Cursor::new(&clip)).as_deref(),
+            Some(PNG)
+        );
     }
 
     /// A database cut short (truncated file, or one bigger than the DB_MAX
@@ -379,6 +402,9 @@ mod tests {
         let sqli = clip.windows(8).position(|w| w == b"CHNKSQLi").unwrap();
         clip[sqli + 8..sqli + 16].copy_from_slice(&1024u64.to_be_bytes());
         let cut = &clip[..sqli + 16 + 512];
-        assert_eq!(extract_seek(std::io::Cursor::new(cut)).as_deref(), Some(PNG));
+        assert_eq!(
+            extract_seek(std::io::Cursor::new(cut)).as_deref(),
+            Some(PNG)
+        );
     }
 }

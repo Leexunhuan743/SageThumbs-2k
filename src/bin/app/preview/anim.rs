@@ -63,7 +63,14 @@ fn collect_capped(frames: image::Frames) -> Option<Vec<(DecodedRgba, u32)>> {
         if total > MAX_TOTAL_BYTES {
             return None;
         }
-        out.push((DecodedRgba { w: w as i32, h: h as i32, rgba: buf.into_raw() }, ms));
+        out.push((
+            DecodedRgba {
+                w: w as i32,
+                h: h as i32,
+                rgba: buf.into_raw(),
+            },
+            ms,
+        ));
     }
     if out.len() < 2 {
         None

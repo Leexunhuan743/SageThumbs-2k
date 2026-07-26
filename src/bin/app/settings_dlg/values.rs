@@ -25,7 +25,11 @@ pub(super) unsafe fn load_values(hwnd: HWND) {
         let count = SendMessageW(mlist, LVM_GETITEMCOUNT, None, None).0 as i32;
         for row in 0..count {
             if let Some(ti) = menu_row_toggle(mlist, row) {
-                set_check(mlist, row, settings::menu_item_shown(MENU_ITEM_TOGGLES[ti].1));
+                set_check(
+                    mlist,
+                    row,
+                    settings::menu_item_shown(MENU_ITEM_TOGGLES[ti].1),
+                );
             }
         }
     }
@@ -41,18 +45,30 @@ pub(super) unsafe fn load_values(hwnd: HWND) {
     // Quick preview toggles.
     check(hwnd, ID_PREVIEW_ENABLED, settings::preview_enabled());
     check(hwnd, ID_PREVIEW_HOLD_PEEK, settings::preview_hold_peek());
-    check(hwnd, ID_PREVIEW_CLOSE_FOCUS, settings::preview_close_on_focus_loss());
+    check(
+        hwnd,
+        ID_PREVIEW_CLOSE_FOCUS,
+        settings::preview_close_on_focus_loss(),
+    );
     check(hwnd, ID_PREVIEW_TOPMOST, settings::preview_open_front());
     check(hwnd, ID_PREVIEW_TEXT, settings::preview_text());
     check(hwnd, ID_PREVIEW_MARKDOWN, settings::preview_markdown());
-    check(hwnd, ID_PREVIEW_MD_REMOTE, settings::preview_md_remote_img());
+    check(
+        hwnd,
+        ID_PREVIEW_MD_REMOTE,
+        settings::preview_md_remote_img(),
+    );
     #[cfg(feature = "html-preview")]
     check(hwnd, ID_PREVIEW_HTML, settings::preview_html());
     #[cfg(feature = "html-preview")]
     check(hwnd, ID_PREVIEW_URL_LIVE, settings::preview_url_live());
     // Instant screenshot is on iff a quick-save hotkey is stored (vk != 0); grey the
     // picker to match.
-    check(hwnd, ID_SHOT_QUICK_ENABLE, settings::screenshot_quick_hotkey().1 != 0);
+    check(
+        hwnd,
+        ID_SHOT_QUICK_ENABLE,
+        settings::screenshot_quick_hotkey().1 != 0,
+    );
     update_quick_enabled(hwnd);
     refresh_shot_status(hwnd);
     // Seed the Settings-sync row (button label + green "● Synced" badge) from the signed-in
@@ -79,9 +95,9 @@ pub(super) unsafe fn load_defaults(hwnd: HWND) {
     check(hwnd, ID_PRESERVE_DATE, false);
     check(hwnd, ID_VERBOSE_LOG, false);
     check(hwnd, ID_UPDATE_AUTO, true); // background update check defaults ON
-    // Quick preview: reset the behavior toggles to their defaults, but leave the master
-    // ENABLE alone — like the screenshot service, "Defaults" shouldn't silently kill a
-    // feature the user turned on.
+                                       // Quick preview: reset the behavior toggles to their defaults, but leave the master
+                                       // ENABLE alone — like the screenshot service, "Defaults" shouldn't silently kill a
+                                       // feature the user turned on.
     check(hwnd, ID_PREVIEW_HOLD_PEEK, true);
     check(hwnd, ID_PREVIEW_CLOSE_FOCUS, false);
     check(hwnd, ID_PREVIEW_TOPMOST, true); // "Open in front" — default ON
@@ -98,7 +114,12 @@ pub(super) unsafe fn load_defaults(hwnd: HWND) {
     // disagree — the getter defaulted to 1 while "Defaults" forced 2 — so a fresh
     // install and pressing "Defaults" produced different menu placement.
     if let Ok(prev) = GetDlgItem(Some(hwnd), ID_MENU_PREVIEW) {
-        SendMessageW(prev, CB_SETCURSEL, Some(WPARAM(settings::DEFAULT_MENU_PREVIEW as usize)), None);
+        SendMessageW(
+            prev,
+            CB_SETCURSEL,
+            Some(WPARAM(settings::DEFAULT_MENU_PREVIEW as usize)),
+            None,
+        );
     }
     if let Ok(mlist) = GetDlgItem(Some(hwnd), ID_MENU_ITEMS_LIST) {
         // Factory order + every item shown (rebuilds the rows, dividers included).
@@ -115,7 +136,10 @@ pub(super) unsafe fn load_defaults(hwnd: HWND) {
     // default chord and grey it out to match.
     check(hwnd, ID_SHOT_QUICK_ENABLE, false);
     if let Ok(quick) = GetDlgItem(Some(hwnd), ID_SHOT_QUICK_HOTKEY) {
-        let d = SHOT_PRESETS.iter().position(|&(l, _)| l == QUICK_DEFAULT_LABEL).unwrap_or(0);
+        let d = SHOT_PRESETS
+            .iter()
+            .position(|&(l, _)| l == QUICK_DEFAULT_LABEL)
+            .unwrap_or(0);
         SendMessageW(quick, CB_SETCURSEL, Some(WPARAM(d)), None);
     }
     // Custom action binding: back to the default action (index 0 = colour picker) + unbound.
@@ -241,13 +265,26 @@ pub(super) unsafe fn apply_settings(hwnd: HWND) {
         let _ = settings::set_dword("MenuPreview", sel as u32);
     }
     let _ = settings::set_dword("ContainerSort", checked(hwnd, ID_C_SORT) as u32);
-    let _ = settings::set_dword("ContainerPreferCover", checked(hwnd, ID_C_PREFER_COVER) as u32);
-    let _ = settings::set_dword("ContainerSkipScanlation", checked(hwnd, ID_C_SKIP_SCAN) as u32);
+    let _ = settings::set_dword(
+        "ContainerPreferCover",
+        checked(hwnd, ID_C_PREFER_COVER) as u32,
+    );
+    let _ = settings::set_dword(
+        "ContainerSkipScanlation",
+        checked(hwnd, ID_C_SKIP_SCAN) as u32,
+    );
     let _ = settings::set_dword("ArchiveCollage", checked(hwnd, ID_C_ARCHIVE_SHEET) as u32);
 
     let mut ok = Default::default();
     let max_mb = GetDlgItemInt(hwnd, ID_MAXSIZE, Some(&mut ok), false);
-    let _ = settings::set_dword("MaxSize", if ok.as_bool() { max_mb } else { settings::DEFAULT_MAX_FILE_MB });
+    let _ = settings::set_dword(
+        "MaxSize",
+        if ok.as_bool() {
+            max_mb
+        } else {
+            settings::DEFAULT_MAX_FILE_MB
+        },
+    );
 
     let size = GetDlgItemInt(hwnd, ID_SIZE, Some(&mut ok), false);
     let size = if ok.as_bool() {
@@ -259,9 +296,23 @@ pub(super) unsafe fn apply_settings(hwnd: HWND) {
     let _ = settings::set_dword("Height", size);
 
     let jpeg = GetDlgItemInt(hwnd, ID_JPEG, Some(&mut ok), false).min(100);
-    let _ = settings::set_dword("JPEG", if ok.as_bool() { jpeg } else { settings::DEFAULT_JPEG });
+    let _ = settings::set_dword(
+        "JPEG",
+        if ok.as_bool() {
+            jpeg
+        } else {
+            settings::DEFAULT_JPEG
+        },
+    );
     let png = GetDlgItemInt(hwnd, ID_PNG, Some(&mut ok), false).min(9);
-    let _ = settings::set_dword("PNG", if ok.as_bool() { png } else { settings::DEFAULT_PNG });
+    let _ = settings::set_dword(
+        "PNG",
+        if ok.as_bool() {
+            png
+        } else {
+            settings::DEFAULT_PNG
+        },
+    );
 
     // Persist the UI-language choice ("" = follow the system language).
     let _ = settings::set_lang(selected_lang(hwnd).unwrap_or(""));
@@ -284,12 +335,17 @@ pub(super) unsafe fn apply_settings(hwnd: HWND) {
         0
     } else if let Ok(quick) = GetDlgItem(Some(hwnd), ID_SHOT_QUICK_HOTKEY) {
         let qsel = SendMessageW(quick, CB_GETCURSEL, None, None).0;
-        SHOT_PRESETS.get(qsel.max(0) as usize).map_or(0, |&(_, p)| p)
+        SHOT_PRESETS
+            .get(qsel.max(0) as usize)
+            .map_or(0, |&(_, p)| p)
     } else {
         0
     };
     let _ = settings::set_screenshot_quick_hotkey(qpacked);
-    let _ = settings::set_dword("ScreenshotHideTray", checked(hwnd, ID_SHOT_HIDE_TRAY) as u32);
+    let _ = settings::set_dword(
+        "ScreenshotHideTray",
+        checked(hwnd, ID_SHOT_HIDE_TRAY) as u32,
+    );
     let _ = settings::set_screenshot_use_save_dir(checked(hwnd, ID_SHOT_USE_DIR));
     // Custom action hotkey: persist the chosen action + its chord (item 0 of the hotkey combo
     // = "(none)" = unbound). Written BEFORE set_enabled() below so the daemon reconcile — which
@@ -343,7 +399,10 @@ pub(super) unsafe fn apply_settings(hwnd: HWND) {
     FMT_STATE.with(|st| {
         let st = st.borrow();
         for (i, &(ext, _)) in formats::FORMATS.iter().enumerate() {
-            let want = st.get(i).copied().unwrap_or_else(|| settings::format_enabled(ext));
+            let want = st
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| settings::format_enabled(ext));
             let old = settings::format_enabled(ext);
             if old != want {
                 changes.push((ext, want, old));
@@ -387,8 +446,18 @@ pub(super) unsafe fn export_settings_to_file(hwnd: HWND) {
         return;
     };
     match std::fs::write(&path, crate::settings_io::export_settings()) {
-        Ok(()) => msg(hwnd, &format!("Settings exported to:\n{path}"), "Export Settings", MB_ICONINFORMATION),
-        Err(e) => msg(hwnd, &format!("Couldn't write the file:\n\n{e}"), "Export Settings", MB_ICONERROR),
+        Ok(()) => msg(
+            hwnd,
+            &format!("Settings exported to:\n{path}"),
+            "Export Settings",
+            MB_ICONINFORMATION,
+        ),
+        Err(e) => msg(
+            hwnd,
+            &format!("Couldn't write the file:\n\n{e}"),
+            "Export Settings",
+            MB_ICONERROR,
+        ),
     }
 }
 
@@ -401,11 +470,21 @@ pub(super) unsafe fn import_settings_from_file(hwnd: HWND) {
     };
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(e) => return msg(hwnd, &format!("Couldn't read the file:\n\n{e}"), "Import Settings", MB_ICONERROR),
+        Err(e) => {
+            return msg(
+                hwnd,
+                &format!("Couldn't read the file:\n\n{e}"),
+                "Import Settings",
+                MB_ICONERROR,
+            )
+        }
     };
     // Snapshot the per-format enables so we only trigger the (elevated) re-register when
     // the import actually changed which formats are hooked.
-    let before: Vec<bool> = formats::FORMATS.iter().map(|&(ext, _)| settings::format_enabled(ext)).collect();
+    let before: Vec<bool> = formats::FORMATS
+        .iter()
+        .map(|&(ext, _)| settings::format_enabled(ext))
+        .collect();
     match crate::settings_io::import_settings(&text) {
         Err(e) => msg(hwnd, &e, "Import Settings", MB_ICONERROR),
         Ok(n) => {
@@ -418,7 +497,12 @@ pub(super) unsafe fn import_settings_from_file(hwnd: HWND) {
                 // Sync the machine-wide HKCR hooks to the imported per-format flags.
                 let _ = reregister_elevated();
             }
-            msg(hwnd, &format!("Imported {n} settings — applied now."), "Import Settings", MB_ICONINFORMATION);
+            msg(
+                hwnd,
+                &format!("Imported {n} settings — applied now."),
+                "Import Settings",
+                MB_ICONINFORMATION,
+            );
         }
     }
 }
@@ -428,7 +512,10 @@ pub(super) unsafe fn import_settings_from_file(hwnd: HWND) {
 pub(super) unsafe fn refresh_from_settings(hwnd: HWND) {
     load_values(hwnd);
     FMT_STATE.with(|s| {
-        *s.borrow_mut() = formats::FORMATS.iter().map(|&(ext, _)| settings::format_enabled(ext)).collect();
+        *s.borrow_mut() = formats::FORMATS
+            .iter()
+            .map(|&(ext, _)| settings::format_enabled(ext))
+            .collect();
     });
     if let Ok(list) = GetDlgItem(Some(hwnd), ID_LIST) {
         populate_list(list, "");
@@ -440,7 +527,12 @@ pub(super) unsafe fn refresh_from_settings(hwnd: HWND) {
 pub(super) unsafe fn msg(hwnd: HWND, text: &str, caption: &str, icon: MESSAGEBOX_STYLE) {
     let t = wide(text);
     let c = wide(caption);
-    MessageBoxW(Some(hwnd), PCWSTR(t.as_ptr()), PCWSTR(c.as_ptr()), MB_OK | icon);
+    MessageBoxW(
+        Some(hwnd),
+        PCWSTR(t.as_ptr()),
+        PCWSTR(c.as_ptr()),
+        MB_OK | icon,
+    );
 }
 
 /// Clear Windows' thumbnail cache and restart Explorer so thumbnails rebuild. Per-user,
@@ -453,13 +545,21 @@ pub(super) unsafe fn rebuild_thumbnail_cache(hwnd: HWND) {
          taskbar will blink). Open windows and files are not affected.\n\nContinue?",
     );
     let cap = wide("Rebuild Thumbnail Cache");
-    if MessageBoxW(Some(hwnd), PCWSTR(warn.as_ptr()), PCWSTR(cap.as_ptr()), MB_YESNO | MB_ICONWARNING) != IDYES {
+    if MessageBoxW(
+        Some(hwnd),
+        PCWSTR(warn.as_ptr()),
+        PCWSTR(cap.as_ptr()),
+        MB_YESNO | MB_ICONWARNING,
+    ) != IDYES
+    {
         return;
     }
     // Kill Explorer (releases the cache files' lock), delete thumbcache_*.db, relaunch.
     // Must go through `shellcmd::cmd_c` — `Command::args` would escape the quotes for
     // the MSVCRT convention and `cmd` would misread them (see shellcmd, issue #5).
-    let _ = sagethumbs2k_core::shellcmd::cmd_c(sagethumbs2k_core::shellcmd::RESTART_EXPLORER_CLEARING_CACHE);
+    let _ = sagethumbs2k_core::shellcmd::cmd_c(
+        sagethumbs2k_core::shellcmd::RESTART_EXPLORER_CLEARING_CACHE,
+    );
     msg(
         hwnd,
         "Thumbnail cache cleared and Explorer restarted. Thumbnails will rebuild as you browse.",
@@ -578,7 +678,13 @@ pub(super) unsafe fn repair_associations(hwnd: HWND) {
          thumbnail cache and briefly restarts File Explorer (your taskbar will blink).\n\nContinue?",
     );
     let cap = wide("Repair File Associations");
-    if MessageBoxW(Some(hwnd), PCWSTR(warn.as_ptr()), PCWSTR(cap.as_ptr()), MB_YESNO | MB_ICONWARNING) != IDYES {
+    if MessageBoxW(
+        Some(hwnd),
+        PCWSTR(warn.as_ptr()),
+        PCWSTR(cap.as_ptr()),
+        MB_YESNO | MB_ICONWARNING,
+    ) != IDYES
+    {
         return;
     }
     // Report what actually happened. Each of these needs a different action from the
@@ -630,7 +736,9 @@ pub(super) unsafe fn repair_associations(hwnd: HWND) {
     }
     // Registration rewrote the hooks; drop the stale cached thumbnails + restart Explorer so
     // the repaired ones render right away. (The cmd sequence gives regsvr32 time to finish.)
-    let _ = sagethumbs2k_core::shellcmd::cmd_c(sagethumbs2k_core::shellcmd::RESTART_EXPLORER_CLEARING_CACHE);
+    let _ = sagethumbs2k_core::shellcmd::cmd_c(
+        sagethumbs2k_core::shellcmd::RESTART_EXPLORER_CLEARING_CACHE,
+    );
     msg(
         hwnd,
         "File associations repaired. Thumbnails will rebuild as you browse.",
@@ -638,4 +746,3 @@ pub(super) unsafe fn repair_associations(hwnd: HWND) {
         MB_ICONINFORMATION,
     );
 }
-

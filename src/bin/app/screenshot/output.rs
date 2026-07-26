@@ -24,7 +24,7 @@ pub(super) unsafe fn copy_dib_to_clipboard(top_down_bgra: &[u8], w: i32, h: i32)
     dib.extend_from_slice(&0i32.to_le_bytes()); // biYPelsPerMeter
     dib.extend_from_slice(&0u32.to_le_bytes()); // biClrUsed
     dib.extend_from_slice(&0u32.to_le_bytes()); // biClrImportant
-    // Emit rows bottom-up from the top-down source.
+                                                // Emit rows bottom-up from the top-down source.
     for y in (0..h as usize).rev() {
         dib.extend_from_slice(&top_down_bgra[y * row..y * row + row]);
     }
@@ -58,7 +58,9 @@ pub(super) unsafe fn timestamped_name() -> String {
 /// Save button when "use a fixed save folder" is on, and by the editor-less instant
 /// capture. Returns whether the file was written.
 pub(super) fn save_png_to_dir(dir: &std::path::Path, top_down_bgra: &[u8], w: i32, h: i32) -> bool {
-    let Some(img) = to_rgba(top_down_bgra, w, h) else { return false };
+    let Some(img) = to_rgba(top_down_bgra, w, h) else {
+        return false;
+    };
     let _ = std::fs::create_dir_all(dir);
     let name = unsafe { timestamped_name() };
     img.save(dir.join(name)).is_ok()
@@ -66,8 +68,15 @@ pub(super) fn save_png_to_dir(dir: &std::path::Path, top_down_bgra: &[u8], w: i3
 
 /// Save the PNG to an exact path — the location the user chose in the Save-As dialog
 /// (Ctrl+S / Save with the fixed-folder option off). Returns whether it was written.
-pub(super) fn save_png_to_path(path: &std::path::Path, top_down_bgra: &[u8], w: i32, h: i32) -> bool {
-    let Some(img) = to_rgba(top_down_bgra, w, h) else { return false };
+pub(super) fn save_png_to_path(
+    path: &std::path::Path,
+    top_down_bgra: &[u8],
+    w: i32,
+    h: i32,
+) -> bool {
+    let Some(img) = to_rgba(top_down_bgra, w, h) else {
+        return false;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

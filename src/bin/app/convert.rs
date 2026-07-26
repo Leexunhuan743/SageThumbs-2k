@@ -28,8 +28,8 @@ use sagethumbs2k_core::{convert_file_opts, settings, ConvertOpts, Resize, Target
 use crate::dark::{dark_ctlcolor, dark_theme_combo};
 use crate::win::{
     checked, combo_sel, ctl, get_edit_text, make_lparam, pick_folder, read_listfile, run_dialog,
-    set_edit_text, t, wide, wm_dpichanged, BUTTON, COMBOBOX, EDIT, STATIC, BM_SETCHECK_MSG,
-    IDCANCEL, IDOK,
+    set_edit_text, t, wide, wm_dpichanged, BM_SETCHECK_MSG, BUTTON, COMBOBOX, EDIT, IDCANCEL, IDOK,
+    STATIC,
 };
 
 const TBM_GETPOS: u32 = 0x0400; // WM_USER + 0 (not surfaced by this metadata)
@@ -77,18 +77,58 @@ fn reveal_in_explorer(path: &Path) {
 /// image-crate encoders are all behind features the crate already enables.
 const CV_FORMATS: &[(&str, Option<ImageFormat>, &str)] = &[
     ("JPG  \u{2014}  JPEG / JFIF", Some(ImageFormat::Jpeg), "jpg"),
-    ("PNG  \u{2014}  Portable Network Graphics", Some(ImageFormat::Png), "png"),
+    (
+        "PNG  \u{2014}  Portable Network Graphics",
+        Some(ImageFormat::Png),
+        "png",
+    ),
     ("WEBP  \u{2014}  WebP", Some(ImageFormat::WebP), "webp"),
-    ("BMP  \u{2014}  Windows Bitmap", Some(ImageFormat::Bmp), "bmp"),
-    ("GIF  \u{2014}  CompuServe GIF", Some(ImageFormat::Gif), "gif"),
-    ("TIFF  \u{2014}  Revision 6", Some(ImageFormat::Tiff), "tiff"),
+    (
+        "BMP  \u{2014}  Windows Bitmap",
+        Some(ImageFormat::Bmp),
+        "bmp",
+    ),
+    (
+        "GIF  \u{2014}  CompuServe GIF",
+        Some(ImageFormat::Gif),
+        "gif",
+    ),
+    (
+        "TIFF  \u{2014}  Revision 6",
+        Some(ImageFormat::Tiff),
+        "tiff",
+    ),
     ("ICO  \u{2014}  Windows Icon", Some(ImageFormat::Ico), "ico"),
-    ("TGA  \u{2014}  Truevision Targa", Some(ImageFormat::Tga), "tga"),
-    ("QOI  \u{2014}  Quite OK Image", Some(ImageFormat::Qoi), "qoi"),
-    ("PNM  \u{2014}  Portable Pixmap (PPM)", Some(ImageFormat::Pnm), "ppm"),
-    ("PAM  \u{2014}  Portable Arbitrary Map", Some(ImageFormat::Pnm), "pam"),
-    ("EXR  \u{2014}  OpenEXR (HDR)", Some(ImageFormat::OpenExr), "exr"),
-    ("HDR  \u{2014}  Radiance RGBE (HDR)", Some(ImageFormat::Hdr), "hdr"),
+    (
+        "TGA  \u{2014}  Truevision Targa",
+        Some(ImageFormat::Tga),
+        "tga",
+    ),
+    (
+        "QOI  \u{2014}  Quite OK Image",
+        Some(ImageFormat::Qoi),
+        "qoi",
+    ),
+    (
+        "PNM  \u{2014}  Portable Pixmap (PPM)",
+        Some(ImageFormat::Pnm),
+        "ppm",
+    ),
+    (
+        "PAM  \u{2014}  Portable Arbitrary Map",
+        Some(ImageFormat::Pnm),
+        "pam",
+    ),
+    (
+        "EXR  \u{2014}  OpenEXR (HDR)",
+        Some(ImageFormat::OpenExr),
+        "exr",
+    ),
+    (
+        "HDR  \u{2014}  Radiance RGBE (HDR)",
+        Some(ImageFormat::Hdr),
+        "hdr",
+    ),
     ("FF  \u{2014}  Farbfeld", Some(ImageFormat::Farbfeld), "ff"),
     ("PDF  \u{2014}  Portable Document Format", None, "pdf"),
 ];
@@ -207,9 +247,15 @@ pub(crate) unsafe fn run_shot_convert(out: &str) -> bool {
     };
     let dark = crate::dark::is_dark();
     let title = t("cv_title").replace("{n}", "1");
-    let Some(hwnd) =
-        crate::win::create_shot_window(hinst, dark, w!("SageThumbs2KConvert"), Some(convert_wndproc), &title, 500, 274)
-    else {
+    let Some(hwnd) = crate::win::create_shot_window(
+        hinst,
+        dark,
+        w!("SageThumbs2KConvert"),
+        Some(convert_wndproc),
+        &title,
+        500,
+        274,
+    ) else {
         return false;
     };
     crate::win::pump_msgs(20);
@@ -225,51 +271,211 @@ unsafe fn build_convert_controls(hwnd: HWND, hinst: HINSTANCE) {
     let lbl = WINDOW_STYLE(0);
 
     // Row 1 — output format + per-format Settings…
-    ctl(hwnd, STATIC, t("cv_output_format"), lbl, 16, 23, 92, 18, -1, hinst);
-    let fcombo = ctl(hwnd, COMBOBOX, "", WINDOW_STYLE(CBS_DROPDOWNLIST as u32) | WS_VSCROLL | WS_TABSTOP, 110, 20, 252, 360, CID_FORMAT, hinst);
+    ctl(
+        hwnd,
+        STATIC,
+        t("cv_output_format"),
+        lbl,
+        16,
+        23,
+        92,
+        18,
+        -1,
+        hinst,
+    );
+    let fcombo = ctl(
+        hwnd,
+        COMBOBOX,
+        "",
+        WINDOW_STYLE(CBS_DROPDOWNLIST as u32) | WS_VSCROLL | WS_TABSTOP,
+        110,
+        20,
+        252,
+        360,
+        CID_FORMAT,
+        hinst,
+    );
     for (name, _, _) in CV_FORMATS {
         let w = wide(name);
-        SendMessageW(fcombo, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
+        SendMessageW(
+            fcombo,
+            CB_ADDSTRING,
+            None,
+            Some(LPARAM(w.as_ptr() as isize)),
+        );
     }
     // Magick-backed exotic targets, only when ImageMagick is present (full install).
     if sagethumbs2k_core::magick_available() {
         for (name, _) in CV_MAGICK_FORMATS {
             let w = wide(name);
-            SendMessageW(fcombo, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
+            SendMessageW(
+                fcombo,
+                CB_ADDSTRING,
+                None,
+                Some(LPARAM(w.as_ptr() as isize)),
+            );
         }
     }
     SendMessageW(fcombo, CB_SETCURSEL, Some(WPARAM(0)), None); // JPG
     dark_theme_combo(fcombo);
-    ctl(hwnd, BUTTON, t("cv_settings"), WS_TABSTOP, 372, 19, 96, 26, CID_SETTINGS, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("cv_settings"),
+        WS_TABSTOP,
+        372,
+        19,
+        96,
+        26,
+        CID_SETTINGS,
+        hinst,
+    );
 
     // Row 2 — resize on/off + mode
-    ctl(hwnd, BUTTON, t("cv_resize"), WINDOW_STYLE(BS_AUTOCHECKBOX as u32) | WS_TABSTOP, 16, 58, 90, 20, CID_RESIZE_CHK, hinst);
-    let rcombo = ctl(hwnd, COMBOBOX, "", WINDOW_STYLE(CBS_DROPDOWNLIST as u32) | WS_VSCROLL | WS_TABSTOP, 110, 56, 180, 240, CID_RESIZE, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("cv_resize"),
+        WINDOW_STYLE(BS_AUTOCHECKBOX as u32) | WS_TABSTOP,
+        16,
+        58,
+        90,
+        20,
+        CID_RESIZE_CHK,
+        hinst,
+    );
+    let rcombo = ctl(
+        hwnd,
+        COMBOBOX,
+        "",
+        WINDOW_STYLE(CBS_DROPDOWNLIST as u32) | WS_VSCROLL | WS_TABSTOP,
+        110,
+        56,
+        180,
+        240,
+        CID_RESIZE,
+        hinst,
+    );
     for (key, _) in CV_RESIZE {
         let w = wide(t(key));
-        SendMessageW(rcombo, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
+        SendMessageW(
+            rcombo,
+            CB_ADDSTRING,
+            None,
+            Some(LPARAM(w.as_ptr() as isize)),
+        );
     }
     SendMessageW(rcombo, CB_SETCURSEL, Some(WPARAM(0)), None);
     dark_theme_combo(rcombo);
 
     // Row 3 — custom W × H (only used when Resize is on + mode is "Defined size")
-    ctl(hwnd, EDIT, "1280", WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP, 110, 88, 64, 24, CID_RESIZE_W, hinst);
-    ctl(hwnd, STATIC, "\u{00d7}", WINDOW_STYLE(crate::win::SS_CENTER), 178, 91, 16, 18, -1, hinst);
-    ctl(hwnd, EDIT, "720", WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP, 198, 88, 64, 24, CID_RESIZE_H, hinst);
+    ctl(
+        hwnd,
+        EDIT,
+        "1280",
+        WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP,
+        110,
+        88,
+        64,
+        24,
+        CID_RESIZE_W,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        STATIC,
+        "\u{00d7}",
+        WINDOW_STYLE(crate::win::SS_CENTER),
+        178,
+        91,
+        16,
+        18,
+        -1,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        EDIT,
+        "720",
+        WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP,
+        198,
+        88,
+        64,
+        24,
+        CID_RESIZE_H,
+        hinst,
+    );
     ctl(hwnd, STATIC, t("cv_px"), lbl, 268, 91, 24, 18, -1, hinst);
 
     // Row 4 — output folder
-    ctl(hwnd, STATIC, t("cv_output_folder"), lbl, 16, 131, 92, 18, -1, hinst);
-    ctl(hwnd, EDIT, "", WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP, 110, 128, 292, 24, CID_OUTDIR, hinst);
+    ctl(
+        hwnd,
+        STATIC,
+        t("cv_output_folder"),
+        lbl,
+        16,
+        131,
+        92,
+        18,
+        -1,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        EDIT,
+        "",
+        WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP,
+        110,
+        128,
+        292,
+        24,
+        CID_OUTDIR,
+        hinst,
+    );
     set_edit_text(hwnd, CID_OUTDIR, t("cv_same_folder"));
-    ctl(hwnd, BUTTON, "\u{2026}", WS_TABSTOP, 408, 127, 60, 26, CID_BROWSE, hinst);
+    ctl(
+        hwnd, BUTTON, "\u{2026}", WS_TABSTOP, 408, 127, 60, 26, CID_BROWSE, hinst,
+    );
 
     // Progress bar stays hidden until a conversion is actually running.
-    let prog = ctl(hwnd, w!("msctls_progress32"), "", WINDOW_STYLE(0), 16, 172, 452, 14, CID_PROGRESS, hinst);
+    let prog = ctl(
+        hwnd,
+        w!("msctls_progress32"),
+        "",
+        WINDOW_STYLE(0),
+        16,
+        172,
+        452,
+        14,
+        CID_PROGRESS,
+        hinst,
+    );
     let _ = ShowWindow(prog, SW_HIDE);
 
-    ctl(hwnd, BUTTON, t("cv_convert"), WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP, 280, 202, 88, 28, IDOK, hinst);
-    ctl(hwnd, BUTTON, t("btn_cancel"), WS_TABSTOP, 380, 202, 88, 28, IDCANCEL, hinst);
+    ctl(
+        hwnd,
+        BUTTON,
+        t("cv_convert"),
+        WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP,
+        280,
+        202,
+        88,
+        28,
+        IDOK,
+        hinst,
+    );
+    ctl(
+        hwnd,
+        BUTTON,
+        t("btn_cancel"),
+        WS_TABSTOP,
+        380,
+        202,
+        88,
+        28,
+        IDCANCEL,
+        hinst,
+    );
 
     update_resize_enabled(hwnd);
     update_settings_enabled(hwnd);
@@ -311,8 +517,14 @@ unsafe fn read_resize(hwnd: HWND) -> Resize {
         Some(ResizeMode::Fit(w, h)) => Resize::Fit(w, h),
         Some(ResizeMode::Pct(p)) => Resize::Percent(p),
         _ => {
-            let w = get_edit_text(hwnd, CID_RESIZE_W).trim().parse::<u32>().unwrap_or(0);
-            let h = get_edit_text(hwnd, CID_RESIZE_H).trim().parse::<u32>().unwrap_or(0);
+            let w = get_edit_text(hwnd, CID_RESIZE_W)
+                .trim()
+                .parse::<u32>()
+                .unwrap_or(0);
+            let h = get_edit_text(hwnd, CID_RESIZE_H)
+                .trim()
+                .parse::<u32>()
+                .unwrap_or(0);
             if w > 0 && h > 0 {
                 // Explicitly typed dimensions scale UP too — "make it bigger"
                 // must make it bigger. The presets above stay shrink-only.
@@ -337,7 +549,9 @@ unsafe fn start_convert(hwnd: HWND) {
     let tgt = resolve_cv_target(combo_sel(hwnd, CID_FORMAT));
     let quality = QUALITY.load(Ordering::Relaxed).clamp(1, 100) as u8;
     let png_level = PNG_LEVEL.load(Ordering::Relaxed).clamp(0, 9) as u32;
-    let webp_quality = if matches!(tgt, CvTarget::Native(ImageFormat::WebP, _)) && WEBP_LOSSLESS.load(Ordering::Relaxed) == 0 {
+    let webp_quality = if matches!(tgt, CvTarget::Native(ImageFormat::WebP, _))
+        && WEBP_LOSSLESS.load(Ordering::Relaxed) == 0
+    {
         Some(WEBP_QUALITY.load(Ordering::Relaxed).clamp(1, 100) as u8)
     } else {
         None
@@ -347,13 +561,19 @@ unsafe fn start_convert(hwnd: HWND) {
     // The "(same folder as each image)" placeholder means "no explicit outdir".
     // Compare against the localized placeholder (and the legacy `(`-prefixed form)
     // so a translated placeholder is still recognized as "unset".
-    let is_placeholder =
-        outdir_text.is_empty() || outdir_text == t("cv_same_folder") || outdir_text.starts_with('(');
+    let is_placeholder = outdir_text.is_empty()
+        || outdir_text == t("cv_same_folder")
+        || outdir_text.starts_with('(');
     let outdir = (!is_placeholder).then(|| std::path::PathBuf::from(&outdir_text));
 
     if let Ok(prog) = GetDlgItem(Some(hwnd), CID_PROGRESS) {
         let _ = ShowWindow(prog, SW_SHOW);
-        SendMessageW(prog, PBM_SETRANGE32, Some(WPARAM(0)), Some(LPARAM(files.len() as isize)));
+        SendMessageW(
+            prog,
+            PBM_SETRANGE32,
+            Some(WPARAM(0)),
+            Some(LPARAM(files.len() as isize)),
+        );
         SendMessageW(prog, PBM_SETPOS, Some(WPARAM(0)), None);
     }
     if let Ok(btn) = GetDlgItem(Some(hwnd), IDOK) {
@@ -392,7 +612,11 @@ unsafe fn start_convert(hwnd: HWND) {
                         let opts = ConvertOpts {
                             // The dialog supplies WebP quality via `opts.webp_quality`
                             // (from its per-format Settings), so the Target stays None.
-                            target: Target { format, ext, webp_quality: None },
+                            target: Target {
+                                format,
+                                ext,
+                                webp_quality: None,
+                            },
                             jpeg_quality: quality,
                             png_level,
                             webp_quality,
@@ -401,7 +625,9 @@ unsafe fn start_convert(hwnd: HWND) {
                         convert_file_opts(f, opts, &dir).ok()
                     }
                     // One image → one single-page PDF (reserved name in `dir`).
-                    CvTarget::Pdf => sagethumbs2k_core::convert_image_to_pdf_in(f, &dir, quality).ok(),
+                    CvTarget::Pdf => {
+                        sagethumbs2k_core::convert_image_to_pdf_in(f, &dir, quality).ok()
+                    }
                     // Exotic target written by the bundled ImageMagick (reserved name).
                     CvTarget::Magick(ext) => {
                         // AVIF/JXL honor the quality slider; the lossless exotic targets
@@ -414,7 +640,12 @@ unsafe fn start_convert(hwnd: HWND) {
             },
             || {
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                let _ = PostMessageW(Some(HWND(raw as *mut c_void)), WM_CONVERT_PROGRESS, WPARAM(n), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(HWND(raw as *mut c_void)),
+                    WM_CONVERT_PROGRESS,
+                    WPARAM(n),
+                    LPARAM(0),
+                );
             },
         );
         let ok = outs.iter().flatten().count();
@@ -423,7 +654,12 @@ unsafe fn start_convert(hwnd: HWND) {
         if let Some(first) = outs.into_iter().flatten().next() {
             *LAST_OUTPUT.lock().unwrap() = Some(first);
         }
-        let _ = PostMessageW(Some(HWND(raw as *mut c_void)), WM_CONVERT_DONE, WPARAM(ok), LPARAM(total as isize));
+        let _ = PostMessageW(
+            Some(HWND(raw as *mut c_void)),
+            WM_CONVERT_DONE,
+            WPARAM(ok),
+            LPARAM(total as isize),
+        );
     });
 }
 
@@ -447,7 +683,11 @@ fn settings_kind(idx: usize) -> i32 {
     if let Some((_, ext)) = CV_MAGICK_FORMATS.get(idx.wrapping_sub(CV_FORMATS.len())) {
         // Magick targets sit after the native ones. Only the lossy ones (AVIF/JXL) get a
         // quality slider; the rest (PSD/DDS/…) have no quality knob.
-        return if matches!(*ext, "avif" | "jxl") { SK_MAGICK_Q } else { SK_NONE };
+        return if matches!(*ext, "avif" | "jxl") {
+            SK_MAGICK_Q
+        } else {
+            SK_NONE
+        };
     }
     match CV_FORMATS.get(idx) {
         Some((_, Some(ImageFormat::Jpeg), _)) | Some((_, None, _)) => SK_JPEG,
@@ -484,7 +724,12 @@ unsafe fn run_format_settings(owner: HWND, _hinst: HINSTANCE, idx: usize) {
     );
 }
 
-extern "system" fn settings_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+extern "system" fn settings_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     unsafe {
         if let Some(r) = dark_ctlcolor(msg, wparam) {
             return r;
@@ -496,27 +741,118 @@ extern "system" fn settings_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 let mut y = 16;
                 if kind == SK_WEBP {
                     let lossless = WEBP_LOSSLESS.load(Ordering::Relaxed) != 0;
-                    let cb = ctl(hwnd, BUTTON, t("cv_lossless"), WINDOW_STYLE(BS_AUTOCHECKBOX as u32) | WS_TABSTOP, 16, y, 130, 22, CID_POPUP_LOSSLESS, hinst);
-                    SendMessageW(cb, BM_SETCHECK_MSG, Some(WPARAM(lossless as usize)), Some(LPARAM(0)));
+                    let cb = ctl(
+                        hwnd,
+                        BUTTON,
+                        t("cv_lossless"),
+                        WINDOW_STYLE(BS_AUTOCHECKBOX as u32) | WS_TABSTOP,
+                        16,
+                        y,
+                        130,
+                        22,
+                        CID_POPUP_LOSSLESS,
+                        hinst,
+                    );
+                    SendMessageW(
+                        cb,
+                        BM_SETCHECK_MSG,
+                        Some(WPARAM(lossless as usize)),
+                        Some(LPARAM(0)),
+                    );
                     y += 30;
                 }
                 let (label, lo, hi, init) = match kind {
                     SK_PNG => (t("cv_compression"), 0, 9, PNG_LEVEL.load(Ordering::Relaxed)),
-                    SK_WEBP => (t("cv_quality"), 1, 100, WEBP_QUALITY.load(Ordering::Relaxed)),
-                    SK_MAGICK_Q => (t("cv_quality"), 1, 100, MAGICK_QUALITY.load(Ordering::Relaxed)),
-                    _ => (t("cv_jpeg_quality"), 1, 100, QUALITY.load(Ordering::Relaxed)),
+                    SK_WEBP => (
+                        t("cv_quality"),
+                        1,
+                        100,
+                        WEBP_QUALITY.load(Ordering::Relaxed),
+                    ),
+                    SK_MAGICK_Q => (
+                        t("cv_quality"),
+                        1,
+                        100,
+                        MAGICK_QUALITY.load(Ordering::Relaxed),
+                    ),
+                    _ => (
+                        t("cv_jpeg_quality"),
+                        1,
+                        100,
+                        QUALITY.load(Ordering::Relaxed),
+                    ),
                 };
-                ctl(hwnd, STATIC, label, WINDOW_STYLE(0), 16, y, 200, 18, -1, hinst);
-                let tb = ctl(hwnd, w!("msctls_trackbar32"), "", WINDOW_STYLE(TBS_HORZ) | WS_TABSTOP, 12, y + 24, 210, 28, CID_POPUP_TB, hinst);
-                SendMessageW(tb, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(make_lparam(lo, hi))));
+                ctl(
+                    hwnd,
+                    STATIC,
+                    label,
+                    WINDOW_STYLE(0),
+                    16,
+                    y,
+                    200,
+                    18,
+                    -1,
+                    hinst,
+                );
+                let tb = ctl(
+                    hwnd,
+                    w!("msctls_trackbar32"),
+                    "",
+                    WINDOW_STYLE(TBS_HORZ) | WS_TABSTOP,
+                    12,
+                    y + 24,
+                    210,
+                    28,
+                    CID_POPUP_TB,
+                    hinst,
+                );
+                SendMessageW(
+                    tb,
+                    TBM_SETRANGE,
+                    Some(WPARAM(1)),
+                    Some(LPARAM(make_lparam(lo, hi))),
+                );
                 SendMessageW(tb, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(init as isize)));
-                ctl(hwnd, STATIC, &init.to_string(), WINDOW_STYLE(0), 232, y + 28, 40, 18, CID_POPUP_VAL, hinst);
+                ctl(
+                    hwnd,
+                    STATIC,
+                    &init.to_string(),
+                    WINDOW_STYLE(0),
+                    232,
+                    y + 28,
+                    40,
+                    18,
+                    CID_POPUP_VAL,
+                    hinst,
+                );
                 if kind == SK_WEBP && WEBP_LOSSLESS.load(Ordering::Relaxed) != 0 {
                     let _ = EnableWindow(tb, false); // quality irrelevant while lossless
                 }
                 let by = if kind == SK_WEBP { 132 } else { 102 };
-                ctl(hwnd, BUTTON, t("btn_ok_short"), WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP, 108, by, 76, 28, IDOK, hinst);
-                ctl(hwnd, BUTTON, t("btn_cancel"), WS_TABSTOP, 192, by, 80, 28, IDCANCEL, hinst);
+                ctl(
+                    hwnd,
+                    BUTTON,
+                    t("btn_ok_short"),
+                    WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP,
+                    108,
+                    by,
+                    76,
+                    28,
+                    IDOK,
+                    hinst,
+                );
+                ctl(
+                    hwnd,
+                    BUTTON,
+                    t("btn_cancel"),
+                    WS_TABSTOP,
+                    192,
+                    by,
+                    80,
+                    28,
+                    IDCANCEL,
+                    hinst,
+                );
                 LRESULT(0)
             }
             WM_HSCROLL => {
@@ -543,10 +879,15 @@ extern "system" fn settings_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                         match kind {
                             SK_PNG => PNG_LEVEL.store(pos.clamp(0, 9), Ordering::Relaxed),
                             SK_WEBP => {
-                                WEBP_LOSSLESS.store(checked(hwnd, CID_POPUP_LOSSLESS) as i32, Ordering::Relaxed);
+                                WEBP_LOSSLESS.store(
+                                    checked(hwnd, CID_POPUP_LOSSLESS) as i32,
+                                    Ordering::Relaxed,
+                                );
                                 WEBP_QUALITY.store(pos.clamp(1, 100), Ordering::Relaxed);
                             }
-                            SK_MAGICK_Q => MAGICK_QUALITY.store(pos.clamp(1, 100), Ordering::Relaxed),
+                            SK_MAGICK_Q => {
+                                MAGICK_QUALITY.store(pos.clamp(1, 100), Ordering::Relaxed)
+                            }
                             _ => QUALITY.store(pos.clamp(1, 100), Ordering::Relaxed),
                         }
                         // Persist so the choice survives the next launch (HKCU).
@@ -556,7 +897,9 @@ extern "system" fn settings_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                             WEBP_LOSSLESS.load(Ordering::Relaxed) != 0,
                             PNG_LEVEL.load(Ordering::Relaxed) as u32,
                         );
-                        settings::set_cv_magick_quality(MAGICK_QUALITY.load(Ordering::Relaxed) as u32);
+                        settings::set_cv_magick_quality(
+                            MAGICK_QUALITY.load(Ordering::Relaxed) as u32
+                        );
                         let _ = DestroyWindow(hwnd);
                     }
                     IDCANCEL => {
@@ -579,7 +922,12 @@ extern "system" fn settings_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
     }
 }
 
-extern "system" fn convert_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+extern "system" fn convert_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     unsafe {
         if let Some(r) = dark_ctlcolor(msg, wparam) {
             return r;
@@ -655,7 +1003,12 @@ extern "system" fn convert_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                     }
                     None => {
                         let text = wide(&summary);
-                        MessageBoxW(Some(hwnd), PCWSTR(text.as_ptr()), PCWSTR(cap.as_ptr()), MB_OK | MB_ICONINFORMATION);
+                        MessageBoxW(
+                            Some(hwnd),
+                            PCWSTR(text.as_ptr()),
+                            PCWSTR(cap.as_ptr()),
+                            MB_OK | MB_ICONINFORMATION,
+                        );
                     }
                 }
                 let _ = DestroyWindow(hwnd);

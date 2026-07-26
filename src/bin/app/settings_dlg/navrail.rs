@@ -37,17 +37,17 @@ pub(super) fn nav_label(ci: usize) -> &'static str {
 /// `build_controls`; the layout just repositions them.
 #[derive(Clone, Copy)]
 pub(super) enum Row {
-    Head(i32),               // group sub-header (owner-draw static)
-    Switch(i32),             // a checkbox, drawn as a toggle switch
-    Pair(i32, i32, i32, i32),// label, field, field_w, field_h (combo field_h>40)
-    Btn(i32, i32),           // button id, width
-    BtnStatus(i32, i32, i32),// button (left) + right-aligned status, one row: btn_id, btn_w, status_id
-    StatusBtn(i32, i32, i32),// status (left, fills) + right-aligned button, one row: status_id, btn_id, btn_w
-    Status(i32),             // dynamic status line
-    Btn3(i32, i32, i32),     // three equal buttons on one row
-    Wide(i32),               // a full-width control (search edit)
-    ListFill(i32),           // a list that fills down to the footer
-    ListAuto(i32),           // a list that keeps its measured height
+    Head(i32),                // group sub-header (owner-draw static)
+    Switch(i32),              // a checkbox, drawn as a toggle switch
+    Pair(i32, i32, i32, i32), // label, field, field_w, field_h (combo field_h>40)
+    Btn(i32, i32),            // button id, width
+    BtnStatus(i32, i32, i32), // button (left) + right-aligned status, one row: btn_id, btn_w, status_id
+    StatusBtn(i32, i32, i32), // status (left, fills) + right-aligned button, one row: status_id, btn_id, btn_w
+    Status(i32),              // dynamic status line
+    Btn3(i32, i32, i32),      // three equal buttons on one row
+    Wide(i32),                // a full-width control (search edit)
+    ListFill(i32),            // a list that fills down to the footer
+    ListAuto(i32),            // a list that keeps its measured height
 }
 
 // Category order: General (Thumbnails+General merged) · File types · Ebook/comic ·
@@ -57,12 +57,17 @@ pub(super) fn cat_rows(ci: usize) -> &'static [Row] {
     match ci {
         0 => &[
             // General = the merged Thumbnails + General (Custom action is its own tab now).
-            Switch(ID_ENABLE_THUMBS), Switch(ID_USE_EMBEDDED), Switch(ID_MENU_CHECKER),
+            Switch(ID_ENABLE_THUMBS),
+            Switch(ID_USE_EMBEDDED),
+            Switch(ID_MENU_CHECKER),
             Head(ID_LBL_LIMITS),
-            Pair(ID_LBL_MAXFILE, ID_MAXSIZE, 84, 18), Pair(ID_LBL_MAXTHUMB, ID_SIZE, 84, 18),
-            Pair(ID_LBL_JPEG, ID_JPEG, 84, 18), Pair(ID_LBL_PNG, ID_PNG, 84, 18),
+            Pair(ID_LBL_MAXFILE, ID_MAXSIZE, 84, 18),
+            Pair(ID_LBL_MAXTHUMB, ID_SIZE, 84, 18),
+            Pair(ID_LBL_JPEG, ID_JPEG, 84, 18),
+            Pair(ID_LBL_PNG, ID_PNG, 84, 18),
             Head(ID_LBL_GENERAL), // "Language & files"
-            Pair(ID_LBL_LANG, ID_LANG, 156, 200), Switch(ID_PRESERVE_DATE),
+            Pair(ID_LBL_LANG, ID_LANG, 156, 200),
+            Switch(ID_PRESERVE_DATE),
         ],
         1 => &[
             Btn3(ID_SELECT_ALL, ID_CLEAR_ALL, ID_DEFAULTS),
@@ -71,21 +76,29 @@ pub(super) fn cat_rows(ci: usize) -> &'static [Row] {
         ],
         2 => &[
             // Ebook/comic — its own tab now (plus the generic-archive contact sheet).
-            Switch(ID_C_SORT), Switch(ID_C_PREFER_COVER), Switch(ID_C_SKIP_SCAN),
+            Switch(ID_C_SORT),
+            Switch(ID_C_PREFER_COVER),
+            Switch(ID_C_SKIP_SCAN),
             Switch(ID_C_ARCHIVE_SHEET),
         ],
         3 => &[
-            Switch(ID_ENABLE_MENU), Switch(ID_MENU_ALL_TYPES), Switch(ID_MENU_QUICK),
+            Switch(ID_ENABLE_MENU),
+            Switch(ID_MENU_ALL_TYPES),
+            Switch(ID_MENU_QUICK),
             Pair(ID_LBL_PREVIEW, ID_MENU_PREVIEW, 156, 200),
             Head(ID_LBL_MENU_ITEMS),
-            ListAuto(ID_MENU_ITEMS_LIST), Btn(ID_MENU_RESET, 110),
+            ListAuto(ID_MENU_ITEMS_LIST),
+            Btn(ID_MENU_RESET, 110),
         ],
         4 => &[
             // Screenshots — custom action moved to General; hotkey service + "Hide tray icon" to Advanced.
-            Switch(ID_SHOT_ENABLE), Switch(ID_SHOT_QUICK_ENABLE), Switch(ID_SHOT_USE_DIR),
+            Switch(ID_SHOT_ENABLE),
+            Switch(ID_SHOT_QUICK_ENABLE),
+            Switch(ID_SHOT_USE_DIR),
             Pair(ID_LBL_SHOT_HK, ID_SHOT_HOTKEY, 156, 200),
             Pair(ID_LBL_SHOT_QUICK_HK, ID_SHOT_QUICK_HOTKEY, 156, 200),
-            Status(ID_SHOT_DIR), Btn(ID_SHOT_SET_DIR, 150),
+            Status(ID_SHOT_DIR),
+            Btn(ID_SHOT_SET_DIR, 150),
             Btn(ID_EDIT_UPLOAD_HOSTS, 184),
         ],
         5 => &[
@@ -103,26 +116,35 @@ pub(super) fn cat_rows(ci: usize) -> &'static [Row] {
             Btn(ID_REBUILD_CACHE, 320),
             Btn(ID_REPAIR_ASSOC, 320),
             Head(ID_LBL_UPDATES),
-            Switch(ID_UPDATE_AUTO), Btn(ID_CHECK_UPDATES, 184),
+            Switch(ID_UPDATE_AUTO),
+            Btn(ID_CHECK_UPDATES, 184),
             Head(ID_LBL_HOTKEY_SVC),
-            BtnStatus(ID_SHOT_RESTART, 184, ID_SHOT_STATUS), Switch(ID_SHOT_HIDE_TRAY),
+            BtnStatus(ID_SHOT_RESTART, 184, ID_SHOT_STATUS),
+            Switch(ID_SHOT_HIDE_TRAY),
         ],
         // Quick preview — QuickLook-style "press Space, see the file". The master toggle drives
         // daemon residency (like Screenshots); the rest are viewer prefs. The HTML/.url rows only
         // exist when the `html-preview` feature is compiled in.
         #[cfg(feature = "html-preview")]
         7 => &[
-            Switch(ID_PREVIEW_ENABLED), Switch(ID_PREVIEW_HOLD_PEEK),
-            Switch(ID_PREVIEW_CLOSE_FOCUS), Switch(ID_PREVIEW_TOPMOST),
-            Switch(ID_PREVIEW_TEXT), Switch(ID_PREVIEW_MARKDOWN),
+            Switch(ID_PREVIEW_ENABLED),
+            Switch(ID_PREVIEW_HOLD_PEEK),
+            Switch(ID_PREVIEW_CLOSE_FOCUS),
+            Switch(ID_PREVIEW_TOPMOST),
+            Switch(ID_PREVIEW_TEXT),
+            Switch(ID_PREVIEW_MARKDOWN),
             Switch(ID_PREVIEW_MD_REMOTE),
-            Switch(ID_PREVIEW_HTML), Switch(ID_PREVIEW_URL_LIVE),
+            Switch(ID_PREVIEW_HTML),
+            Switch(ID_PREVIEW_URL_LIVE),
         ],
         #[cfg(not(feature = "html-preview"))]
         7 => &[
-            Switch(ID_PREVIEW_ENABLED), Switch(ID_PREVIEW_HOLD_PEEK),
-            Switch(ID_PREVIEW_CLOSE_FOCUS), Switch(ID_PREVIEW_TOPMOST),
-            Switch(ID_PREVIEW_TEXT), Switch(ID_PREVIEW_MARKDOWN),
+            Switch(ID_PREVIEW_ENABLED),
+            Switch(ID_PREVIEW_HOLD_PEEK),
+            Switch(ID_PREVIEW_CLOSE_FOCUS),
+            Switch(ID_PREVIEW_TOPMOST),
+            Switch(ID_PREVIEW_TEXT),
+            Switch(ID_PREVIEW_MARKDOWN),
             Switch(ID_PREVIEW_MD_REMOTE),
         ],
         _ => &[
@@ -214,7 +236,15 @@ pub(super) unsafe fn draw_cat_icon(hdc: HDC, ci: usize, x: i32, y: i32, sz: i32,
             }
             5 => {
                 // bolt: a lightning shape (Quick action)
-                ln(&[(13, 2), (7, 13), (11, 13), (10, 22), (18, 10), (12, 10), (13, 2)]);
+                ln(&[
+                    (13, 2),
+                    (7, 13),
+                    (11, 13),
+                    (10, 22),
+                    (18, 10),
+                    (12, 10),
+                    (13, 2),
+                ]);
             }
             6 => {
                 // sliders: two lines, each with a knob (Advanced)
@@ -263,7 +293,10 @@ pub(super) unsafe fn draw_nav_item(hwnd: HWND, d: &DRAWITEMSTRUCT, active: bool)
     if active {
         let tint = blend(ACCENT(), DARK_BG(), 16);
         let (px, py) = (rc.left + dpi_scale(hwnd, 4), rc.top + dpi_scale(hwnd, 3));
-        let (pw, ph) = ((rc.right - dpi_scale(hwnd, 4)) - px, (rc.bottom - dpi_scale(hwnd, 3)) - py);
+        let (pw, ph) = (
+            (rc.right - dpi_scale(hwnd, 4)) - px,
+            (rc.bottom - dpi_scale(hwnd, 3)) - py,
+        );
         gdip::with_aa(hdc, |g| {
             let b = gdip::brush(tint);
             gdip::fill_round(g, b, px, py, pw, ph, dpi_scale(hwnd, 8));
@@ -279,14 +312,29 @@ pub(super) unsafe fn draw_nav_item(hwnd: HWND, d: &DRAWITEMSTRUCT, active: bool)
     }
     let isz = dpi_scale(hwnd, 17);
     let iy = rc.top + (rc.bottom - rc.top - isz) / 2;
-    draw_cat_icon(hdc, ci, rc.left + dpi_scale(hwnd, 16), iy, isz, if active { ACCENT() } else { HEADER_TEXT() });
+    draw_cat_icon(
+        hdc,
+        ci,
+        rc.left + dpi_scale(hwnd, 16),
+        iy,
+        isz,
+        if active { ACCENT() } else { HEADER_TEXT() },
+    );
     SelectObject(hdc, HGDIOBJ(gui_font_for(hwnd).0));
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, DARK_TEXT());
     let mut label = control_text(d.hwndItem);
     let n = label.len().saturating_sub(1);
-    let mut tr = RECT { left: rc.left + dpi_scale(hwnd, 44), ..rc };
-    DrawTextW(hdc, &mut label[..n], &mut tr, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+    let mut tr = RECT {
+        left: rc.left + dpi_scale(hwnd, 44),
+        ..rc
+    };
+    DrawTextW(
+        hdc,
+        &mut label[..n],
+        &mut tr,
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX,
+    );
 }
 
 /// Owner-draw the per-pane header: an accent-tinted icon chip + the active
@@ -304,21 +352,48 @@ pub(super) unsafe fn draw_pane_header(hwnd: HWND, d: &DRAWITEMSTRUCT) {
         gdip::drop_brush(b);
     });
     let isz = dpi_scale(hwnd, 18);
-    draw_cat_icon(hdc, ci, rc.left + (chip - isz) / 2, rc.top + (chip - isz) / 2, isz, ACCENT());
+    draw_cat_icon(
+        hdc,
+        ci,
+        rc.left + (chip - isz) / 2,
+        rc.top + (chip - isz) / 2,
+        isz,
+        ACCENT(),
+    );
     let tx = rc.left + dpi_scale(hwnd, 46);
     SelectObject(hdc, HGDIOBJ(crate::win::gui_font_title(hwnd).0));
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, DARK_TEXT());
     let mut title = wide(nav_label(ci));
     let tn = title.len().saturating_sub(1);
-    let mut tr = RECT { left: tx, top: rc.top - dpi_scale(hwnd, 2), right: rc.right, bottom: rc.top + dpi_scale(hwnd, 24) };
-    DrawTextW(hdc, &mut title[..tn], &mut tr, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+    let mut tr = RECT {
+        left: tx,
+        top: rc.top - dpi_scale(hwnd, 2),
+        right: rc.right,
+        bottom: rc.top + dpi_scale(hwnd, 24),
+    };
+    DrawTextW(
+        hdc,
+        &mut title[..tn],
+        &mut tr,
+        DT_LEFT | DT_SINGLELINE | DT_NOPREFIX,
+    );
     SelectObject(hdc, HGDIOBJ(gui_font_for(hwnd).0));
     SetTextColor(hdc, HEADER_TEXT());
     let mut blurb = wide(cat_blurb(ci));
     let bn = blurb.len().saturating_sub(1);
-    let mut br = RECT { left: tx, top: rc.top + dpi_scale(hwnd, 26), right: rc.right, bottom: rc.bottom };
-    DrawTextW(hdc, &mut blurb[..bn], &mut br, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    let mut br = RECT {
+        left: tx,
+        top: rc.top + dpi_scale(hwnd, 26),
+        right: rc.right,
+        bottom: rc.bottom,
+    };
+    DrawTextW(
+        hdc,
+        &mut blurb[..bn],
+        &mut br,
+        DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+    );
 }
 
 /// Show category `ci`'s controls, hide the others, repaint the nav + pane.
@@ -348,7 +423,15 @@ pub(super) unsafe fn apply_v3_layout(hwnd: HWND, hinst: HINSTANCE) {
     // Hide the old scrolling chrome + the headers the nav/page-header now title.
     // (ID_LBL_GENERAL is now a sub-header on the merged General page; ID_LBL_EBOOK is
     // orphaned — Ebook/comic is its own tab with no sub-header.)
-    for id in [ID_LBL_THUMBS, ID_LBL_EBOOK, ID_LBL_SHOT, ID_LBL_FORMATS, ID_SCROLLBAR, ID_LEFT_MASK, ID_BANNER] {
+    for id in [
+        ID_LBL_THUMBS,
+        ID_LBL_EBOOK,
+        ID_LBL_SHOT,
+        ID_LBL_FORMATS,
+        ID_SCROLLBAR,
+        ID_LEFT_MASK,
+        ID_BANNER,
+    ] {
         if let Ok(c) = GetDlgItem(Some(hwnd), id) {
             let _ = ShowWindow(c, SW_HIDE);
         }
@@ -364,7 +447,15 @@ pub(super) unsafe fn apply_v3_layout(hwnd: HWND, hinst: HINSTANCE) {
     let sc = |v: i32| dpi_scale(hwnd, v);
     let place = |id: i32, x: i32, y: i32, w: i32, h: i32| -> Option<HWND> {
         if let Ok(c) = GetDlgItem(Some(hwnd), id) {
-            let _ = SetWindowPos(c, None, sc(x), sc(y), sc(w), sc(h), SWP_NOZORDER | SWP_NOACTIVATE);
+            let _ = SetWindowPos(
+                c,
+                None,
+                sc(x),
+                sc(y),
+                sc(w),
+                sc(h),
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
             Some(c)
         } else {
             None
@@ -390,7 +481,18 @@ pub(super) unsafe fn apply_v3_layout(hwnd: HWND, hinst: HINSTANCE) {
 
     // Per-pane header (icon chip + bold category title + blurb), redrawn per active
     // category. Always visible; content sits below it.
-    ctl(hwnd, STATIC, "", WINDOW_STYLE(SS_OWNERDRAW), PANE_X, PANE_TOP, PANE_W, PANE_HEAD_H, ID_PANE_HEADER, hinst);
+    ctl(
+        hwnd,
+        STATIC,
+        "",
+        WINDOW_STYLE(SS_OWNERDRAW),
+        PANE_X,
+        PANE_TOP,
+        PANE_W,
+        PANE_HEAD_H,
+        ID_PANE_HEADER,
+        hinst,
+    );
 
     let mut cats: Vec<Vec<HWND>> = vec![Vec::new(); NCAT];
     #[allow(clippy::needless_range_loop)] // ci indexes cats AND is passed to cat_rows(ci)

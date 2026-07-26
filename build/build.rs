@@ -116,8 +116,20 @@ fn embed_manifest_and_icon() -> bool {
     }
     // (cargo bin target, .rc basename, .o basename, FileDescription, OriginalFilename)
     let bins = [
-        ("SageThumbs2K", "app.rc", "app_res.o", "SageThumbs 2K (Options)", "SageThumbs2K.exe"),
-        ("st2k", "st2k.rc", "st2k_res.o", "SageThumbs 2K (CLI)", "st2k.exe"),
+        (
+            "SageThumbs2K",
+            "app.rc",
+            "app_res.o",
+            "SageThumbs 2K (Options)",
+            "SageThumbs2K.exe",
+        ),
+        (
+            "st2k",
+            "st2k.rc",
+            "st2k_res.o",
+            "SageThumbs 2K (CLI)",
+            "st2k.exe",
+        ),
     ];
     // Build EVERY per-bin object first; only emit link args once all succeeded.
     let mut links: Vec<(&str, String)> = Vec::new();
@@ -127,12 +139,22 @@ fn embed_manifest_and_icon() -> bool {
             return false;
         }
         let obj = format!("{out}/{obj_name}");
-        let built = ["windres", "x86_64-w64-mingw32-windres"].iter().any(|windres| {
-            let status = std::process::Command::new(windres)
-                .args(["-I", &out, &format!("{out}/{rc_name}"), "-O", "coff", "-o", &obj])
-                .status();
-            matches!(status, Ok(s) if s.success())
-        });
+        let built = ["windres", "x86_64-w64-mingw32-windres"]
+            .iter()
+            .any(|windres| {
+                let status = std::process::Command::new(windres)
+                    .args([
+                        "-I",
+                        &out,
+                        &format!("{out}/{rc_name}"),
+                        "-O",
+                        "coff",
+                        "-o",
+                        &obj,
+                    ])
+                    .status();
+                matches!(status, Ok(s) if s.success())
+            });
         if !built {
             return false;
         }
@@ -211,7 +233,10 @@ fn generate_locales() {
             let map: BTreeMap<String, String> = toml::from_str(&text)
                 .unwrap_or_else(|e| panic!("locale {}: invalid TOML: {e}", path.display()));
             langs.insert(code, map);
-            println!("cargo:rerun-if-changed=locales/{}", e.file_name().to_string_lossy());
+            println!(
+                "cargo:rerun-if-changed=locales/{}",
+                e.file_name().to_string_lossy()
+            );
         }
     }
 
@@ -330,7 +355,9 @@ fn generate_locales() {
     // call sites can use `keys::BTN_OK` (a typo'd key becomes a compile error
     // instead of a silent <?> fallback). NOTE: call-site adoption is deferred —
     // this only EMITS the module; nothing references it yet.
-    out.push_str("\n/// Compile-time key constants generated from en.toml (the canonical key set).\n");
+    out.push_str(
+        "\n/// Compile-time key constants generated from en.toml (the canonical key set).\n",
+    );
     out.push_str("/// Use `keys::BTN_OK` instead of the bare string so a typo fails to compile.\n");
     out.push_str("pub mod keys {\n");
     if let Some(en) = langs.get("en") {
@@ -354,7 +381,9 @@ fn generate_locales() {
     // SECOND `cargo build --lib --features dll-i18n-subset` to produce the slim
     // cdylib and overwrites the staged DLL with it; the EXEs keep the full table.
     out.push_str("\n/// Keys the shell-extension DLL actually looks up (the `menu_*` set).\n");
-    out.push_str("/// Under the `dll-i18n-subset` feature the LOCALES table is filtered to exactly\n");
+    out.push_str(
+        "/// Under the `dll-i18n-subset` feature the LOCALES table is filtered to exactly\n",
+    );
     out.push_str("/// these keys; without it the full table ships (the EXE/CLI path).\n");
     out.push_str("pub static DLL_KEYS: &[&str] = &[\n");
     if let Some(en) = langs.get("en") {
@@ -373,7 +402,13 @@ fn generate_locales() {
 /// a valid Rust identifier.
 fn to_upper_snake(key: &str) -> String {
     key.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

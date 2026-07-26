@@ -13,6 +13,10 @@
 //!   - [`push`] — push the current local allowlisted settings.
 //!   - [`disconnect`] — delete the remote doc + forget local creds.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
 use serde_json::{Map, Value};
 
 use sagethumbs2k_core::settings;
@@ -23,6 +27,30 @@ use crate::{cred_store, http, oauth};
 const STORE_BASE: &str = "https://studio.connections.icu/v1/app-data";
 const TIMEOUT_SECS: u64 = 20;
 const MAX_RESP: usize = 128 * 1024;
+const MAX_DOCUMENT_BYTES: usize = 64 * 1024;
+const MAX_RATE_LIMIT_WAIT: Duration = Duration::from_secs(30);
+const PENDING_VALUE: &str = "ConnectionsSyncPending";
+
+#[derive(Clone)]
+struct CachedDoc {
+    version: u64,
+    settings: Value,
+    etag: String,
+}
+
+static STORE_CACHE: Mutex<Option<CachedDoc>> = Mutex::new(None);
+static SYNC_LOCK: Mutex<()> = Mutex::new(());
+static PUSH_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+fn cache() -> MutexGuard<'static, Option<CachedDoc>> {
+    STORE_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+fn sync_guard() -> MutexGuard<'static, ()> {
+    SYNC_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -108,7 +136,9 @@ fn apply_remote(settings_obj: &Value) -> u32 {
     for (name, kind) in ALLOW {
         let Some(val) = obj.get(*name) else { continue };
         let ok = match kind {
-            Kind::Dword => val.as_u64().is_some_and(|n| k.set_u32(name, n as u32).is_ok()),
+            Kind::Dword => val
+                .as_u64()
+                .is_some_and(|n| k.set_u32(name, n as u32).is_ok()),
             Kind::Str => val.as_str().is_some_and(|s| k.set_string(name, s).is_ok()),
         };
         if ok {
@@ -128,17 +158,56 @@ fn auth_headers(token: &str) -> String {
     format!("Authorization: Bearer {token}\r\nContent-Type: application/json")
 }
 
+fn auth_headers_with_etag(token: &str, etag: Option<&str>) -> String {
+    match etag {
+        Some(etag) => format!("{}\r\nIf-None-Match: {etag}", auth_headers(token)),
+        None => auth_headers(token),
+    }
+}
+
+fn parse_etag_version(etag: &str) -> Option<u64> {
+    etag.trim()
+        .trim_start_matches("W/")
+        .trim_matches('"')
+        .parse()
+        .ok()
+}
+
+fn clear_cache() {
+    *cache() = None;
+}
+
 /// GET the current doc → `(version, settings)`. A never-written user is `(0, {})`.
+/// Repeated reads are ETag-conditional; 304 reuses the cached document.
 fn store_get(token: &str) -> Result<(u64, Value), String> {
-    let resp = http::request("GET", &store_url(), &auth_headers(token), &[], TIMEOUT_SECS, MAX_RESP)
+    let cached = cache().clone();
+    let headers = auth_headers_with_etag(token, cached.as_ref().map(|doc| doc.etag.as_str()));
+    let resp = http::request("GET", &store_url(), &headers, &[], TIMEOUT_SECS, MAX_RESP)
         .ok_or_else(|| "couldn't reach the sync server".to_string())?;
+    if resp.status == 304 {
+        return cached
+            .map(|doc| (doc.version, doc.settings))
+            .ok_or_else(|| "the sync server returned 304 without a cached document".to_string());
+    }
     if resp.status != 200 {
         return Err(store_error(resp.status, &resp.body));
     }
-    let json: Value =
-        serde_json::from_slice(&resp.body).map_err(|_| "the sync server sent an unreadable reply".to_string())?;
-    let version = json.get("version").and_then(Value::as_u64).unwrap_or(0);
-    let settings = json.get("settings").cloned().unwrap_or_else(|| Value::Object(Map::new()));
+    let json: Value = serde_json::from_slice(&resp.body)
+        .map_err(|_| "the sync server sent an unreadable reply".to_string())?;
+    let version = resp
+        .etag
+        .as_deref()
+        .and_then(parse_etag_version)
+        .unwrap_or_else(|| json.get("version").and_then(Value::as_u64).unwrap_or(0));
+    let settings = json
+        .get("settings")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    *cache() = Some(CachedDoc {
+        version,
+        settings: settings.clone(),
+        etag: resp.etag.unwrap_or_else(|| format!("\"{version}\"")),
+    });
     Ok((version, settings))
 }
 
@@ -146,18 +215,45 @@ fn store_get(token: &str) -> Result<(u64, Value), String> {
 /// conflict (bounded). Returns the new version.
 fn push_snapshot(token: &str) -> Result<u64, String> {
     let snapshot = Value::Object(read_local());
+    validate_sync_snapshot(&snapshot)?;
     let mut base = store_get(token)?.0;
-    for _ in 0..3 {
+    let mut conflicts = 0;
+    let mut transient_retries = 0;
+    let mut rate_limit_retried = false;
+    loop {
         let body = serde_json::json!({ "settings": snapshot, "baseVersion": base, "merge": true });
         let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-        let resp = http::request("POST", &store_url(), &auth_headers(token), &bytes, TIMEOUT_SECS, MAX_RESP)
-            .ok_or_else(|| "couldn't reach the sync server".to_string())?;
+        let Some(resp) = http::request(
+            "POST",
+            &store_url(),
+            &auth_headers(token),
+            &bytes,
+            TIMEOUT_SECS,
+            MAX_RESP,
+        ) else {
+            if transient_retries < 2 {
+                transient_retries += 1;
+                std::thread::sleep(Duration::from_secs(1 << (transient_retries - 1)));
+                continue;
+            }
+            return Err("couldn't reach the sync server".to_string());
+        };
         match resp.status {
             200 => {
                 let json: Value = serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
-                return Ok(json.get("version").and_then(Value::as_u64).unwrap_or(base + 1));
+                clear_cache();
+                return Ok(json
+                    .get("version")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(base + 1));
             }
             409 => {
+                conflicts += 1;
+                if conflicts >= 3 {
+                    return Err(
+                        "sync kept conflicting with another device — please try again".to_string(),
+                    );
+                }
                 // Stale baseVersion — take the server's current version and retry.
                 let json: Value = serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
                 base = json
@@ -167,17 +263,32 @@ fn push_snapshot(token: &str) -> Result<u64, String> {
                     .or_else(|| store_get(token).ok().map(|(v, _)| v))
                     .unwrap_or(base);
             }
+            429 if !rate_limit_retried => {
+                rate_limit_retried = true;
+                std::thread::sleep(rate_limit_wait(&resp.body));
+            }
+            status if status >= 500 && transient_retries < 2 => {
+                transient_retries += 1;
+                std::thread::sleep(Duration::from_secs(1 << (transient_retries - 1)));
+            }
             _ => return Err(store_error(resp.status, &resp.body)),
         }
     }
-    Err("sync kept conflicting with another device — please try again".to_string())
 }
 
 fn store_delete(token: &str) -> Result<(), String> {
-    let resp = http::request("DELETE", &store_url(), &auth_headers(token), &[], TIMEOUT_SECS, MAX_RESP)
-        .ok_or_else(|| "couldn't reach the sync server".to_string())?;
+    let resp = http::request(
+        "DELETE",
+        &store_url(),
+        &auth_headers(token),
+        &[],
+        TIMEOUT_SECS,
+        MAX_RESP,
+    )
+    .ok_or_else(|| "couldn't reach the sync server".to_string())?;
     // 204 = deleted, 404 = already gone — both fine for "disconnect".
     if matches!(resp.status, 200 | 204 | 404) {
+        clear_cache();
         Ok(())
     } else {
         Err(store_error(resp.status, &resp.body))
@@ -190,7 +301,10 @@ fn store_error(status: u16, body: &[u8]) -> String {
         401 => return "your sign-in expired — please sign in again".to_string(),
         403 => return "this app isn't authorized for that account".to_string(),
         413 => return "your settings are too large to sync".to_string(),
-        429 => return "syncing too often — please wait a moment".to_string(),
+        429 => {
+            let seconds = retry_after_seconds(body).unwrap_or(1);
+            return format!("syncing too often — retry after {seconds} seconds");
+        }
         _ => {}
     }
     if let Ok(json) = serde_json::from_slice::<Value>(body) {
@@ -199,6 +313,134 @@ fn store_error(status: u16, body: &[u8]) -> String {
         }
     }
     format!("sync failed (HTTP {status})")
+}
+
+fn retry_after_seconds(body: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<Value>(body)
+        .ok()?
+        .get("retry_after_seconds")?
+        .as_u64()
+        .filter(|seconds| *seconds > 0)
+}
+
+fn rate_limit_wait(body: &[u8]) -> Duration {
+    Duration::from_secs(retry_after_seconds(body).unwrap_or(1)).min(MAX_RATE_LIMIT_WAIT)
+}
+
+fn ascii_tail(value: &str, prefix: &str, min: usize, allowed: impl Fn(u8) -> bool) -> bool {
+    value
+        .strip_prefix(prefix)
+        .is_some_and(|tail| tail.len() >= min && tail.bytes().all(allowed))
+}
+
+fn credential_string(value: &str) -> Option<&'static str> {
+    let value = value.trim();
+    let alpha_num = |byte: u8| byte.is_ascii_alphanumeric();
+    let alpha_num_dash = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-');
+
+    if [
+        "sk_live_", "sk_test_", "pk_live_", "pk_test_", "rk_live_", "rk_test_",
+    ]
+    .iter()
+    .any(|prefix| ascii_tail(value, prefix, 16, alpha_num))
+    {
+        return Some("a Stripe key");
+    }
+    if ascii_tail(value, "sk-", 20, alpha_num_dash) {
+        return Some("an OpenAI-style API key");
+    }
+    if ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+        .iter()
+        .any(|prefix| ascii_tail(value, prefix, 36, alpha_num))
+    {
+        return Some("a GitHub token");
+    }
+    if ascii_tail(value, "github_pat_", 22, |byte| {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    }) {
+        return Some("a GitHub fine-grained token");
+    }
+    if ["xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"]
+        .iter()
+        .any(|prefix| ascii_tail(value, prefix, 10, |byte| alpha_num(byte) || byte == b'-'))
+    {
+        return Some("a Slack token");
+    }
+    if value.len() == 20
+        && value.starts_with("AKIA")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        return Some("an AWS access key id");
+    }
+    if value.len() == 39 && ascii_tail(value, "AIza", 35, alpha_num_dash) {
+        return Some("a Google API key");
+    }
+    let jwt = value.split('.').collect::<Vec<_>>();
+    if value.starts_with("ey")
+        && jwt.len() == 3
+        && jwt[0].len() >= 10
+        && jwt[1].len() >= 10
+        && jwt[2].len() >= 5
+        && jwt.iter().all(|part| part.bytes().all(alpha_num_dash))
+    {
+        return Some("a JWT");
+    }
+    if value.contains("-----BEGIN ") && value.contains("PRIVATE KEY-----") {
+        return Some("a private key");
+    }
+    None
+}
+
+fn credential_in_value(value: &Value, depth: usize) -> Option<&'static str> {
+    match value {
+        Value::String(value) => credential_string(value),
+        Value::Array(values) if depth < 4 => values
+            .iter()
+            .find_map(|value| credential_in_value(value, depth + 1)),
+        Value::Object(values) if depth < 4 => values
+            .values()
+            .find_map(|value| credential_in_value(value, depth + 1)),
+        _ => None,
+    }
+}
+
+fn validate_sync_snapshot(snapshot: &Value) -> Result<(), String> {
+    if let Some(entries) = snapshot.as_object() {
+        for (key, value) in entries {
+            if let Some(what) = credential_in_value(value, 0) {
+                return Err(format!(
+                    "refusing to sync \"{key}\": its value is {what}; Connections stores settings, not credentials"
+                ));
+            }
+        }
+    }
+    let bytes = serde_json::to_vec(snapshot).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_DOCUMENT_BYTES {
+        let biggest = snapshot
+            .as_object()
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key,
+                            serde_json::to_vec(value)
+                                .map(|bytes| bytes.len())
+                                .unwrap_or(0),
+                        )
+                    })
+                    .max_by_key(|(_, bytes)| *bytes)
+            })
+            .map(|(key, bytes)| format!("; \"{key}\" alone is {bytes} bytes"))
+            .unwrap_or_default();
+        return Err(format!(
+            "synced settings are {} bytes, over the {MAX_DOCUMENT_BYTES}-byte limit{biggest}",
+            bytes.len()
+        ));
+    }
+    Ok(())
 }
 
 /// Mint a fresh access token from the stored refresh token (rotating + re-persisting it).
@@ -216,6 +458,38 @@ fn access_token() -> Result<String, String> {
 /// Whether a (decryptable) refresh token is stored on this machine.
 pub(crate) fn is_signed_in() -> bool {
     cred_store::is_signed_in()
+}
+
+pub(crate) fn mark_push_pending() {
+    if let Ok(key) = CURRENT_USER.create(settings::ROOT) {
+        let _ = key.set_u32(PENDING_VALUE, 1);
+    }
+}
+
+fn clear_push_pending() {
+    if let Ok(key) = CURRENT_USER.open(settings::ROOT) {
+        let _ = key.remove_value(PENDING_VALUE);
+    }
+}
+
+pub(crate) fn has_pending_push() -> bool {
+    CURRENT_USER
+        .open(settings::ROOT)
+        .and_then(|key| key.get_u32(PENDING_VALUE))
+        .is_ok_and(|value| value != 0)
+}
+
+pub(crate) fn begin_push_worker() {
+    PUSH_WORKERS.fetch_add(1, Ordering::AcqRel);
+}
+
+pub(crate) fn finish_push_worker(success: bool) {
+    let remaining = PUSH_WORKERS
+        .fetch_sub(1, Ordering::AcqRel)
+        .saturating_sub(1);
+    if success && remaining == 0 {
+        clear_push_pending();
+    }
 }
 
 /// The name (or, failing that, the relay email) to show in the "Synced as …" row, if
@@ -238,6 +512,8 @@ pub(crate) fn signed_in_label() -> Option<String> {
 /// then do the initial pull (or seed the cloud from local if it's empty). Returns the
 /// display label (name/email/sub) for the UI. Blocking — run on a worker thread.
 pub(crate) fn connect() -> Result<String, String> {
+    let _guard = sync_guard();
+    clear_cache();
     let tokens = oauth::login()?;
     let rt = tokens
         .refresh_token
@@ -269,7 +545,12 @@ pub(crate) fn connect() -> Result<String, String> {
 /// `Ok(true)` if any values were applied (so the UI should refresh its controls).
 /// Blocking — run on a worker thread.
 pub(crate) fn pull_on_open() -> Result<bool, String> {
+    let _guard = sync_guard();
     let token = access_token()?;
+    if has_pending_push() {
+        push_snapshot(&token)?;
+        clear_push_pending();
+    }
     let (version, settings) = store_get(&token)?;
     if version > 0 {
         Ok(apply_remote(&settings) > 0)
@@ -282,16 +563,48 @@ pub(crate) fn pull_on_open() -> Result<bool, String> {
 /// Push the current local allowlisted settings to the cloud. Blocking — run on a worker
 /// thread (called after the user applies settings changes).
 pub(crate) fn push() -> Result<(), String> {
+    let _guard = sync_guard();
     let token = access_token()?;
     push_snapshot(&token).map(|_| ())
 }
 
 /// Disconnect: best-effort delete the remote doc, then forget local credentials.
 pub(crate) fn disconnect() {
+    let _guard = sync_guard();
     if let Ok(token) = access_token() {
         let _ = store_delete(&token);
     }
     cred_store::clear();
+    clear_cache();
+    clear_push_pending();
+}
+
+/// Wait for a detached Save push, then make one final bounded attempt if a
+/// previous failure left the durable pending marker set.
+pub(crate) fn flush_pending(timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while PUSH_WORKERS.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if !has_pending_push() || Instant::now() >= deadline || !is_signed_in() {
+        return;
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let (tx, rx) = std::sync::mpsc::channel();
+    begin_push_worker();
+    if std::thread::Builder::new()
+        .name("sage-sync-flush".into())
+        .spawn(move || {
+            let result = push();
+            finish_push_worker(result.is_ok());
+            let _ = tx.send(result);
+        })
+        .is_err()
+    {
+        finish_push_worker(false);
+        return;
+    }
+    let _ = rx.recv_timeout(remaining);
 }
 
 #[cfg(test)]
@@ -312,7 +625,13 @@ mod tests {
         ] {
             assert!(!names.contains(&banned), "{banned} must NEVER be synced");
         }
-        for portable in ["EnableThumbs", "MenuOrder", "Lang", "ScreenshotHotkey", "JPEG"] {
+        for portable in [
+            "EnableThumbs",
+            "MenuOrder",
+            "Lang",
+            "ScreenshotHotkey",
+            "JPEG",
+        ] {
             assert!(names.contains(&portable), "{portable} should be syncable");
         }
     }
@@ -338,5 +657,35 @@ mod tests {
         });
         // Only off-list / wrong-typed entries → nothing applies.
         assert_eq!(apply_remote(&doc), 0);
+    }
+
+    #[test]
+    fn credential_values_are_refused_even_when_nested() {
+        let doc = serde_json::json!({
+            "future": {
+                "token": "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+            }
+        });
+        let error = validate_sync_snapshot(&doc).unwrap_err();
+        assert!(error.contains("GitHub token"), "{error}");
+        assert!(validate_sync_snapshot(&serde_json::json!({"Lang": "sk"})).is_ok());
+    }
+
+    #[test]
+    fn oversized_snapshots_are_rejected_locally() {
+        let doc = serde_json::json!({"MenuOrder": "x".repeat(MAX_DOCUMENT_BYTES)});
+        let error = validate_sync_snapshot(&doc).unwrap_err();
+        assert!(error.contains("over the 65536-byte limit"), "{error}");
+        assert!(error.contains("MenuOrder"), "{error}");
+    }
+
+    #[test]
+    fn etag_and_rate_limit_contract_fields_are_parsed() {
+        assert_eq!(parse_etag_version("\"42\""), Some(42));
+        assert_eq!(parse_etag_version("W/\"7\""), Some(7));
+        assert_eq!(
+            retry_after_seconds(br#"{"retry_after_seconds":9}"#),
+            Some(9)
+        );
     }
 }

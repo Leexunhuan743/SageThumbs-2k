@@ -65,14 +65,20 @@ fn run_entry_present() -> bool {
 /// beats a path that no longer launches anything. Comparison is by canonical path, so an
 /// entry that names *this* exe through a different spelling still refreshes normally.
 fn autostart_points_at_other_install(current: &std::path::Path) -> bool {
-    let Ok(k) = windows_registry::CURRENT_USER.open(RUN_KEY) else { return false };
-    let Ok(v) = k.get_string(RUN_NAME) else { return false };
+    let Ok(k) = windows_registry::CURRENT_USER.open(RUN_KEY) else {
+        return false;
+    };
+    let Ok(v) = k.get_string(RUN_NAME) else {
+        return false;
+    };
     // Our own format is `"C:\path\to\exe" --screenshot-daemon` — take the quoted path.
     let rest = match v.trim().strip_prefix('"') {
         Some(r) => r,
         None => return false, // unquoted/foreign format — reclaim it
     };
-    let Some(end) = rest.find('"') else { return false };
+    let Some(end) = rest.find('"') else {
+        return false;
+    };
     let target = std::path::Path::new(&rest[..end]);
     match (target.canonicalize(), current.canonicalize()) {
         // Target exists and is genuinely a different file → it's someone's live install.
@@ -123,8 +129,10 @@ pub(crate) fn reconcile() {
         if let Ok(exe) = std::env::current_exe() {
             if !autostart_points_at_other_install(&exe) {
                 if let Ok(k) = windows_registry::CURRENT_USER.create(RUN_KEY) {
-                    let _ =
-                        k.set_string(RUN_NAME, format!("\"{}\" --screenshot-daemon", exe.display()));
+                    let _ = k.set_string(
+                        RUN_NAME,
+                        format!("\"{}\" --screenshot-daemon", exe.display()),
+                    );
                 }
             }
         }

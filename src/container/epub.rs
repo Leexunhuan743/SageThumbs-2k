@@ -130,7 +130,10 @@ fn first_html_image(html: &str) -> Option<String> {
     let mut search = 0usize;
     loop {
         let rest = html.get(search..)?;
-        let next = ["<img", "<image"].iter().filter_map(|pat| rest.find(pat)).min()?;
+        let next = ["<img", "<image"]
+            .iter()
+            .filter_map(|pat| rest.find(pat))
+            .min()?;
         let pos = search + next;
         if let Some(tag) = tag_from(html, pos) {
             let href = tag_attr(tag, "src")
@@ -223,7 +226,9 @@ fn join(rootdir: &str, href: &str) -> String {
 }
 
 fn pct(s: &str) -> String {
-    percent_encoding::percent_decode_str(s).decode_utf8_lossy().into_owned()
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 /// Read an entry by exact name, falling back to a case-insensitive match (EPUB
@@ -260,10 +265,22 @@ mod tests {
 
     #[test]
     fn relative_resolution() {
-        assert_eq!(resolve_relative("OEBPS/Text/", "../Images/cover.jpg"), "OEBPS/Images/cover.jpg");
-        assert_eq!(resolve_relative("OEBPS/Text/", "./pic.png"), "OEBPS/Text/pic.png");
-        assert_eq!(resolve_relative("OEBPS/Text/", "cover.jpg#x"), "OEBPS/Text/cover.jpg");
-        assert_eq!(resolve_relative("OEBPS/Text/", "/Images/c.jpg"), "Images/c.jpg");
+        assert_eq!(
+            resolve_relative("OEBPS/Text/", "../Images/cover.jpg"),
+            "OEBPS/Images/cover.jpg"
+        );
+        assert_eq!(
+            resolve_relative("OEBPS/Text/", "./pic.png"),
+            "OEBPS/Text/pic.png"
+        );
+        assert_eq!(
+            resolve_relative("OEBPS/Text/", "cover.jpg#x"),
+            "OEBPS/Text/cover.jpg"
+        );
+        assert_eq!(
+            resolve_relative("OEBPS/Text/", "/Images/c.jpg"),
+            "Images/c.jpg"
+        );
         assert_eq!(resolve_relative("", "cover.png"), "cover.png");
     }
 
@@ -271,12 +288,16 @@ mod tests {
     fn first_image_in_img_and_svg() {
         // plain <img>
         assert_eq!(
-            first_html_image(r#"<html><body><img alt="c" src="../Images/cover.jpg"/></body></html>"#).as_deref(),
+            first_html_image(
+                r#"<html><body><img alt="c" src="../Images/cover.jpg"/></body></html>"#
+            )
+            .as_deref(),
             Some("../Images/cover.jpg")
         );
         // SVG <image xlink:href> (Standard Ebooks style)
         assert_eq!(
-            first_html_image(r#"<svg><image width="1" xlink:href="images/cover.svg"/></svg>"#).as_deref(),
+            first_html_image(r#"<svg><image width="1" xlink:href="images/cover.svg"/></svg>"#)
+                .as_deref(),
             Some("images/cover.svg")
         );
         // SVG <image href> (no xlink namespace)
@@ -284,14 +305,23 @@ mod tests {
             first_html_image(r#"<svg><image href="cover.png"/></svg>"#).as_deref(),
             Some("cover.png")
         );
-        assert_eq!(first_html_image("<html><body>no images here</body></html>"), None);
+        assert_eq!(
+            first_html_image("<html><body>no images here</body></html>"),
+            None
+        );
     }
 
     #[test]
     fn guide_reference_cover() {
         let opf = r#"<package><guide><reference type="cover" title="Cover" href="Text/cover.xhtml"/></guide></package>"#;
-        assert_eq!(guide_cover(opf, "OEBPS/").as_deref(), Some("OEBPS/Text/cover.xhtml"));
+        assert_eq!(
+            guide_cover(opf, "OEBPS/").as_deref(),
+            Some("OEBPS/Text/cover.xhtml")
+        );
         // a <meta name="cover"> alone (no <reference>) must not be mistaken for a guide
-        assert_eq!(guide_cover(r#"<meta name="cover" content="id"/>"#, ""), None);
+        assert_eq!(
+            guide_cover(r#"<meta name="cover" content="id"/>"#, ""),
+            None
+        );
     }
 }

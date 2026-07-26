@@ -71,9 +71,9 @@ pub fn extract<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Option<Vec<u8>> {
             "QuickLook/Thumbnail.jpg",           // Apple iWork (Keynote/Pages/Numbers)
             "metadata/thumbnails/thumbnail.bmp", // CorelDRAW (X4+/2008+, ZIP/OPC)
             "metadata/thumbnails/page1.bmp",     // CorelDRAW (alternate)
-            "docProps/thumbnail.emf",            // Visio .vsdx/.vsdm (EMF preview; magick decodes it)
-            "geogebra_thumbnail.png",            // GeoGebra .ggb (root-level, distinctive)
-            "preview.jpg",                       // Apple iWork (root preview) — least specific, last
+            "docProps/thumbnail.emf", // Visio .vsdx/.vsdm (EMF preview; magick decodes it)
+            "geogebra_thumbnail.png", // GeoGebra .ggb (root-level, distinctive)
+            "preview.jpg",            // Apple iWork (root preview) — least specific, last
         ],
     )
 }
@@ -118,10 +118,16 @@ fn read_suffix<R: Read + Seek>(zip: &mut ZipArchive<R>, suffix_lc: &str) -> Opti
     // compressed PNG. Read the raw entry bytes and inflate with the pure-Rust ruzstd.
     let mut f = zip.by_index_raw(idx).ok()?;
     let mut raw = Vec::new();
-    f.by_ref().take(super::MAX_COVER).read_to_end(&mut raw).ok()?;
+    f.by_ref()
+        .take(super::MAX_COVER)
+        .read_to_end(&mut raw)
+        .ok()?;
     let mut dec = ruzstd::StreamingDecoder::new(raw.as_slice()).ok()?;
     let mut out = Vec::new();
-    dec.by_ref().take(super::MAX_COVER).read_to_end(&mut out).ok()?;
+    dec.by_ref()
+        .take(super::MAX_COVER)
+        .read_to_end(&mut out)
+        .ok()?;
     (!out.is_empty()).then_some(out)
 }
 
@@ -143,7 +149,8 @@ mod tests {
         {
             let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
             for (name, data) in entries {
-                w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+                w.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
                 w.write_all(data).unwrap();
             }
             w.finish().unwrap();
@@ -161,17 +168,33 @@ mod tests {
         let png = tiny_png();
 
         // Krita + OpenRaster: keyed off mimetype.
-        let kra = make_zip(&[("mimetype", b"application/x-krita"), ("mergedimage.png", &png)]);
-        assert!(extract_bytes(&kra).unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
-        let ora = make_zip(&[("mimetype", b"image/openraster"), ("Thumbnails/thumbnail.png", &png)]);
-        assert!(extract_bytes(&ora).unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
+        let kra = make_zip(&[
+            ("mimetype", b"application/x-krita"),
+            ("mergedimage.png", &png),
+        ]);
+        assert!(extract_bytes(&kra)
+            .unwrap()
+            .starts_with(&[0x89, b'P', b'N', b'G']));
+        let ora = make_zip(&[
+            ("mimetype", b"image/openraster"),
+            ("Thumbnails/thumbnail.png", &png),
+        ]);
+        assert!(extract_bytes(&ora)
+            .unwrap()
+            .starts_with(&[0x89, b'P', b'N', b'G']));
 
         // 3MF: no mimetype, preview under Metadata/.
-        let mf = make_zip(&[("3D/3dmodel.model", b"<model/>"), ("Metadata/thumbnail.png", &png)]);
+        let mf = make_zip(&[
+            ("3D/3dmodel.model", b"<model/>"),
+            ("Metadata/thumbnail.png", &png),
+        ]);
         assert!(extract_bytes(&mf).is_some());
 
         // FreeCAD path.
-        let fc = make_zip(&[("Document.xml", b"<doc/>"), ("thumbnails/Thumbnail.png", &png)]);
+        let fc = make_zip(&[
+            ("Document.xml", b"<doc/>"),
+            ("thumbnails/Thumbnail.png", &png),
+        ]);
         assert!(extract_bytes(&fc).is_some());
 
         // Fusion 360 .f3d: preview under a varying asset-name folder, matched by suffix.
@@ -186,7 +209,10 @@ mod tests {
         assert!(extract_bytes(&sk).is_some(), "sketch preview");
 
         // Procreate: QuickLook/Thumbnail.png
-        let pr = make_zip(&[("Document.archive", b"x"), ("QuickLook/Thumbnail.png", &png)]);
+        let pr = make_zip(&[
+            ("Document.archive", b"x"),
+            ("QuickLook/Thumbnail.png", &png),
+        ]);
         assert!(extract_bytes(&pr).is_some(), "procreate preview");
 
         // Apple iWork: a root preview.jpg (use png bytes — decodable_image sniffs content).
@@ -194,18 +220,27 @@ mod tests {
         assert!(extract_bytes(&iwork).is_some(), "iWork preview");
 
         // CorelDRAW (X4+ ZIP): metadata/thumbnails/thumbnail.bmp.
-        let cdr = make_zip(&[("content/riffData.cdr", b"x"), ("metadata/thumbnails/thumbnail.bmp", &png)]);
+        let cdr = make_zip(&[
+            ("content/riffData.cdr", b"x"),
+            ("metadata/thumbnails/thumbnail.bmp", &png),
+        ]);
         assert!(extract_bytes(&cdr).is_some(), "coreldraw preview");
 
         // Adobe XD: keyed off the "sparkler" mimetype.
-        let xd = make_zip(&[("mimetype", b"application/vnd.adobe.sparkler.project+dcxucf"), ("thumbnail.png", &png)]);
+        let xd = make_zip(&[
+            ("mimetype", b"application/vnd.adobe.sparkler.project+dcxucf"),
+            ("thumbnail.png", &png),
+        ]);
         assert!(extract_bytes(&xd).is_some(), "adobe xd preview");
 
         // Visio: docProps/thumbnail.emf (a minimal blob carrying the EMF signature).
         let mut emf = vec![0x01, 0x00, 0x00, 0x00];
         emf.resize(40, 0);
         emf.extend_from_slice(b" EMF");
-        let vsdx = make_zip(&[("[Content_Types].xml", b"<Types/>"), ("docProps/thumbnail.emf", emf.as_slice())]);
+        let vsdx = make_zip(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("docProps/thumbnail.emf", emf.as_slice()),
+        ]);
         assert!(extract_bytes(&vsdx).is_some(), "visio emf preview");
 
         // A plain image zip (CBZ-style) must NOT be treated as a project file.

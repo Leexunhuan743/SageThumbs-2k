@@ -11,7 +11,8 @@ pub(super) const WM_APP_SYNC: u32 = 0x8000 + 9;
 /// Outcome of a background sync op, boxed through `WM_APP_SYNC` to the UI thread.
 pub(super) enum SyncEvent {
     Connected(Result<String, String>), // Ok(email/sub) or Err(reason)
-    Pulled(Result<bool, String>),       // Ok(applied?) or Err(reason)
+    Pulled(Result<bool, String>),      // Ok(applied?) or Err(reason)
+    Pushed(Result<(), String>),
     Disconnected,
 }
 
@@ -39,9 +40,13 @@ pub(super) fn sync_button_label() -> String {
 /// hash when a real name is available.
 pub(super) fn sync_status_text() -> String {
     if crate::sync_client::is_signed_in() {
-        match crate::sync_client::signed_in_label() {
-            Some(who) => format!("● Synced as {who} · up to date"),
-            None => "● Synced · already up to date".to_string(),
+        if crate::sync_client::has_pending_push() {
+            "● Sync pending · saved locally; retrying automatically".to_string()
+        } else {
+            match crate::sync_client::signed_in_label() {
+                Some(who) => format!("● Synced as {who} · up to date"),
+                None => "● Synced · already up to date".to_string(),
+            }
         }
     } else {
         "Not syncing — sign in to sync your settings across your PCs".to_string()
@@ -85,8 +90,12 @@ pub(super) unsafe fn on_sync_click(hwnd: HWND) {
              copy stored in your Connections account is removed.",
         );
         let cap = wide("Settings Sync");
-        if MessageBoxW(Some(hwnd), PCWSTR(warn.as_ptr()), PCWSTR(cap.as_ptr()), MB_YESNO | MB_ICONWARNING)
-            != IDYES
+        if MessageBoxW(
+            Some(hwnd),
+            PCWSTR(warn.as_ptr()),
+            PCWSTR(cap.as_ptr()),
+            MB_YESNO | MB_ICONWARNING,
+        ) != IDYES
         {
             return;
         }
@@ -101,8 +110,12 @@ pub(super) unsafe fn on_sync_click(hwnd: HWND) {
              you to sign in. Continue?",
         );
         let cap = wide("Settings Sync");
-        if MessageBoxW(Some(hwnd), PCWSTR(info.as_ptr()), PCWSTR(cap.as_ptr()), MB_YESNO | MB_ICONINFORMATION)
-            != IDYES
+        if MessageBoxW(
+            Some(hwnd),
+            PCWSTR(info.as_ptr()),
+            PCWSTR(cap.as_ptr()),
+            MB_YESNO | MB_ICONINFORMATION,
+        ) != IDYES
         {
             return;
         }
@@ -135,17 +148,26 @@ pub(super) fn spawn_sync_pull(hwnd: HWND) {
     }
     let target = hwnd.0 as isize;
     std::thread::spawn(move || {
-        post_sync(target, SyncEvent::Pulled(crate::sync_client::pull_on_open()));
+        post_sync(
+            target,
+            SyncEvent::Pulled(crate::sync_client::pull_on_open()),
+        );
     });
 }
 
-/// After Save, if signed in, mirror the local settings to the cloud (fire-and-forget).
-pub(super) fn spawn_sync_push(_hwnd: HWND) {
+/// After Save, persist a pending marker before starting the worker. Failures
+/// remain visible and are retried on the next Settings open; success clears it.
+pub(super) fn spawn_sync_push(hwnd: HWND) {
     if !crate::sync_client::is_signed_in() {
         return;
     }
-    std::thread::spawn(|| {
-        let _ = crate::sync_client::push();
+    crate::sync_client::mark_push_pending();
+    crate::sync_client::begin_push_worker();
+    let target = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let result = crate::sync_client::push();
+        crate::sync_client::finish_push_worker(result.is_ok());
+        post_sync(target, SyncEvent::Pushed(result));
     });
 }
 
@@ -183,7 +205,12 @@ pub(super) unsafe fn handle_sync_event(hwnd: HWND, event: SyncEvent) {
         }
         SyncEvent::Connected(Err(e)) => {
             refresh_sync_ui(hwnd);
-            msg(hwnd, &format!("Couldn't sign in: {e}"), "Settings Sync", MB_ICONWARNING);
+            msg(
+                hwnd,
+                &format!("Couldn't sign in: {e}"),
+                "Settings Sync",
+                MB_ICONWARNING,
+            );
         }
         SyncEvent::Pulled(res) => {
             // Background pull: settle the row. Applied values are already in HKCU (they take
@@ -191,14 +218,32 @@ pub(super) unsafe fn handle_sync_event(hwnd: HWND, event: SyncEvent) {
             // whether the pull pulled anything new in the status badge.
             set_sync_button(hwnd, &sync_button_label(), true);
             match res {
-                Ok(true) => set_sync_status(hwnd, Some("● Synced · updated from another device".to_string())),
+                Ok(true) => set_sync_status(
+                    hwnd,
+                    Some("● Synced · updated from another device".to_string()),
+                ),
                 _ => set_sync_status(hwnd, None), // "● Synced · already up to date"
             }
         }
+        SyncEvent::Pushed(Ok(())) => {
+            set_sync_button(hwnd, &sync_button_label(), true);
+            set_sync_status(hwnd, None);
+        }
+        SyncEvent::Pushed(Err(error)) => {
+            set_sync_button(hwnd, &sync_button_label(), true);
+            set_sync_status(
+                hwnd,
+                Some(format!("● Sync pending · saved locally; {error}")),
+            );
+        }
         SyncEvent::Disconnected => {
             refresh_sync_ui(hwnd);
-            msg(hwnd, "Sync disconnected. Your settings remain on this PC.", "Settings Sync", MB_ICONINFORMATION);
+            msg(
+                hwnd,
+                "Sync disconnected. Your settings remain on this PC.",
+                "Settings Sync",
+                MB_ICONINFORMATION,
+            );
         }
     }
 }
-

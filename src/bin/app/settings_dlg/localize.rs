@@ -184,7 +184,12 @@ pub(super) unsafe fn set_column_text(list: HWND, idx: i32, s: &str) {
         pszText: PWSTR(w.as_ptr() as *mut u16),
         ..Default::default()
     };
-    SendMessageW(list, LVM_SETCOLUMNW, Some(WPARAM(idx as usize)), Some(LPARAM(&mut col as *mut _ as isize)));
+    SendMessageW(
+        list,
+        LVM_SETCOLUMNW,
+        Some(WPARAM(idx as usize)),
+        Some(LPARAM(&mut col as *mut _ as isize)),
+    );
 }
 
 /// Repeating timer that keeps the hotkey-service status line live while Settings is open, so

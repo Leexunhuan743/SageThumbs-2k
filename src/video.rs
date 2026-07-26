@@ -16,9 +16,7 @@ use image::{DynamicImage, RgbaImage};
 use windows::core::{GUID, HSTRING};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantToUInt64, PROPVARIANT};
-use windows::Win32::System::Com::{
-    CoInitializeEx, CoUninitialize, IStream, COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, IStream, COINIT_MULTITHREADED};
 use windows::Win32::UI::Shell::SHCreateMemStream;
 
 /// D3DFMT_X8R8G8B8 — the format id for `MFVideoFormat_RGB32`, for the stride fallback.
@@ -147,7 +145,13 @@ pub fn frame_from_path(path: &str) -> Option<DynamicImage> {
         // Direct file access: Media Foundation seeks efficiently via the file's own index
         // (exactly what Windows' own thumbnailer does), so we jump to the TRUE 30% mark for a
         // representative frame — no need for the bounded buffer's near-the-head seek cap.
-        grab_reader(&reader, Seek { frac: 0.30, cap_hns: None })
+        grab_reader(
+            &reader,
+            Seek {
+                frac: 0.30,
+                cap_hns: None,
+            },
+        )
     })
 }
 
@@ -169,7 +173,13 @@ pub fn frame_from_bytes(bytes: &[u8]) -> Option<DynamicImage> {
         // near the head, 10% capped at 3s) or a one-keyframe mini-MP4 from `crate::mp4` (a
         // single sample, so the 10% seek of its ~one-frame duration is a harmless no-op and we
         // grab that keyframe directly). Both are served by the same near-the-head plan.
-        grab(&bs, Seek { frac: 0.10, cap_hns: Some(MAX_SEEK_HNS) })
+        grab(
+            &bs,
+            Seek {
+                frac: 0.10,
+                cap_hns: Some(MAX_SEEK_HNS),
+            },
+        )
     })
 }
 
@@ -187,7 +197,13 @@ pub fn frame_from_bytes_repr(bytes: &[u8]) -> Option<DynamicImage> {
     grab_budgeted(move || unsafe {
         let stream = SHCreateMemStream(Some(&owned))?;
         let bs = MFCreateMFByteStreamOnStream(&stream).ok()?;
-        grab(&bs, Seek { frac: 0.30, cap_hns: None })
+        grab(
+            &bs,
+            Seek {
+                frac: 0.30,
+                cap_hns: None,
+            },
+        )
     })
 }
 
@@ -211,7 +227,16 @@ pub fn frame_from_block_stream(shell: &IStream, size: u64, frac: f64) -> Option<
     }
     // S_OK / S_FALSE both add a ref; RPC_E_CHANGED_MODE means COM is already up on this thread.
     let inited = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
-    let r = unsafe { grab_block_stream(shell.clone(), size, Seek { frac, cap_hns: None }) };
+    let r = unsafe {
+        grab_block_stream(
+            shell.clone(),
+            size,
+            Seek {
+                frac,
+                cap_hns: None,
+            },
+        )
+    };
     if inited {
         unsafe { CoUninitialize() };
     }
@@ -249,7 +274,14 @@ pub fn frame_from_block_stream_file(path: &str, frac: f64) -> Option<DynamicImag
                 .ok()?;
         let mut stat = STATSTG::default();
         inner.Stat(&mut stat, STATFLAG_NONAME).ok()?;
-        grab_block_stream(inner, stat.cbSize, Seek { frac, cap_hns: None })
+        grab_block_stream(
+            inner,
+            stat.cbSize,
+            Seek {
+                frac,
+                cap_hns: None,
+            },
+        )
     })
 }
 
@@ -305,7 +337,9 @@ unsafe fn grab_attrs() -> Option<IMFAttributes> {
     let mut attrs: Option<IMFAttributes> = None;
     MFCreateAttributes(&mut attrs, 1).ok()?;
     let attrs = attrs?;
-    attrs.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1).ok()?;
+    attrs
+        .SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1)
+        .ok()?;
     Some(attrs)
 }
 
@@ -335,7 +369,9 @@ unsafe fn grab_reader(reader: &IMFSourceReader, seek: Seek) -> Option<DynamicIma
     for _ in 0..64 {
         let mut flags: u32 = 0;
         let mut smp: Option<IMFSample> = None;
-        reader.ReadSample(first_video, 0, None, Some(&mut flags), None, Some(&mut smp)).ok()?;
+        reader
+            .ReadSample(first_video, 0, None, Some(&mut flags), None, Some(&mut smp))
+            .ok()?;
         if flags & (MF_SOURCE_READERF_ENDOFSTREAM.0 as u32) != 0 {
             break;
         }
@@ -407,7 +443,13 @@ unsafe fn seek_to_fraction(reader: &IMFSourceReader, seek: Seek) {
 /// Copy an MF RGB32 (`BGRX`) frame into top-down straight-RGBA, honoring `stride` (negative
 /// = bottom-up). Fully bounds-checked: returns `None` if the locked buffer is smaller than
 /// the geometry claims, so a short/hostile buffer can't trigger an over-read.
-unsafe fn copy_bgrx_to_rgba(data: *const u8, len: usize, w: u32, h: u32, stride: i32) -> Option<Vec<u8>> {
+unsafe fn copy_bgrx_to_rgba(
+    data: *const u8,
+    len: usize,
+    w: u32,
+    h: u32,
+    stride: i32,
+) -> Option<Vec<u8>> {
     if data.is_null() {
         return None;
     }
@@ -420,7 +462,11 @@ unsafe fn copy_bgrx_to_rgba(data: *const u8, len: usize, w: u32, h: u32, stride:
     let mut out = vec![0u8; w * h * 4];
     for y in 0..h {
         // Bottom-up source when stride < 0: read the last row first.
-        let srow = if stride < 0 { (h - 1 - y) * abs_stride } else { y * abs_stride };
+        let srow = if stride < 0 {
+            (h - 1 - y) * abs_stride
+        } else {
+            y * abs_stride
+        };
         let drow = y * w * 4;
         for x in 0..w {
             let s = srow + x * 4;

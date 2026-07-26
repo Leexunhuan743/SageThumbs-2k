@@ -24,7 +24,9 @@ pub fn extract(bytes: &[u8]) -> Option<Vec<u8>> {
     let cover_id = coverpage_id(&text)?;
     let b64 = binary_by_id(&text, &cover_id)?;
     let cleaned: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
-    let out = base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes()).ok()?;
+    let out = base64::engine::general_purpose::STANDARD
+        .decode(cleaned.as_bytes())
+        .ok()?;
     (out.len() as u64 <= super::MAX_COVER).then_some(out)
 }
 
@@ -36,7 +38,9 @@ fn decode_xml(bytes: &[u8]) -> String {
         .find("encoding=\"")
         .and_then(|p| {
             let p = p + 10;
-            head.get(p..).and_then(|r| r.find('"')).map(|e| &head[p..p + e])
+            head.get(p..)
+                .and_then(|r| r.find('"'))
+                .map(|e| &head[p..p + e])
         })
         .unwrap_or("utf-8");
     let enc = encoding_rs::Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::UTF_8);

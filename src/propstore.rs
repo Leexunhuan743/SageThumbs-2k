@@ -17,29 +17,30 @@
 use core::cell::RefCell;
 use core::mem::ManuallyDrop;
 
-use windows_implement::implement;
 use windows::core::{Error, Result, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     E_FAIL, E_INVALIDARG, FILETIME, PROPERTYKEY, STG_E_ACCESSDENIED, SYSTEMTIME,
 };
-use windows::Win32::System::Com::CoTaskMemAlloc;
-use windows::Win32::System::Variant::VT_LPWSTR;
 use windows::Win32::Storage::EnhancedStorage::{
     PKEY_Audio_EncodingBitrate, PKEY_GPS_LatitudeDecimal, PKEY_GPS_LongitudeDecimal,
     PKEY_Image_BitDepth, PKEY_Image_Dimensions, PKEY_Image_HorizontalResolution,
     PKEY_Image_HorizontalSize, PKEY_Image_VerticalResolution, PKEY_Image_VerticalSize,
     PKEY_Media_Duration, PKEY_Media_Year, PKEY_Music_AlbumTitle, PKEY_Music_Artist,
-    PKEY_Music_Genre, PKEY_Music_TrackNumber, PKEY_Photo_CameraManufacturer, PKEY_Photo_CameraModel,
-    PKEY_Photo_DateTaken, PKEY_Title, PKEY_Video_FrameHeight, PKEY_Video_FrameWidth,
+    PKEY_Music_Genre, PKEY_Music_TrackNumber, PKEY_Photo_CameraManufacturer,
+    PKEY_Photo_CameraModel, PKEY_Photo_DateTaken, PKEY_Title, PKEY_Video_FrameHeight,
+    PKEY_Video_FrameWidth,
 };
+use windows::Win32::System::Com::CoTaskMemAlloc;
 use windows::Win32::System::Com::StructuredStorage::{
     InitPropVariantFromFileTime, InitPropVariantFromStringVector, PROPVARIANT, PROPVARIANT_0,
     PROPVARIANT_0_0, PROPVARIANT_0_0_0,
 };
 use windows::Win32::System::Time::{SystemTimeToFileTime, TzSpecificLocalTimeToSystemTime};
+use windows::Win32::System::Variant::VT_LPWSTR;
 use windows::Win32::UI::Shell::PropertiesSystem::{
     IInitializeWithFile, IInitializeWithFile_Impl, IPropertyStore, IPropertyStore_Impl,
 };
+use windows_implement::implement;
 
 use crate::safety;
 
@@ -73,7 +74,10 @@ impl IInitializeWithFile_Impl for PropertyStore_Impl {
     fn Initialize(&self, pszfilepath: &PCWSTR, _grfmode: u32) -> Result<()> {
         safety::guard(|| {
             let path = unsafe { pszfilepath.to_string() }.map_err(|_| Error::from(E_FAIL))?;
-            *self.path.try_borrow_mut().map_err(|_| Error::from(E_FAIL))? = Some(path);
+            *self
+                .path
+                .try_borrow_mut()
+                .map_err(|_| Error::from(E_FAIL))? = Some(path);
             Ok(())
         })
     }
@@ -90,7 +94,9 @@ impl IPropertyStore_Impl for PropertyStore_Impl {
                 return Err(Error::from(E_INVALIDARG));
             }
             self.with_props(|p| {
-                let entry = p.get(iprop as usize).ok_or_else(|| Error::from(E_INVALIDARG))?;
+                let entry = p
+                    .get(iprop as usize)
+                    .ok_or_else(|| Error::from(E_INVALIDARG))?;
                 unsafe { *pkey = entry.0 };
                 Ok(())
             })
@@ -106,8 +112,7 @@ impl IPropertyStore_Impl for PropertyStore_Impl {
             self.with_props(|p| {
                 // A property store returns an EMPTY variant (not an error) for keys it
                 // doesn't carry — that's how the shell probes which properties exist.
-                Ok(p
-                    .iter()
+                Ok(p.iter()
                     .find(|(k, _)| k.fmtid == want.fmtid && k.pid == want.pid)
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default())
@@ -126,8 +131,14 @@ impl IPropertyStore_Impl for PropertyStore_Impl {
 
 impl PropertyStore_Impl {
     /// Run `f` against the (lazily built, cached) property list.
-    fn with_props<T>(&self, f: impl FnOnce(&[(PROPERTYKEY, PROPVARIANT)]) -> Result<T>) -> Result<T> {
-        let mut slot = self.props.try_borrow_mut().map_err(|_| Error::from(E_FAIL))?;
+    fn with_props<T>(
+        &self,
+        f: impl FnOnce(&[(PROPERTYKEY, PROPVARIANT)]) -> Result<T>,
+    ) -> Result<T> {
+        let mut slot = self
+            .props
+            .try_borrow_mut()
+            .map_err(|_| Error::from(E_FAIL))?;
         let props = slot.get_or_insert_with(|| self.build_props());
         f(props)
     }
@@ -158,7 +169,10 @@ impl PropertyStore_Impl {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .unwrap_or_default();
-        let is_video = matches!(crate::formats::category(&ext), crate::formats::Category::Video);
+        let is_video = matches!(
+            crate::formats::category(&ext),
+            crate::formats::Category::Video
+        );
 
         // Image dimensions + EXIF camera (same probe "Image info" uses, under the decode guards).
         if info.width > 0 && info.height > 0 {
@@ -189,7 +203,10 @@ impl PropertyStore_Impl {
             out.push((PKEY_Image_BitDepth, PROPVARIANT::from(info.bit_depth)));
         }
         if info.dpi_x > 0.0 {
-            out.push((PKEY_Image_HorizontalResolution, PROPVARIANT::from(info.dpi_x)));
+            out.push((
+                PKEY_Image_HorizontalResolution,
+                PROPVARIANT::from(info.dpi_x),
+            ));
         }
         if info.dpi_y > 0.0 {
             out.push((PKEY_Image_VerticalResolution, PROPVARIANT::from(info.dpi_y)));
@@ -220,11 +237,17 @@ impl PropertyStore_Impl {
         }
         // System.Media.Duration is in 100-nanosecond units (VT_UI8); ms × 10 000.
         if tags.duration_ms > 0 {
-            out.push((PKEY_Media_Duration, PROPVARIANT::from(tags.duration_ms.saturating_mul(10_000))));
+            out.push((
+                PKEY_Media_Duration,
+                PROPVARIANT::from(tags.duration_ms.saturating_mul(10_000)),
+            ));
         }
         // System.Audio.EncodingBitrate is bits-per-second (VT_UI4); kbps × 1000.
         if tags.bitrate_kbps > 0 {
-            out.push((PKEY_Audio_EncodingBitrate, PROPVARIANT::from(tags.bitrate_kbps.saturating_mul(1000))));
+            out.push((
+                PKEY_Audio_EncodingBitrate,
+                PROPVARIANT::from(tags.bitrate_kbps.saturating_mul(1000)),
+            ));
         }
 
         safety::log_debug(&format!(

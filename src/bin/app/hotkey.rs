@@ -60,7 +60,9 @@ fn kind_for(id: u32) -> Option<Kind> {
 
 /// Entry point for `--hotkey-action`: run whichever action the user bound to the custom hotkey.
 pub(crate) unsafe fn run_hotkey_action(hinst: HINSTANCE) {
-    let Some(kind) = kind_for(settings::custom_action()) else { return };
+    let Some(kind) = kind_for(settings::custom_action()) else {
+        return;
+    };
     match kind {
         Kind::Eyedropper => crate::eyedropper::run_eyedropper(hinst),
         Kind::Screenshot => crate::screenshot::run_capture(hinst),

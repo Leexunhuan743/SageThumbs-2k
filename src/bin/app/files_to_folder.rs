@@ -13,8 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::dark::dark_ctlcolor;
 use crate::win::{
-    ctl, get_edit_text, read_listfile, run_dialog, t, wide, wm_dpichanged, BUTTON, EDIT, STATIC,
-    EM_SETSEL, IDCANCEL, IDOK,
+    ctl, get_edit_text, read_listfile, run_dialog, t, wide, wm_dpichanged, BUTTON, EDIT, EM_SETSEL,
+    IDCANCEL, IDOK, STATIC,
 };
 
 const CID_F2F_NAME: i32 = 5001;
@@ -54,13 +54,40 @@ extern "system" fn f2f_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                     EDIT,
                     t("f2f_default_name"),
                     WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_BORDER | WS_TABSTOP,
-                    16, 44, 344, 26, CID_F2F_NAME, hinst,
+                    16,
+                    44,
+                    344,
+                    26,
+                    CID_F2F_NAME,
+                    hinst,
                 );
                 // Select-all + focus so the suggested name is replaced on first type.
                 SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
                 let _ = SetFocus(Some(edit));
-                ctl(hwnd, BUTTON, t("f2f_create"), WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP, 176, 92, 104, 30, IDOK, hinst);
-                ctl(hwnd, BUTTON, t("btn_cancel"), WS_TABSTOP, 286, 92, 88, 30, IDCANCEL, hinst);
+                ctl(
+                    hwnd,
+                    BUTTON,
+                    t("f2f_create"),
+                    WINDOW_STYLE(BS_DEFPUSHBUTTON as u32) | WS_TABSTOP,
+                    176,
+                    92,
+                    104,
+                    30,
+                    IDOK,
+                    hinst,
+                );
+                ctl(
+                    hwnd,
+                    BUTTON,
+                    t("btn_cancel"),
+                    WS_TABSTOP,
+                    286,
+                    92,
+                    88,
+                    30,
+                    IDCANCEL,
+                    hinst,
+                );
                 LRESULT(0)
             }
             WM_COMMAND => {
@@ -74,11 +101,19 @@ extern "system" fn f2f_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                         // Keep the dialog open on failure (with a message) instead of
                         // silently closing as if it worked — the create/move can fail on
                         // permissions, a read-only/locked file, or a cross-volume move.
-                        match F2F_FILES.get().map(|files| sagethumbs2k_core::files_to_folder(files, &name)) {
+                        match F2F_FILES
+                            .get()
+                            .map(|files| sagethumbs2k_core::files_to_folder(files, &name))
+                        {
                             Some(Err(_)) => {
                                 let m = wide(t("f2f_failed"));
                                 let cap = wide("SageThumbs 2K");
-                                MessageBoxW(Some(hwnd), PCWSTR(m.as_ptr()), PCWSTR(cap.as_ptr()), MB_OK | MB_ICONWARNING);
+                                MessageBoxW(
+                                    Some(hwnd),
+                                    PCWSTR(m.as_ptr()),
+                                    PCWSTR(cap.as_ptr()),
+                                    MB_OK | MB_ICONWARNING,
+                                );
                             }
                             _ => {
                                 let _ = DestroyWindow(hwnd);

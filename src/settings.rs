@@ -53,12 +53,12 @@ fn hkcu_root() -> &'static str {
 
 // Defaults + bounds, matching the legacy SageThumbs.h constants.
 pub const DEFAULT_MAX_FILE_MB: u32 = 100; // FILE_MAX_SIZE
-// Raised from the legacy 256/512 (2026-06-22): on Hi-DPI / 4K / large ("jumbo")
-// icon views the shell requests thumbnails well past 512px. Capping below the
-// requested size handed back an undersized bitmap the shell could neither display
-// crisply NOR durably cache — so it re-extracted on every refresh (an expensive
-// 4K video-frame decode each time). We honor the request up to 1024 now; small
-// views are unaffected (the provider still does `cx.min(max_thumb)`).
+                                          // Raised from the legacy 256/512 (2026-06-22): on Hi-DPI / 4K / large ("jumbo")
+                                          // icon views the shell requests thumbnails well past 512px. Capping below the
+                                          // requested size handed back an undersized bitmap the shell could neither display
+                                          // crisply NOR durably cache — so it re-extracted on every refresh (an expensive
+                                          // 4K video-frame decode each time). We honor the request up to 1024 now; small
+                                          // views are unaffected (the provider still does `cx.min(max_thumb)`).
 pub const DEFAULT_THUMB_SIZE: u32 = 1024; // THUMB_STORE_SIZE (was 256)
 pub const THUMB_MIN: u32 = 32; // THUMB_MIN_SIZE
 pub const THUMB_MAX: u32 = 1024; // THUMB_MAX_SIZE (was 512)
@@ -89,7 +89,10 @@ pub fn set_dword(name: &str, value: u32) -> windows_registry::Result<()> {
 /// Used by the screenshot-daemon enable migration to tell a never-set flag from an
 /// explicit `0`.
 pub fn get_dword_opt(name: &str) -> Option<u32> {
-    CURRENT_USER.open(hkcu_root()).and_then(|k| k.get_u32(name)).ok()
+    CURRENT_USER
+        .open(hkcu_root())
+        .and_then(|k| k.get_u32(name))
+        .ok()
 }
 
 /// One-time flag: `false` until the app has reported a fresh install once, then `true`
@@ -247,13 +250,18 @@ pub struct ThumbSettings {
 pub fn thumb_settings() -> ThumbSettings {
     let key = CURRENT_USER.open(hkcu_root()).ok();
     let g = |name: &str, default: u32| {
-        key.as_ref().and_then(|k| k.get_u32(name).ok()).unwrap_or(default)
+        key.as_ref()
+            .and_then(|k| k.get_u32(name).ok())
+            .unwrap_or(default)
     };
     let mb = g("MaxSize", DEFAULT_MAX_FILE_MB) as u64;
     ThumbSettings {
         enabled: g("EnableThumbs", 1) != 0,
         max_file_bytes: if mb == 0 { u64::MAX } else { mb * 1024 * 1024 },
-        max_thumb: clamp_thumb_size(g("Width", DEFAULT_THUMB_SIZE), g("Height", DEFAULT_THUMB_SIZE)),
+        max_thumb: clamp_thumb_size(
+            g("Width", DEFAULT_THUMB_SIZE),
+            g("Height", DEFAULT_THUMB_SIZE),
+        ),
         use_embedded: g("UseEmbedded", 1) != 0,
     }
 }
@@ -490,7 +498,9 @@ pub fn screenshot_save_dir() -> String {
 
 /// Persist the chosen save folder (absolute path). Empty restores the Desktop default.
 pub fn set_screenshot_save_dir(dir: &str) -> windows_registry::Result<()> {
-    CURRENT_USER.create(hkcu_root())?.set_string("ShotSaveDir", dir)
+    CURRENT_USER
+        .create(hkcu_root())?
+        .set_string("ShotSaveDir", dir)
 }
 
 // ---- Diagnostics --------------------------------------------------------
@@ -669,7 +679,9 @@ pub fn menu_item_shown(key: &str) -> bool {
 
 /// Persist a top-level menu item's visibility (used by the Options dialog).
 pub fn set_menu_item_shown(key: &str, shown: bool) -> windows_registry::Result<()> {
-    CURRENT_USER.create(format!(r"{}\MenuItems", hkcu_root()))?.set_u32(key, shown as u32)
+    CURRENT_USER
+        .create(format!(r"{}\MenuItems", hkcu_root()))?
+        .set_u32(key, shown as u32)
 }
 
 /// The user's custom top-level menu order — a list of menu-item title keys, top to
@@ -689,7 +701,9 @@ pub fn menu_order() -> Vec<String> {
 /// Persist the custom menu order (comma-joined keys); an empty slice clears it
 /// (= back to the default tree order).
 pub fn set_menu_order(keys: &[&str]) -> windows_registry::Result<()> {
-    CURRENT_USER.create(hkcu_root())?.set_string("MenuOrder", keys.join(","))
+    CURRENT_USER
+        .create(hkcu_root())?
+        .set_string("MenuOrder", keys.join(","))
 }
 
 /// A one-shot snapshot of the menu-item visibility subkey. Building the right-click
@@ -704,7 +718,11 @@ pub struct MenuVisibility(Option<windows_registry::Key>);
 /// Open the menu-visibility subkey once for the current menu build. `None` (subkey
 /// absent — nothing ever hidden) makes every [`MenuVisibility::shown`] return true.
 pub fn menu_visibility() -> MenuVisibility {
-    MenuVisibility(CURRENT_USER.open(format!(r"{}\MenuItems", hkcu_root())).ok())
+    MenuVisibility(
+        CURRENT_USER
+            .open(format!(r"{}\MenuItems", hkcu_root()))
+            .ok(),
+    )
 }
 
 impl MenuVisibility {
@@ -716,7 +734,6 @@ impl MenuVisibility {
         !matches!(self.0.as_ref().and_then(|k| k.get_u32(key).ok()), Some(0))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -739,14 +756,26 @@ mod tests {
         assert_eq!(clamp_thumb_size(THUMB_MIN, THUMB_MIN), THUMB_MIN);
         assert_eq!(clamp_thumb_size(THUMB_MAX, THUMB_MAX), THUMB_MAX);
         // A mid-range value passes through.
-        assert_eq!(clamp_thumb_size(DEFAULT_THUMB_SIZE, DEFAULT_THUMB_SIZE), DEFAULT_THUMB_SIZE);
+        assert_eq!(
+            clamp_thumb_size(DEFAULT_THUMB_SIZE, DEFAULT_THUMB_SIZE),
+            DEFAULT_THUMB_SIZE
+        );
         // The larger edge wins, then is clamped.
         assert_eq!(clamp_thumb_size(THUMB_MIN, 200), 200);
         assert_eq!(clamp_thumb_size(40, u32::MAX), THUMB_MAX);
         // Whatever the inputs, the result is always inside the documented range.
-        for (w, h) in [(0, 0), (1, 7), (300, 9), (u32::MAX, 0), (THUMB_MAX, THUMB_MIN)] {
+        for (w, h) in [
+            (0, 0),
+            (1, 7),
+            (300, 9),
+            (u32::MAX, 0),
+            (THUMB_MAX, THUMB_MIN),
+        ] {
             let s = clamp_thumb_size(w, h);
-            assert!((THUMB_MIN..=THUMB_MAX).contains(&s), "clamp_thumb_size({w},{h}) = {s}");
+            assert!(
+                (THUMB_MIN..=THUMB_MAX).contains(&s),
+                "clamp_thumb_size({w},{h}) = {s}"
+            );
         }
     }
 

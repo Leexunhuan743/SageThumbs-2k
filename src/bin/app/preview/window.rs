@@ -1645,7 +1645,10 @@ fn sort_paths_like_explorer(files: Vec<std::path::PathBuf>) -> Vec<std::path::Pa
     let mut keyed: Vec<(Vec<u16>, std::path::PathBuf)> = files
         .into_iter()
         .map(|p| {
-            let name = p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
             (crate::win::wide(&name), p)
         })
         .collect();

@@ -28,7 +28,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE,
+    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
+    VK_SPACE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, FindWindowExW, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
@@ -63,11 +64,16 @@ static HOLD_PEEK: AtomicBool = AtomicBool::new(true);
 pub(super) unsafe fn rearm(daemon_hwnd: HWND) {
     DAEMON_HWND.store(daemon_hwnd.0 as isize, Ordering::Relaxed);
     // Cache the hold-to-peek setting here (on the daemon thread), NOT in the hook callback.
-    HOLD_PEEK.store(sagethumbs2k_core::settings::preview_hold_peek(), Ordering::Relaxed);
+    HOLD_PEEK.store(
+        sagethumbs2k_core::settings::preview_hold_peek(),
+        Ordering::Relaxed,
+    );
     uninstall();
     if sagethumbs2k_core::settings::preview_enabled() {
         let hmod = GetModuleHandleW(None).ok();
-        let hinst = hmod.map(|m| windows::Win32::Foundation::HINSTANCE(m.0)).unwrap_or_default();
+        let hinst = hmod
+            .map(|m| windows::Win32::Foundation::HINSTANCE(m.0))
+            .unwrap_or_default();
         if let Ok(h) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), Some(hinst), 0) {
             HOOK.store(h.0 as isize, Ordering::Relaxed);
         }
