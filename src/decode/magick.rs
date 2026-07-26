@@ -123,8 +123,8 @@ pub(super) fn add_magick_limits(cmd: &mut Command) {
 /// invocation and do not weaken the broader Magick policy or raster/PSD support.
 const METAFILE_MAGICK_MEMORY_LIMIT: &str = "96MiB";
 const METAFILE_MAGICK_MAP_LIMIT: &str = "96MiB";
-const METAFILE_MAGICK_TIME_LIMIT: &str = "0.75";
-const METAFILE_MAGICK_TIMEOUT: Duration = Duration::from_millis(750);
+const METAFILE_MAGICK_TIME_LIMIT: &str = "3";
+const METAFILE_MAGICK_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn add_metafile_magick_limits(cmd: &mut Command) {
     cmd.args([
@@ -672,10 +672,7 @@ mod tests {
                 METAFILE_MAGICK_TIME_LIMIT,
             ]
         );
-        assert_eq!(
-            METAFILE_MAGICK_TIMEOUT,
-            std::time::Duration::from_millis(750)
-        );
+        assert_eq!(METAFILE_MAGICK_TIMEOUT, std::time::Duration::from_secs(3));
     }
 
     #[test]

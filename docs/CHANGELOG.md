@@ -14,7 +14,7 @@ All notable user-facing changes to **SageThumbs 2K**. Newest first.
   HEIC, AVIF, RAW, and JPEG 2000 frames before copying RGBA pixels into SageThumbs. Ordinary TIFF
   files remain on the normal path, and the configured maximum file size still applies.
 - **Pathological Windows metafiles fail quickly.** WMF and EMF decoding now has a dedicated
-  750 ms/96 MiB ImageMagick budget instead of consuming the broader raster allowance.
+  three-second/96 MiB ImageMagick budget instead of consuming the broader raster allowance.
 - **The optional uninstall note can include reply details.** People who want an answer can leave an
   email or other contact beside their feedback; skipping the survey still never delays removal.
 - **Connections sync is safer across devices and accounts.** Nested preference changes preserve

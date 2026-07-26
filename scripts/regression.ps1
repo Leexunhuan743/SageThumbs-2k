@@ -104,8 +104,9 @@ $results = $files | ForEach-Object -ThrottleLimit ([Environment]::ProcessorCount
 }
 
 # Sequential retry of first-pass failures. A metafile (EMF/WMF) render shells out
-# to magick under a deliberately-TIGHT 3 s wall-clock timeout (decode.rs
-# METAFILE_TIMEOUT — a slow vector metafile would otherwise grind ~5 s to a blank
+# to magick under a deliberately tight 3 s wall-clock timeout (magick.rs
+# METAFILE_MAGICK_TIMEOUT — a slow vector metafile would otherwise consume the
+# general-purpose 20 s raster budget to produce a blank
 # frame). On a fully-saturated machine the parallel fan-out (ThrottleLimit =
 # ProcessorCount st2k spawns) can starve that render of CPU so a metafile that
 # renders in ~300 ms unloaded blows past 3 s and spuriously "fails". Re-rendering
