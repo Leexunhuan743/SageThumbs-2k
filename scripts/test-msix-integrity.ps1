@@ -199,3 +199,7 @@ try {
         ) -Force
     }
 }
+
+# Expected-failure cases intentionally leave signtool's native exit code
+# nonzero. The assertions above are authoritative once all cases complete.
+exit 0

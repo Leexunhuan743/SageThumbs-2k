@@ -478,16 +478,35 @@ function Assert-ReleaseMsixPackage {
     )
     $trustedPeople = [Security.Cryptography.X509Certificates.X509Store]::new(
         'TrustedPeople',
-        [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+        [Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
     )
     $addedTemporaryTrust = $false
     try {
+        $untrustedSignature = Get-AuthenticodeSignature -LiteralPath $Path
+        if ($null -eq $untrustedSignature -or
+            $null -eq $untrustedSignature.SignerCertificate) {
+            throw 'MSIX has no readable Authenticode signer certificate'
+        }
+        $expectedCertificateHash = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($expectedCertificate.RawData)
+        )
+        $signerCertificateHash = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData(
+                $untrustedSignature.SignerCertificate.RawData
+            )
+        )
+        if ($signerCertificateHash -cne $expectedCertificateHash) {
+            throw "MSIX signer certificate does not equal bundled certificate " +
+                "(signer $($untrustedSignature.SignerCertificate.Thumbprint), " +
+                "bundled $($expectedCertificate.Thumbprint))"
+        }
+
         # The shipped package deliberately uses a self-signed app-package
         # certificate. Verify it against that exact bundled public certificate
         # without requiring a release runner to have installed SageThumbs first.
         # TrustedPeople is the same non-root store used by the installer.
         $trustedPeople.Open(
-            [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
+            [Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly
         )
         $trusted = $trustedPeople.Certificates.Find(
             [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
@@ -495,6 +514,10 @@ function Assert-ReleaseMsixPackage {
             $false
         )
         if ($trusted.Count -eq 0) {
+            $trustedPeople.Close()
+            $trustedPeople.Open(
+                [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
+            )
             $trustedPeople.Add($expectedCertificate)
             $addedTemporaryTrust = $true
         }
@@ -512,17 +535,6 @@ function Assert-ReleaseMsixPackage {
             throw "MSIX Authenticode signature is not valid: $status"
         }
 
-        $expectedCertificateHash = [Convert]::ToHexString(
-            [Security.Cryptography.SHA256]::HashData($expectedCertificate.RawData)
-        )
-        $signerCertificateHash = [Convert]::ToHexString(
-            [Security.Cryptography.SHA256]::HashData($signature.SignerCertificate.RawData)
-        )
-        if ($signerCertificateHash -cne $expectedCertificateHash) {
-            throw "MSIX signer certificate does not equal bundled certificate " +
-                "(signer $($signature.SignerCertificate.Thumbprint), " +
-                "bundled $($expectedCertificate.Thumbprint))"
-        }
         Assert-ReleaseMsixIdentity `
             -Path $Path `
             -Version $Version `
@@ -532,7 +544,7 @@ function Assert-ReleaseMsixPackage {
         if ($addedTemporaryTrust) {
             $cleanupStore = [Security.Cryptography.X509Certificates.X509Store]::new(
                 'TrustedPeople',
-                [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+                [Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
             )
             try {
                 $cleanupStore.Open(
