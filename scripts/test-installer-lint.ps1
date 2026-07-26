@@ -167,3 +167,8 @@ try {
         Remove-Item -LiteralPath $scratch -Recurse -Force
     }
 }
+
+# Assert-LintFails deliberately ends by running a native command that must fail. GitHub's pwsh
+# step observes that expected command's LASTEXITCODE even though all assertions passed, so make the
+# test harness's successful result explicit.
+exit 0
