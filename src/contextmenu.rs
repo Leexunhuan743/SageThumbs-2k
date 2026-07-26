@@ -44,7 +44,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, GetSystemMetrics, InsertMenuW, SetMenuItemInfoW,
     SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BYPOSITION, MF_POPUP, MF_SEPARATOR, MF_STRING,
     MIIM_BITMAP, NONCLIENTMETRICSW, SM_CXMENUCHECK, SM_CYMENUCHECK, SPI_GETNONCLIENTMETRICS,
-    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_INITMENUPOPUP,
 };
 use windows_implement::implement;
 
@@ -89,6 +89,13 @@ pub struct ContextMenu {
     preview: RefCell<Option<Preview>>,
     /// Absolute menu command id of the preview item (set in QueryContextMenu).
     preview_cmd: Cell<Option<u32>>,
+    /// The SageThumbs flyout which will receive a mode-1 preview when Explorer
+    /// sends `WM_INITMENUPOPUP`. Keeping this lets right-click construction remain
+    /// metadata-only; the file is read only if the user opens the flyout.
+    preview_submenu: Cell<HMENU>,
+    /// Prevent duplicate preview insertion if Explorer forwards more than one
+    /// initialization message for the same flyout.
+    preview_submenu_inserted: Cell<bool>,
     /// The composed preview tile handed to the menu as `hbmpItem`. Owned here so
     /// it stays alive for as long as the menu can paint it (the shell releases us
     /// after the menu is dismissed); freed in `Drop`.
@@ -104,6 +111,8 @@ impl Default for ContextMenu {
             paths: RefCell::new(Vec::new()),
             preview: RefCell::new(None),
             preview_cmd: Cell::new(None),
+            preview_submenu: Cell::new(HMENU::default()),
+            preview_submenu_inserted: Cell::new(false),
             tile: Cell::new(HBITMAP::default()),
         }
     }
@@ -172,7 +181,7 @@ struct MenuThumb {
 
 /// Wall-clock budget for the off-thread menu-preview decode. Normal files decode well under
 /// this; the cap exists so a slow-but-in-cap image (complex HEIC/AVIF, a 16384² file) can't
-/// freeze the menu's first paint for longer than this before falling back to caption-only.
+/// delay the previewing flyout for longer than this before falling back to caption-only.
 const MENU_PREVIEW_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Read + decode `path` to a scaled menu thumbnail on a DETACHED worker under a budget, so the
@@ -222,8 +231,8 @@ fn decode_menu_thumb_budgeted(path: &str) -> Option<MenuThumb> {
 }
 
 /// Decode `path` into the menu-preview payload (thumbnail DIB + caption lines).
-/// Called LAZILY from the owner-draw measure/draw path, not from `QueryContextMenu`,
-/// so the decode happens as the (sub)menu paints rather than before it opens.
+/// Called only when a preview is about to be displayed, never while
+/// `QueryContextMenu` is constructing a mode-1 flyout.
 fn build_preview(path: &str) -> Option<Preview> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > PREVIEW_MAX_BYTES || meta.len() > settings::max_file_size_bytes() {
@@ -378,11 +387,10 @@ unsafe fn build_menu_into(
 }
 
 impl ContextMenu {
-    /// Build the preview on first demand. The decode is DEFERRED out of
-    /// `QueryContextMenu` to here (the owner-draw measure/draw path), so it never
-    /// blocks the menu's first paint — in submenu mode the file isn't even read
-    /// unless the user opens the SageThumbs flyout. Idempotent: builds at most once,
-    /// caching into `self.preview`. Returns whether a preview is now available.
+    /// Build the preview on first demand. In submenu mode this is called from the
+    /// flyout's `WM_INITMENUPOPUP`, so right-clicking never reads or decodes the
+    /// selected file unless the user opens SageThumbs. Idempotent: builds at most
+    /// once, caching into `self.preview`. Returns whether a preview is available.
     unsafe fn ensure_preview(&self) -> bool {
         if self.preview.borrow().is_some() {
             return true;
@@ -428,11 +436,42 @@ impl ContextMenu {
         bmp
     }
 
-    /// Kept only to satisfy IContextMenu2/3. We no longer own any owner-drawn menu
-    /// item, so there is nothing to measure or paint and the shell's forwarded
-    /// WM_MEASUREITEM/WM_DRAWITEM are never ours.
-    unsafe fn menu_msg(&self, _umsg: u32, _lparam: LPARAM) -> bool {
-        false
+    /// Lazily insert the mode-1 bitmap tile when Explorer is about to open our
+    /// flyout. `hbmpItem` remains a native bitmap item, preserving themed (including
+    /// dark-mode) rendering for every other menu item.
+    unsafe fn menu_msg(&self, umsg: u32, wparam: WPARAM, _lparam: LPARAM) -> bool {
+        if umsg != WM_INITMENUPOPUP || self.preview_submenu_inserted.get() {
+            return false;
+        }
+
+        let submenu = self.preview_submenu.get();
+        let Some(cmd) = self.preview_cmd.get() else {
+            return false;
+        };
+        if submenu.is_invalid() || wparam.0 != submenu.0 as usize {
+            return false;
+        }
+
+        self.preview_submenu_inserted.set(true);
+        let tile = self.build_tile();
+        if tile.is_invalid() {
+            return false;
+        }
+
+        if InsertMenuW(
+            submenu,
+            0,
+            MF_BYPOSITION | MF_STRING,
+            cmd as usize,
+            &HSTRING::new(),
+        )
+        .is_err()
+        {
+            return false;
+        }
+        set_item_bitmap(submenu, 0, tile);
+        let _ = InsertMenuW(submenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null());
+        true
     }
 }
 
@@ -461,9 +500,9 @@ unsafe fn menu_font() -> Option<HFONT> {
     None
 }
 
-/// The menu font, created once per process and never freed — the owner-draw
-/// callbacks (WM_MEASUREITEM/WM_DRAWITEM) hit this on every paint, and a live
-/// menu may reference it for the host's lifetime. Same never-free rationale as
+/// The menu font, created once per process and never freed — preview-tile
+/// composition may occur while a live menu still references the bitmap. Same
+/// never-free rationale as
 /// [`menu_logo`]; the classic-menu host is short-lived. Falls back to
 /// [`menu_font`] on the cache-miss path and to the stock GUI font if even that
 /// fails. Returns an HFONT the caller must NOT delete.
@@ -906,12 +945,14 @@ impl IContextMenu_Impl for ContextMenu_Impl {
             // InvokeCommand mapping stays stable even if leaves were clamped).
             self.preview_cmd.set(None);
             *self.preview.borrow_mut() = None;
+            self.preview_submenu.set(HMENU::default());
+            self.preview_submenu_inserted.set(false);
             let mode = settings::menu_preview();
             // For a 1-file selection, `any_image` already == is_image(paths[0]).
             let single = paths.len() == 1 && any_image;
             // Reserve the bitmap preview slot when one is wanted and the file passes
-            // the CHEAP metadata size gate. `build_tile` performs the bounded worker
-            // decode only if this slot is actually being inserted.
+            // the CHEAP metadata size gate. Mode 2 builds the tile now; mode 1 waits
+            // for its SageThumbs flyout's WM_INITMENUPOPUP before decoding.
             if mode != 0 && single && avail > leaves_n && preview_size_ok(&paths[0]) {
                 // The preview occupies the slot just past the last leaf;
                 // id_for(Preview) encapsulates that "== leaves.len()" convention.
@@ -1029,19 +1070,12 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                 // never "off on its own." We ship ONLY this classic handler (no packaged
                 // modern command), so "SageThumbs 2K" is listed exactly once.
                 if let Ok(hsub) = CreatePopupMenu() {
-                    if let Some(cmd) = self.preview_cmd.get() {
-                        if mode == 1 {
-                            // Preview at the top of the flyout, then a divider before
-                            // the verbs. A bitmap item, so the flyout keeps its theme
-                            // (see the mode-2 note above and `preview_hbitmap`).
-                            let tile = self.build_tile();
-                            if !tile.is_invalid() {
-                                let _ = AppendMenuW(hsub, MF_STRING, cmd as usize, &HSTRING::new());
-                                // Freshly created popup, so the tile is at index 0.
-                                set_item_bitmap(hsub, 0, tile);
-                                let _ = AppendMenuW(hsub, MF_SEPARATOR, 0, PCWSTR::null());
-                            }
-                        }
+                    if self.preview_cmd.get().is_some() && mode == 1 {
+                        // The preview is inserted at index 0 when this flyout is
+                        // opened (`WM_INITMENUPOPUP`), not while Explorer is still
+                        // building the parent menu. That keeps a simple right-click
+                        // metadata-only unless the user opens SageThumbs.
+                        self.preview_submenu.set(hsub);
                     }
                     // Build the top-level items in the user's saved order (drag-to-
                     // reorder in Settings). Each item keeps its ORIGINAL leaf-start
@@ -1158,12 +1192,12 @@ impl IContextMenu_Impl for ContextMenu_Impl {
     }
 }
 
-// The shell forwards WM_MEASUREITEM/WM_DRAWITEM here for our owner-drawn preview
-// item (only present when MenuPreview != 0). menu_msg paints it; see its doc.
+// Explorer forwards menu lifecycle messages here, including WM_INITMENUPOPUP for
+// the lazy submenu preview. Bitmap items need no owner-draw measure/paint handling.
 impl IContextMenu2_Impl for ContextMenu_Impl {
-    fn HandleMenuMsg(&self, umsg: u32, _wparam: WPARAM, lparam: LPARAM) -> Result<()> {
+    fn HandleMenuMsg(&self, umsg: u32, wparam: WPARAM, lparam: LPARAM) -> Result<()> {
         safety::guard(|| {
-            unsafe { self.menu_msg(umsg, lparam) };
+            unsafe { self.menu_msg(umsg, wparam, lparam) };
             Ok(())
         })
     }
@@ -1173,14 +1207,14 @@ impl IContextMenu3_Impl for ContextMenu_Impl {
     fn HandleMenuMsg2(
         &self,
         umsg: u32,
-        _wparam: WPARAM,
+        wparam: WPARAM,
         lparam: LPARAM,
         plresult: *mut LRESULT,
     ) -> Result<()> {
         safety::guard(|| {
-            let handled = unsafe { self.menu_msg(umsg, lparam) };
+            let handled = unsafe { self.menu_msg(umsg, wparam, lparam) };
             if !plresult.is_null() {
-                // Measure/draw return TRUE when handled.
+                // WM_INITMENUPOPUP and owner-draw messages return TRUE when handled.
                 unsafe { *plresult = LRESULT(handled as isize) };
             }
             Ok(())

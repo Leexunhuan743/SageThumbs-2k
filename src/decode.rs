@@ -22,12 +22,12 @@ use std::time::Duration;
 
 use image::imageops::FilterType;
 use image::DynamicImage;
-use windows::core::{Error, Result};
+use windows::core::{Error, Interface, Result};
 use windows::Win32::Foundation::E_FAIL;
 use windows::Win32::Graphics::Imaging::{
-    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppRGBA, IWICBitmapFrameDecode, IWICColorContext,
-    IWICImagingFactory, WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom,
-    WICColorContextProfile, WICDecodeMetadataCacheOnLoad,
+    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppRGBA, IWICBitmapFrameDecode, IWICBitmapSource,
+    IWICColorContext, IWICImagingFactory, WICBitmapDitherTypeNone, WICBitmapInterpolationModeFant,
+    WICBitmapPaletteTypeCustom, WICColorContextProfile, WICDecodeMetadataCacheOnLoad,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::SHCreateMemStream;
@@ -40,12 +40,6 @@ use crate::CREATE_NO_WINDOW;
 /// Derived from [`limits::MAGICK_TIME_SECS`] so the external watchdog and magick's
 /// own `-limit time` can't drift apart.
 const MAGICK_TIMEOUT: Duration = Duration::from_secs(limits::MAGICK_TIME_SECS);
-/// Tighter external deadline for Windows-metafile (WMF/EMF) renders via magick. A
-/// renderable metafile — e.g. a DIB-backed Office/Visio preview — finishes in well
-/// under a second; a pathological vector WMF can grind for ~5 s only to yield a
-/// near-blank frame, so we cut it early and fall back to the file's default icon
-/// (quicker AND more useful than a slow blank). See [`looks_like_metafile`].
-const METAFILE_TIMEOUT: Duration = Duration::from_millis(3000);
 /// Cap ImageMagick's output so an obscure 200 MP file can't blow up memory; the
 /// thumbnail is downscaled from here anyway. `>` = shrink-only, never upscale.
 const MAGICK_MAX_EDGE: &str = "4096x4096>";
@@ -337,6 +331,17 @@ enum RawPreviewOrder {
 /// Tiered decode: `image` crate → WIC → ImageMagick subprocess → headerless TGA.
 /// Stops at the first tier that decodes. No resize, no orientation — raw pixels.
 fn decode_any(bytes: &[u8], raw_preview: RawPreviewOrder, external: bool) -> Result<DynamicImage> {
+    decode_any_with_wic_target(bytes, raw_preview, external, None)
+}
+
+/// [`decode_any`] with an optional target edge for the WIC tier only. This is kept
+/// private to thumbnail decoding so all full-fidelity paths retain their raw-pixel contract.
+fn decode_any_with_wic_target(
+    bytes: &[u8],
+    raw_preview: RawPreviewOrder,
+    external: bool,
+    wic_thumbnail_cx: Option<u32>,
+) -> Result<DynamicImage> {
     // Per-tier breadcrumb: each tier's underlying error Display is logged before
     // we fall through, so a failed decode is diagnosable (`-Debug` on) instead of
     // every tier collapsing to a bare E_FAIL. Logging is gated by `log_debug`.
@@ -378,7 +383,7 @@ fn decode_any(bytes: &[u8], raw_preview: RawPreviewOrder, external: bool) -> Res
             Err(e) => crate::safety::log_debug(&format!("decode tier `raw-preview` failed: {e}")),
         }
     }
-    match wic_fallback(bytes) {
+    match wic_fallback(bytes, wic_thumbnail_cx) {
         Ok(img) => return Ok(img),
         Err(e) => crate::safety::log_debug(&format!("decode tier `WIC` failed: {e}")),
     }
@@ -478,7 +483,7 @@ fn decode_jxl(bytes: &[u8]) -> Result<DynamicImage> {
 /// thumbnail is only ~5–15 KB; a "real" camera preview is hundreds of KB to several
 /// MB. Below this we return None so the caller demosaics for full resolution instead
 /// of converting/thumbnailing from a postage-stamp.
-const MIN_RAW_PREVIEW: usize = 16 * 1024;
+pub(crate) const MIN_RAW_PREVIEW: usize = 16 * 1024;
 
 /// Last-resort floor: when no "real" preview (≥ [`MIN_RAW_PREVIEW`]) exists AND every
 /// external decoder (WIC / ImageMagick) has failed or is absent — the common case on a
@@ -514,7 +519,7 @@ fn decode_raw_preview(bytes: &[u8]) -> Result<DynamicImage> {
 /// ([`jpeg_span_len`]), so a stray `FF D9` inside an APPn/EXIF metadata segment can't
 /// truncate the pick. Bounded: the 0xFF scan is linear, and at most 64 SOI candidates
 /// are examined so a hostile file can't make this loop.
-fn largest_embedded_jpeg(data: &[u8], min_size: usize) -> Option<&[u8]> {
+pub(crate) fn largest_embedded_jpeg(data: &[u8], min_size: usize) -> Option<&[u8]> {
     // `capped` = largest preview within [MIN, SOFT_MAX] (what we prefer); `overall` =
     // largest ≥ MIN (the fallback when every real preview is oversized).
     let mut capped: Option<(usize, usize)> = None;
@@ -676,7 +681,7 @@ pub fn decode_full(bytes: &[u8]) -> Result<DynamicImage> {
             )),
         }
     }
-    decode_preview_with_raw_order(bytes, RawPreviewOrder::AfterExternal)
+    decode_preview_with_raw_order(bytes, RawPreviewOrder::AfterExternal, None)
 }
 
 /// PREVIEW-fidelity decode — used by the thumbnail provider and the in-menu
@@ -699,7 +704,7 @@ pub fn decode_preview(bytes: &[u8]) -> Result<DynamicImage> {
             )),
         }
     }
-    decode_preview_with_raw_order(bytes, RawPreviewOrder::BeforeExternal)
+    decode_preview_with_raw_order(bytes, RawPreviewOrder::BeforeExternal, None)
 }
 
 /// CHEAP, in-process-only preview decode for the CLASSIC CONTEXT MENU, whose
@@ -789,6 +794,7 @@ fn decode_cover(bytes: &[u8]) -> Result<DynamicImage> {
 fn decode_preview_with_raw_order(
     bytes: &[u8],
     raw_preview: RawPreviewOrder,
+    wic_thumbnail_cx: Option<u32>,
 ) -> Result<DynamicImage> {
     // Video: grab a representative frame via the OS Media Foundation codecs (no bundled
     // bytes). Magic-gated, so only actual videos pay the MF cost (HEIC/AVIF share the
@@ -815,7 +821,9 @@ fn decode_preview_with_raw_order(
     // nested container can't recurse — depth is capped at 1.
     if let Some(cover) = crate::container::extract_cover(bytes) {
         return match cover {
-            crate::container::CoverOut::Bytes(b) => decode_image_with_raw_order(&b, raw_preview),
+            crate::container::CoverOut::Bytes(b) => {
+                decode_image_with_raw_order(&b, raw_preview, wic_thumbnail_cx)
+            }
             crate::container::CoverOut::Image(img) => Ok(img),
         };
     }
@@ -824,19 +832,23 @@ fn decode_preview_with_raw_order(
     // long edge gives a crisp source for any Explorer thumbnail size.
     if bytes.starts_with(b"%PDF-") {
         if let Some(png) = crate::pdf::render_first_page(bytes, 1024) {
-            return decode_image_with_raw_order(&png, raw_preview);
+            return decode_image_with_raw_order(&png, raw_preview, wic_thumbnail_cx);
         }
     }
-    decode_image_with_raw_order(bytes, raw_preview)
+    decode_image_with_raw_order(bytes, raw_preview, wic_thumbnail_cx)
 }
 
 /// Decode a standalone image file (the non-container path of `decode_full`).
 #[cfg(test)]
 fn decode_image(bytes: &[u8]) -> Result<DynamicImage> {
-    decode_image_with_raw_order(bytes, RawPreviewOrder::AfterExternal)
+    decode_image_with_raw_order(bytes, RawPreviewOrder::AfterExternal, None)
 }
 
-fn decode_image_with_raw_order(bytes: &[u8], raw_preview: RawPreviewOrder) -> Result<DynamicImage> {
+fn decode_image_with_raw_order(
+    bytes: &[u8],
+    raw_preview: RawPreviewOrder,
+    wic_thumbnail_cx: Option<u32>,
+) -> Result<DynamicImage> {
     // Gzip-wrapped vector formats: `.svgz` (gzipped SVG) and `.emz` (gzipped
     // EMF/WMF metafile). The `image`/resvg tiers can't see through gzip and
     // ImageMagick has no EMZ coder, so inflate once (bounded) and decode the
@@ -850,7 +862,7 @@ fn decode_image_with_raw_order(bytes: &[u8], raw_preview: RawPreviewOrder) -> Re
                 }
             }
             return Ok(apply_exif_orientation(
-                decode_any(&inner, raw_preview, true)?,
+                decode_any_with_wic_target(&inner, raw_preview, true, wic_thumbnail_cx)?,
                 &inner,
             ));
         }
@@ -864,7 +876,7 @@ fn decode_image_with_raw_order(bytes: &[u8], raw_preview: RawPreviewOrder) -> Re
         }
     }
     Ok(apply_exif_orientation(
-        decode_any(bytes, raw_preview, true)?,
+        decode_any_with_wic_target(bytes, raw_preview, true, wic_thumbnail_cx)?,
         bytes,
     ))
 }
@@ -1018,10 +1030,10 @@ pub fn decode_thumbnail_opts(bytes: &[u8], cx: u32, use_embedded: bool) -> Resul
                 crate::safety::log_debug("decode: used embedded EXIF thumbnail");
                 t
             }
-            None => decode_preview(bytes)?,
+            None => decode_preview_thumbnail(bytes, cx)?,
         }
     } else {
-        decode_preview(bytes)?
+        decode_preview_thumbnail(bytes, cx)?
     };
 
     let mut decoded = fit_to_box(img, cx);
@@ -1052,6 +1064,25 @@ pub fn decode_thumbnail_opts(bytes: &[u8], cx: u32, use_embedded: bool) -> Resul
         }
     }
     Ok(decoded)
+}
+
+/// Preview decode for the thumbnail provider. Unlike [`decode_preview`], this threads the
+/// requested edge into WIC so formats handled only by OS codecs (HEIC/AVIF/RAW/JPEG 2000)
+/// can scale before their RGBA pixels enter this process. Full-fidelity callers deliberately
+/// continue through [`decode_preview`] with no target size.
+fn decode_preview_thumbnail(bytes: &[u8], cx: u32) -> Result<DynamicImage> {
+    // Keep this entry's container/PDF/video behavior identical to `decode_preview`; only the
+    // final WIC raster source receives the target edge. Transparent PSDs retain the preview
+    // path's real-composite exception so their alpha is not flattened into the baked JPEG.
+    if bytes.starts_with(b"8BPS") && crate::container::psd_has_alpha(bytes) {
+        match decode_psd_composite(bytes) {
+            Ok(img) => return Ok(img),
+            Err(e) => crate::safety::log_debug(&format!(
+                "transparent PSD composite failed ({e}); using baked preview"
+            )),
+        }
+    }
+    decode_preview_with_raw_order(bytes, RawPreviewOrder::BeforeExternal, Some(cx.max(1)))
 }
 
 /// True when every pixel is fully transparent (alpha 0) — i.e. nothing visible.
@@ -1438,11 +1469,20 @@ fn apply_icc_to_srgb(img: DynamicImage, icc: Option<Vec<u8>>) -> DynamicImage {
 /// Microsoft Raw Image Extension), and JPEG 2000 without bundling C/LGPL Rust
 /// crates. Output is straight (non-premultiplied) RGBA8 so it flows through
 /// the same resize/orientation/DIB path as the `image` tier.
-fn wic_fallback(bytes: &[u8]) -> Result<DynamicImage> {
-    unsafe { wic_decode(bytes) }
+fn wic_fallback(bytes: &[u8], thumbnail_cx: Option<u32>) -> Result<DynamicImage> {
+    unsafe { wic_decode_with_thumbnail(bytes, thumbnail_cx) }
 }
 
+/// WIC decode without a target edge, retained for focused tests.
+#[cfg(test)]
 unsafe fn wic_decode(bytes: &[u8]) -> Result<DynamicImage> {
+    wic_decode_with_thumbnail(bytes, None)
+}
+
+unsafe fn wic_decode_with_thumbnail(
+    bytes: &[u8],
+    thumbnail_cx: Option<u32>,
+) -> Result<DynamicImage> {
     // The host thread has COM initialized; in unit tests we CoInitialize first.
     let factory: IWICImagingFactory =
         CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
@@ -1451,11 +1491,19 @@ unsafe fn wic_decode(bytes: &[u8]) -> Result<DynamicImage> {
     let decoder =
         factory.CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnLoad)?;
     let frame = decoder.GetFrame(0)?;
+    wic_decode_frame(&factory, &frame, thumbnail_cx, bytes)
+}
 
+unsafe fn wic_decode_frame(
+    factory: &IWICImagingFactory,
+    frame: &IWICBitmapFrameDecode,
+    thumbnail_cx: Option<u32>,
+    container_bytes: &[u8],
+) -> Result<DynamicImage> {
     // Convert to straight 32bpp RGBA (dib.rs handles the premultiply).
     let converter = factory.CreateFormatConverter()?;
     converter.Initialize(
-        &frame,
+        frame,
         &GUID_WICPixelFormat32bppRGBA,
         WICBitmapDitherTypeNone,
         None,
@@ -1477,9 +1525,35 @@ unsafe fn wic_decode(bytes: &[u8]) -> Result<DynamicImage> {
         return Err(Error::from(E_FAIL));
     }
 
-    let stride = w * 4;
+    // `IWICBitmapScaler` is deliberately placed after format conversion: it receives a
+    // straight-RGBA source, produces only the requested thumbnail pixels, and avoids the
+    // old full-resolution RGBA `CopyPixels` allocation. ICC conversion still runs on the
+    // scaled samples below; resizing is a geometric operation, so this preserves the
+    // profile/orientation result while keeping thumbnail peak memory bounded. WIC may still
+    // decode internally (codec-dependent), but it no longer hands that full frame to us.
+    let source: IWICBitmapSource = if let Some(cx) = thumbnail_cx {
+        let long = w.max(h);
+        if long > cx {
+            let target_w = ((w as u64 * cx as u64 + long as u64 / 2) / long as u64).max(1) as u32;
+            let target_h = ((h as u64 * cx as u64 + long as u64 / 2) / long as u64).max(1) as u32;
+            let scaler = factory.CreateBitmapScaler()?;
+            scaler.Initialize(
+                &converter,
+                target_w,
+                target_h,
+                WICBitmapInterpolationModeFant,
+            )?;
+            scaler.cast()?
+        } else {
+            converter.cast()?
+        }
+    } else {
+        converter.cast()?
+    };
+    source.GetSize(&mut w, &mut h)?;
+    let stride = w.checked_mul(4).ok_or_else(|| Error::from(E_FAIL))?;
     let mut buf = vec![0u8; (stride as usize) * (h as usize)];
-    converter.CopyPixels(std::ptr::null(), stride, &mut buf)?;
+    source.CopyPixels(std::ptr::null(), stride, &mut buf)?;
 
     let img = image::RgbaImage::from_raw(w, h, buf).ok_or_else(|| Error::from(E_FAIL))?;
     // Color-manage to sRGB: HEIC/AVIF/RAW carry their wide-gamut profile (iPhone photos
@@ -1489,7 +1563,7 @@ unsafe fn wic_decode(bytes: &[u8]) -> Result<DynamicImage> {
     // AVIF/HEIC keep their profile in the ISOBMFF `colr` box — WIC's AV1/HEVC codecs do
     // NOT surface it via GetColorContexts (verified: count=0) — so read it ourselves first;
     // fall back to a WIC color context for the other WIC formats (RAW/JXR).
-    let icc = isobmff_color_icc(bytes).or_else(|| wic_icc(&factory, &frame));
+    let icc = isobmff_color_icc(container_bytes).or_else(|| wic_icc(factory, frame));
     Ok(apply_icc_to_srgb(DynamicImage::ImageRgba8(img), icc))
 }
 

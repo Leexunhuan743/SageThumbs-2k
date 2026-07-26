@@ -114,17 +114,43 @@ pub(super) fn add_magick_limits(cmd: &mut Command) {
     ]);
 }
 
+/// Metafiles are untrusted vector programs rather than ordinary raster input.
+/// Keep their ImageMagick child especially small: a normal Office/Visio preview
+/// renders in a fraction of a second, while malformed or enormously complex WMF
+/// and EMF content can otherwise consume the general-purpose 512 MiB / 20 s
+/// budget merely to produce a useless frame. These are deliberately command-line
+/// overrides, after [`add_magick_limits`], so they constrain only this decode
+/// invocation and do not weaken the broader Magick policy or raster/PSD support.
+const METAFILE_MAGICK_MEMORY_LIMIT: &str = "96MiB";
+const METAFILE_MAGICK_MAP_LIMIT: &str = "96MiB";
+const METAFILE_MAGICK_TIME_LIMIT: &str = "0.75";
+const METAFILE_MAGICK_TIMEOUT: Duration = Duration::from_millis(750);
+
+fn add_metafile_magick_limits(cmd: &mut Command) {
+    cmd.args([
+        "-limit",
+        "memory",
+        METAFILE_MAGICK_MEMORY_LIMIT,
+        "-limit",
+        "map",
+        METAFILE_MAGICK_MAP_LIMIT,
+        "-limit",
+        "time",
+        METAFILE_MAGICK_TIME_LIMIT,
+    ]);
+}
+
 /// Decode via the ImageMagick CLI as an isolated child process: write the image
 /// bytes to its stdin, read a PNG back from its stdout, decode that PNG with the
 /// safe `image` tier. Bounded by ImageMagick's own `-limit`s AND an external
 /// kill-timeout so a hostile/looping input can't hang or crash our host.
 pub(super) fn decode_via_magick(bytes: &[u8]) -> Result<DynamicImage> {
-    // Metafiles get the tight METAFILE_TIMEOUT — a slow vector WMF would otherwise
-    // grind ~5 s to a near-blank frame; everything else keeps the full 20 s budget for
-    // heavy raster decodes.
+    // Metafiles get a much tighter, format-specific child budget. A slow vector
+    // WMF would otherwise grind for seconds to a near-blank frame; everything
+    // else keeps the full 20 s budget for heavy raster decodes.
     let is_meta = looks_like_metafile(bytes);
     let timeout = if is_meta {
-        METAFILE_TIMEOUT
+        METAFILE_MAGICK_TIMEOUT
     } else {
         MAGICK_TIMEOUT
     };
@@ -191,8 +217,8 @@ pub(super) fn metafile_min_density(b: &[u8]) -> Option<u32> {
     Some(((METAFILE_MIN_PX / long_inches).ceil() as u32).min(METAFILE_MAX_DENSITY))
 }
 
-/// Is this a Windows metafile (placeable/memory WMF, or EMF)? Picks the shorter
-/// [`METAFILE_TIMEOUT`] for the magick tier here, and is the single home for the
+/// Is this a Windows metafile (placeable/memory WMF, or EMF)? Selects the
+/// metafile-specific limits for the magick tier and is the single home for the
 /// metafile magic bytes — `container::looks_like_raster` also calls it so the
 /// signatures live in exactly one place.
 pub(crate) fn looks_like_metafile(b: &[u8]) -> bool {
@@ -268,6 +294,11 @@ fn decode_via_magick_spec_alloc(
     let exe = magick_exe().ok_or_else(|| Error::from(E_FAIL))?;
     let mut cmd = Command::new(exe);
     add_magick_limits(&mut cmd);
+    if looks_like_metafile(bytes) {
+        // Must follow the shared caps: ImageMagick applies the last resource
+        // setting, leaving every non-metafile invocation on the normal budget.
+        add_metafile_magick_limits(&mut cmd);
+    }
     let mut args: Vec<&str> = Vec::with_capacity(6 + pre_input.len() + pre_ops.len());
     // Pre-INPUT settings (e.g. `-density` for a small vector metafile) must precede the input so
     // they affect how it is rasterized — unlike `pre_ops`, which operate on the loaded image.
@@ -566,7 +597,11 @@ pub fn encode_via_magick(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_magick_environment, magick_output_supported, output_coder};
+    use super::{
+        add_magick_limits, add_metafile_magick_limits, apply_magick_environment,
+        magick_output_supported, output_coder, METAFILE_MAGICK_MAP_LIMIT,
+        METAFILE_MAGICK_MEMORY_LIMIT, METAFILE_MAGICK_TIMEOUT, METAFILE_MAGICK_TIME_LIMIT,
+    };
     use std::collections::HashMap;
     use std::process::Command;
 
@@ -602,6 +637,45 @@ mod tests {
         assert!(!magick_output_supported(""));
         assert!(!magick_output_supported("png"));
         assert!(!magick_output_supported("not-a-real-format"));
+    }
+
+    #[test]
+    fn metafile_limits_override_the_shared_magick_budget() {
+        let mut command = Command::new("magick.exe");
+        add_magick_limits(&mut command);
+        add_metafile_magick_limits(&mut command);
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            args,
+            [
+                "-limit",
+                "memory",
+                "512MiB",
+                "-limit",
+                "map",
+                "1GiB",
+                "-limit",
+                "time",
+                "20",
+                "-limit",
+                "memory",
+                METAFILE_MAGICK_MEMORY_LIMIT,
+                "-limit",
+                "map",
+                METAFILE_MAGICK_MAP_LIMIT,
+                "-limit",
+                "time",
+                METAFILE_MAGICK_TIME_LIMIT,
+            ]
+        );
+        assert_eq!(
+            METAFILE_MAGICK_TIMEOUT,
+            std::time::Duration::from_millis(750)
+        );
     }
 
     #[test]

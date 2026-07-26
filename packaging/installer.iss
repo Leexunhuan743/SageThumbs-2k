@@ -289,10 +289,11 @@ begin
 end;
 
 // The "why are you leaving?" answer collected by the uninstall survey (AskUninstallReason),
-// read by NotifyUninstall. Reason is a short bucket key (alnum); Note is optional free text.
+// read by NotifyUninstall. Reason is a short bucket key; Note and Contact are optional text.
 var
   UninstallReason: String;
   UninstallNote: String;
+  UninstallContact: String;
 
 // Percent-encode a string for safe use as a URL query value. ASCII only - any non-ASCII
 // char is dropped rather than mis-encoded (the survey note is best-effort, not exact text).
@@ -316,21 +317,23 @@ begin
   end;
 end;
 
-// A small, skippable, anonymous "why are you uninstalling?" survey shown right before the
-// removal. Pure-Win32 modal (no browser); fills UninstallReason/UninstallNote. Either button
-// lets the uninstall proceed - Skip just leaves both empty. Never shown on a silent uninstall.
+// A small, skippable "why are you uninstalling?" survey shown right before removal.
+// Pure-Win32 modal (no browser); fills UninstallReason/UninstallNote/UninstallContact.
+// Either button lets the uninstall proceed - Skip just leaves them empty. Never shown on a
+// silent uninstall.
 procedure AskUninstallReason;
 var
   F: TSetupForm;
-  Lbl, NoteLbl: TNewStaticText;
+  Lbl, NoteLbl, ReadLbl, ContactLbl: TNewStaticText;
   Radios: array[0..6] of TNewRadioButton;
-  Note: TNewEdit;
+  Note, Contact: TNewEdit;
   BtnSend, BtnSkip: TNewButton;
   Keys, Texts: array[0..6] of String;
   i, y: Integer;
 begin
   UninstallReason := '';
   UninstallNote := '';
+  UninstallContact := '';
 
   Keys[0] := 'buggy';       Texts[0] := 'It did not work - no thumbnails, errors, or crashes';
   Keys[1] := 'slow';        Texts[1] := 'Too slow or used too much memory / CPU';
@@ -346,7 +349,7 @@ begin
   // builds the form via CreateNew (no resource lookup) and works in Setup AND the uninstaller.
   // Client size is a construction arg (read-only afterward since Inno 6.6.0); the two True flags
   // keep both dimensions fixed (no autosize) for this fixed-layout dialog.
-  F := CreateCustomForm(ScaleX(470), ScaleY(350), True, True);
+  F := CreateCustomForm(ScaleX(470), ScaleY(420), True, True);
   try
     F.Caption := 'SageThumbs 2K';
     // Native look: the modern UI font. CreateCustomForm already inits Setup's dialog font;
@@ -365,7 +368,7 @@ begin
     Lbl.WordWrap := True;
     Lbl.Height := ScaleY(38);
     Lbl.Caption := 'Sorry to see you go! Mind telling us why you''re uninstalling?' + #13#10 +
-      'It''s optional and anonymous - it only helps us improve SageThumbs 2K.';
+      'It''s optional. Add contact details only if you''d like us to reply.';
 
     y := ScaleY(58);
     for i := 0 to 6 do begin
@@ -390,6 +393,26 @@ begin
     Note.Top := y + ScaleY(24);
     Note.Width := F.ClientWidth - ScaleX(32);
     Note.MaxLength := 200;
+
+    ReadLbl := TNewStaticText.Create(F);
+    ReadLbl.Parent := F;
+    ReadLbl.Left := ScaleX(16);
+    ReadLbl.Top := y + ScaleY(52);
+    ReadLbl.Caption := 'We read every one of these messages.';
+    ReadLbl.Font.Style := [fsBold];
+
+    ContactLbl := TNewStaticText.Create(F);
+    ContactLbl.Parent := F;
+    ContactLbl.Left := ScaleX(16);
+    ContactLbl.Top := y + ScaleY(76);
+    ContactLbl.Caption := 'Email or other contact (optional, if you''d like a reply)';
+
+    Contact := TNewEdit.Create(F);
+    Contact.Parent := F;
+    Contact.Left := ScaleX(16);
+    Contact.Top := y + ScaleY(94);
+    Contact.Width := F.ClientWidth - ScaleX(32);
+    Contact.MaxLength := 120;
 
     BtnSend := TNewButton.Create(F);
     BtnSend.Parent := F;
@@ -416,6 +439,7 @@ begin
         if Radios[i].Checked then
           UninstallReason := Keys[i];
       UninstallNote := Trim(Note.Text);
+      UninstallContact := Trim(Contact.Text);
     end;
   finally
     F.Free;
@@ -425,7 +449,7 @@ end;
 // Best-effort one-shot HTTPS GET on uninstall, over WinHttp with short timeouts and all
 // errors swallowed so it never blocks or slows the uninstall. Only a real uninstall
 // reaches it - an in-place upgrade does not run the uninstaller. Carries the optional
-// survey answer (reason bucket + note) from the uninstall prompt.
+// survey answer (reason bucket + note + optional reply contact) from the uninstall prompt.
 procedure NotifyUninstall;
 var
   Http: Variant;
@@ -442,6 +466,8 @@ begin
       Url := Url + '&reason=' + UninstallReason;
     if UninstallNote <> '' then
       Url := Url + '&note=' + UrlEncode(UninstallNote);
+    if UninstallContact <> '' then
+      Url := Url + '&contact=' + UrlEncode(UninstallContact);
     Http := CreateOleObject('WinHttp.WinHttpRequest.5.1');
     // resolve, connect, send, receive (ms) - capped so a dead network fails fast.
     Http.SetTimeouts(1500, 1500, 1500, 2000);

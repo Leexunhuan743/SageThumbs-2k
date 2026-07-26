@@ -107,13 +107,12 @@ pub fn read_info(path: &str) -> ImageInfo {
     read_info_impl(path, false)
 }
 
-/// [`read_info`] for the in-process property handler. The dimension fallback reads at most
-/// `decode::limits::MAX_INPUT_BYTES` via [`crate::decode::read_capped`] (which SKIPS a larger
-/// file before allocating) instead of slurping an arbitrarily large one into the caller's
-/// address space. A genuinely oversized media file then reports no dimensions — an image
-/// decoder can't derive them anyway, and not freezing the host is worth more than a
-/// Details-pane number. `propstore` additionally runs this under a wall-clock budget off the
-/// host thread, so even a slow in-cap decode can't stall the shell.
+/// [`read_info`] for the in-process property handler. This is deliberately a metadata-only
+/// probe: image-crate/container headers and EXIF are useful in the Details pane, but a fallback
+/// whole-file read, WIC/ImageMagick decode, or embedded-preview extraction is not acceptable in
+/// Explorer/SearchIndexer. Unsupported formats may therefore have no dimensions here; explicit
+/// user actions use [`read_info`] and retain the full-fidelity fallback. `propstore` additionally
+/// runs this cheap probe under a short wall-clock budget off the host thread.
 pub fn read_info_bounded(path: &str) -> ImageInfo {
     read_info_impl(path, true)
 }
@@ -152,12 +151,10 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
             info.bit_depth = dec.color_type().bits_per_pixel() as u32;
         }
     }
-    // Formats the image crate can't probe (PSD, EPS, HEIC/RAW, containers): the
-    // cheap container header probe first, then a full-fidelity decode — so
-    // "Image info" / `st2k info` report the REAL document size, not 0×0 and not
-    // the embedded preview's size. A `bounded` caller caps the read at the 256 MiB
-    // input ceiling and skips anything larger (see `read_info_bounded`); the unbounded
-    // caller slurps the whole file for the true size of an arbitrarily large document.
+    // Formats the image crate cannot probe (PSD, EPS, HEIC/RAW, containers) get a small
+    // container-header probe next. Explicit callers may then use the full-fidelity fallback;
+    // property-handler callers intentionally stop after headers, so a Details-pane request can
+    // never materialize the entire file or start an ImageMagick/WIC decode.
     if info.width == 0 && info.height == 0 {
         // Header-only dims first: `real_dims` needs the PSD's fixed 26-byte header,
         // so probing a small head prefix answers a folder-of-big-PSDs Details pane
@@ -169,12 +166,8 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
             info.height = h;
         }
     }
-    if info.width == 0 && info.height == 0 {
-        let bytes = if bounded {
-            crate::decode::read_capped(path).ok()
-        } else {
-            std::fs::read(path).ok()
-        };
+    if info.width == 0 && info.height == 0 && !bounded {
+        let bytes = std::fs::read(path).ok();
         if let Some(bytes) = bytes {
             if let Some((w, h)) = crate::container::real_dims(&bytes).or_else(|| {
                 crate::decode::decode_full(&bytes)
@@ -185,13 +178,9 @@ fn read_info_impl(path: &str, bounded: bool) -> ImageInfo {
                 info.height = h;
             }
         }
-        // VIDEO last resort (UNBOUNDED callers only — `st2k info` / the Image-info dialog):
-        // grab one frame to report its geometry. NOT for the in-shell property handler
-        // (`bounded`): `frame_from_path` spawns an 8 s Media-Foundation worker, which can
-        // outlive the property probe's 3 s budget and pile up MF sessions in Explorer/
-        // SearchIndexer on a folder of stalling videos. flv/ogv simply report no dimensions
-        // in the Details pane (graceful) rather than risk the shell.
-        if !bounded && info.width == 0 && info.height == 0 {
+        // VIDEO last resort for explicit callers only — `frame_from_path` can spawn a long-lived
+        // Media Foundation worker, so it is never part of the in-shell property path.
+        if info.width == 0 && info.height == 0 {
             let ext = Path::new(path)
                 .extension()
                 .and_then(|e| e.to_str())
@@ -614,6 +603,30 @@ mod tests {
             .unwrap();
         let info = read_info(png.to_str().unwrap());
         assert_eq!((info.width, info.height), (33, 22));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bounded_info_reads_psd_dimensions_from_the_header() {
+        let dir = std::env::temp_dir().join(format!("st2k_bounded_info_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let psd = dir.join("large-looking.psd");
+
+        // PSD dimensions live in the fixed 26-byte header. The deliberately large tail models
+        // a document that must not be read or decoded merely to fill Explorer's Details pane.
+        let mut bytes = Vec::with_capacity(8 * 1024 * 1024);
+        bytes.extend_from_slice(b"8BPS");
+        bytes.extend_from_slice(&[0, 1]);
+        bytes.extend_from_slice(&[0; 6]);
+        bytes.extend_from_slice(&3u16.to_be_bytes());
+        bytes.extend_from_slice(&4321u32.to_be_bytes()); // height @ 14
+        bytes.extend_from_slice(&8765u32.to_be_bytes()); // width @ 18
+        bytes.extend_from_slice(&[0; 8]);
+        bytes.resize(8 * 1024 * 1024, 0);
+        std::fs::write(&psd, bytes).unwrap();
+
+        let info = read_info_bounded(psd.to_str().unwrap());
+        assert_eq!((info.width, info.height), (8765, 4321));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

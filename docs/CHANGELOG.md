@@ -4,6 +4,19 @@ All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
 ## 1.3.6
 
+- **Explorer stays responsive when menus and metadata appear.** Right-click construction no longer
+  decodes the selected file just to prepare a preview; the image is generated only if the
+  SageThumbs submenu actually opens. Details-pane metadata probes are header-only, capped at
+  250 ms, and limited to two detached workers so slow files or providers cannot accumulate work in
+  Explorer or SearchIndexer.
+- **Large camera RAW and OS-codec thumbnails use bounded memory.** Shell streams can take an early,
+  structurally validated embedded JPEG without reading the sensor-data tail, while WIC scales
+  HEIC, AVIF, RAW, and JPEG 2000 frames before copying RGBA pixels into SageThumbs. Ordinary TIFF
+  files remain on the normal path, and the configured maximum file size still applies.
+- **Pathological Windows metafiles fail quickly.** WMF and EMF decoding now has a dedicated
+  750 ms/96 MiB ImageMagick budget instead of consuming the broader raster allowance.
+- **The optional uninstall note can include reply details.** People who want an answer can leave an
+  email or other contact beside their feedback; skipping the survey still never delays removal.
 - **Connections sync is safer across devices and accounts.** Nested preference changes preserve
   unrelated remote edits, cache validators cannot cross account boundaries, shutdown flushes
   pending settings, and retry timing honors server throttling.

@@ -16,6 +16,7 @@
 
 use core::cell::RefCell;
 use core::mem::ManuallyDrop;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use windows::core::{Error, Result, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
@@ -44,12 +45,16 @@ use windows_implement::implement;
 
 use crate::safety;
 
-/// Hard wall-clock cap on the in-process file probe (see [`PropertyStore_Impl::build_props`]).
-/// The bounded probe normally returns in well under this; the budget only ever elapses for a
-/// pathological in-cap file — a slow ImageMagick decode tail, a network / cloud-placeholder
-/// stall — and on expiry we expose NO properties rather than freeze Explorer / SearchIndexer /
-/// the host's file-open dialog. Same discipline as the preview handler's `decode_preview_budgeted`.
-const PROBE_BUDGET: core::time::Duration = core::time::Duration::from_secs(3);
+/// Hard wall-clock cap on one in-process metadata query (see
+/// [`PropertyStore_Impl::build_props`]).  Explorer and SearchIndexer call property handlers on
+/// their UI/indexing paths, so this must be a *small* latency budget, not the multi-second
+/// budget appropriate for an explicit preview.  On expiry we return no properties; the shell can
+/// continue immediately and a later property-store instance can try again.
+const PROBE_BUDGET: core::time::Duration = core::time::Duration::from_millis(250);
+/// Timed-out metadata reads cannot be cancelled safely. Keep a slow remote/provider file from
+/// leaving an unbounded trail of detached workers while Explorer enumerates a directory.
+const MAX_ACTIVE_PROBES: usize = 2;
+static ACTIVE_PROBES: AtomicUsize = AtomicUsize::new(0);
 
 #[implement(IPropertyStore, IInitializeWithFile)]
 pub struct PropertyStore {
@@ -150,13 +155,12 @@ impl PropertyStore_Impl {
             return out;
         };
 
-        // Probe the file OFF the host thread under a wall-clock budget. This coclass loads
-        // IN-PROCESS into Explorer, SearchIndexer, AND a host app's file-open dialog, so the
-        // probe must never stall the caller: an oversized file is skipped (`read_info_bounded`),
-        // and a slow in-cap decode is abandoned at `PROBE_BUDGET`, exposing no properties rather
-        // than freezing the shell (selecting a large upload in Chrome's file picker used to lock
-        // the browser here). Only PLAIN data (`ImageInfo` + `AudioTags`, both `Send`) crosses
-        // back; the `PROPVARIANT`s below are built on THIS COM thread.
+        // Probe off the host thread under a short wall-clock budget.  This coclass loads
+        // IN-PROCESS into Explorer, SearchIndexer, and file-open dialogs, so metadata must never
+        // become a full-fidelity image conversion. `read_info_bounded` uses only decoder/container
+        // headers plus EXIF; audio tags are retained when their parser completes within the same
+        // cheap budget. Only PLAIN data crosses back; the `PROPVARIANT`s are built on this COM
+        // thread.
         let Some((info, tags)) = probe_budgeted(path.clone()) else {
             safety::log_debug(&format!(
                 "PropStore::build_props: probe over budget or unreadable -> 0 props for {path}"
@@ -336,36 +340,77 @@ fn datetime_to_propvariant(s: &str) -> Option<PROPVARIANT> {
     unsafe { InitPropVariantFromFileTime(&ft) }.ok()
 }
 
-/// Run the bounded file probe ([`crate::strip::read_info_bounded`] + audio tags) on a detached
-/// worker, returning its result only if it finishes within [`PROBE_BUDGET`]. On timeout returns
-/// `None` and leaves the worker to finish and exit on its own (its send into the dropped channel
-/// just errors), so the calling shell thread blocks for at most the budget. The worker takes its
-/// OWN COM apartment for the WIC/WinRT decode tiers the dimension probe leans on for RAW/HEIC —
-/// the host thread's apartment doesn't extend to a thread we spawned. `ImageInfo`/`AudioTags` are
-/// plain `Send` data; no COM object crosses the channel.
+/// Run the header/metadata-only file probe ([`crate::strip::read_info_bounded`] + audio tags) on
+/// a detached worker, returning only if it finishes within [`PROBE_BUDGET`]. On timeout returns
+/// `None` and leaves the worker to finish and exit on its own, so the calling shell thread blocks
+/// for at most 250 ms. This deliberately does not initialize COM: the bounded image probe never
+/// invokes WIC, WinRT, ImageMagick, or a pixel decode. `ImageInfo`/`AudioTags` are plain `Send`
+/// data; no COM object crosses the channel.
 fn probe_budgeted(path: String) -> Option<(crate::strip::ImageInfo, crate::strip::AudioTags)> {
-    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        // Pin the DLL for this detached worker's whole lifetime. On timeout we return but
-        // leave this thread running, and `DllCanUnloadNow` does NOT count it — so when the
-        // host (e.g. a file-open dialog in Chrome) releases the property object on CLOSE, the
-        // DLL could unload mid-probe → crash-on-close. Mirrors run_action_detached.
-        #[allow(clippy::default_constructed_unit_structs)]
-        let _module = crate::ModuleRef::default();
-        // S_OK/S_FALSE took a COM ref → balance it with CoUninitialize; RPC_E_CHANGED_MODE
-        // (already an MTA thread) did not, so it must NOT be balanced. Mirrors parallel.rs.
-        let inited = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-        let probed = (
-            crate::strip::read_info_bounded(&path),
-            crate::strip::read_audio_tags(&path),
-        );
-        // All WIC objects the decode created are already dropped inside `read_info_bounded`,
-        // so the apartment carries no live COM ref here.
-        if inited {
-            unsafe { CoUninitialize() };
+    if ACTIVE_PROBES
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            (active < MAX_ACTIVE_PROBES).then_some(active + 1)
+        })
+        .is_err()
+    {
+        return None;
+    }
+
+    struct ActiveProbe;
+    impl Drop for ActiveProbe {
+        fn drop(&mut self) {
+            ACTIVE_PROBES.fetch_sub(1, Ordering::Release);
         }
-        let _ = tx.send(probed);
-    });
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::Builder::new()
+        .name("st2k-property-probe".into())
+        .spawn(move || {
+            let _active = ActiveProbe;
+            // Pin the DLL for this detached worker's whole lifetime. On timeout we return but
+            // leave this thread running, and `DllCanUnloadNow` does NOT count it — so when the
+            // host (e.g. a file-open dialog in Chrome) releases the property object on CLOSE, the
+            // DLL could unload mid-probe → crash-on-close. Mirrors run_action_detached.
+            #[allow(clippy::default_constructed_unit_structs)]
+            let _module = crate::ModuleRef::default();
+            let is_audio = property_path_is_audio(&path);
+            let tags = if is_audio {
+                crate::strip::read_audio_tags(&path)
+            } else {
+                crate::strip::AudioTags::default()
+            };
+            let info = if is_audio {
+                crate::strip::ImageInfo::default()
+            } else {
+                crate::strip::read_info_bounded(&path)
+            };
+            let probed = (info, tags);
+            let _ = tx.send(probed);
+        });
+    if worker.is_err() {
+        ACTIVE_PROBES.fetch_sub(1, Ordering::Release);
+        return None;
+    }
     rx.recv_timeout(PROBE_BUDGET).ok()
+}
+
+fn property_path_is_audio(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .is_some_and(|ext| crate::formats::category(&ext) == crate::formats::Category::Audio)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::property_path_is_audio;
+
+    #[test]
+    fn expensive_audio_probe_is_extension_gated() {
+        assert!(property_path_is_audio(r"C:\media\track.FLAC"));
+        assert!(!property_path_is_audio(r"C:\photos\image.jpg"));
+        assert!(!property_path_is_audio(r"C:\photos\extensionless"));
+    }
 }

@@ -184,6 +184,36 @@ pub unsafe fn stream_source(
         return Ok(StreamSource::Bytes(prefix));
     }
 
+    // CAMERA-RAW embedded-preview fast path.  A number of RAW families put a
+    // display JPEG near the front of the file, followed by tens or hundreds of
+    // MiB of sensor data. Do not turn every TIFF into this path: it needs a RAW
+    // extension or RAW-specific container metadata, plus a structurally valid
+    // preview. On a miss (including a preview beyond this bounded prefix) the
+    // old whole-file path remains the correctness backstop.
+    if let Some(raw) = raw_preview_fast(stream, max_file_bytes) {
+        match raw {
+            RawFastSource::Preview(preview) => {
+                safety::log_debug(&format!(
+                    "{who}: RAW embedded-preview fast path ({} bytes)",
+                    preview.len()
+                ));
+                return Ok(StreamSource::Bytes(preview));
+            }
+            RawFastSource::Prefix(prefix, size) => {
+                // No early JPEG: reuse the bytes already fetched while probing and
+                // read only the remaining tail. This preserves the old full-decode
+                // fallback without rereading the first 16 MiB.
+                stream.Seek(prefix.len() as i64, STREAM_SEEK_SET, None)?;
+                return Ok(StreamSource::Bytes(read_all_append(
+                    stream,
+                    decode::effective_input_cap(max_file_bytes) as usize,
+                    Some(size),
+                    prefix,
+                )?));
+            }
+        }
+    }
+
     // Not audio, not video: skip oversized files cheaply via the stream length
     // before reading into memory. The effective cap is the user's MaxSize but
     // never above the hard MAX_BYTES ceiling ("0 = unlimited" means "up to
@@ -308,6 +338,207 @@ unsafe fn stream_path(stream: &IStream) -> Option<String> {
     } else {
         None
     }
+}
+
+/// File-name extension reported by a shell stream, without requiring that the
+/// name be an absolute, currently-existing path.  Virtual shell sources often
+/// report only a display name; that is still enough for a conservative format
+/// gate, whereas [`stream_path`] intentionally rejects it for direct file I/O.
+unsafe fn stream_extension(stream: &IStream) -> Option<String> {
+    let mut stat = STATSTG::default();
+    stream.Stat(&mut stat, STATFLAG_DEFAULT).ok()?;
+    if stat.pwcsName.is_null() {
+        return None;
+    }
+    let name = stat.pwcsName.to_string().ok();
+    CoTaskMemFree(Some(stat.pwcsName.0 as *const c_void));
+    name.and_then(|name| {
+        std::path::Path::new(&name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+    })
+}
+
+const RAW_PREFIX_BYTES: usize = 16 * 1024 * 1024;
+const RAW_SNIFF_BYTES: usize = 1024 * 1024;
+
+enum RawFastSource {
+    Preview(Vec<u8>),
+    Prefix(Vec<u8>, u64),
+}
+
+fn raw_preview_size_allowed(size: u64, max_file_bytes: u64) -> bool {
+    size > RAW_PREFIX_BYTES as u64 && size <= decode::effective_input_cap(max_file_bytes)
+}
+
+/// Read only a bounded RAW head and return its best complete embedded JPEG.
+/// A RAW with no early preview retains the prefix so the existing bounded
+/// whole-file fallback can append only the unread tail.
+unsafe fn raw_preview_fast(stream: &IStream, max_file_bytes: u64) -> Option<RawFastSource> {
+    let raw_extension = stream_extension(stream).is_some_and(|ext| is_raw_extension(&ext));
+    let size = stream_size(stream)?;
+    if !raw_preview_size_allowed(size, max_file_bytes) {
+        return None; // no I/O or allocation saving versus the normal bounded read
+    }
+
+    // Explorer commonly hands IInitializeWithStream an unnamed file stream. Prefer
+    // the extension when its STATSTG exposes one, but retain a conservative content
+    // fallback for those normal unnamed streams: RAW-specific signatures or
+    // structurally parsed CFA/DNG IFD markers. A plain TIFF does not qualify.
+    let sniff = stream_prefix(stream, RAW_SNIFF_BYTES)?;
+    if !looks_like_raw_container(&sniff, raw_extension) {
+        return None;
+    }
+
+    let prefix = stream_prefix(stream, RAW_PREFIX_BYTES)?;
+    match decode::largest_embedded_jpeg(&prefix, decode::MIN_RAW_PREVIEW) {
+        Some(jpeg) => Some(RawFastSource::Preview(jpeg.to_vec())),
+        None => Some(RawFastSource::Prefix(prefix, size)),
+    }
+}
+
+fn is_raw_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "3fr"
+            | "arw"
+            | "bay"
+            | "cap"
+            | "cr2"
+            | "cr3"
+            | "crw"
+            | "dcr"
+            | "dcs"
+            | "dng"
+            | "drf"
+            | "erf"
+            | "fff"
+            | "iiq"
+            | "k25"
+            | "kdc"
+            | "mdc"
+            | "mef"
+            | "mos"
+            | "mrw"
+            | "nef"
+            | "nrw"
+            | "orf"
+            | "ori"
+            | "pef"
+            | "ptx"
+            | "pxn"
+            | "raf"
+            | "rw2"
+            | "rwl"
+            | "sr2"
+            | "srf"
+            | "srw"
+            | "x3f"
+    )
+}
+
+/// Common RAW signatures. Generic TIFF/BigTIFF magic is accepted only with a RAW
+/// extension or RAW-specific metadata, because an Explorer stream often has no name.
+fn looks_like_raw_container(head: &[u8], raw_extension: bool) -> bool {
+    let tiff = head.starts_with(b"II\x2A\0")
+        || head.starts_with(b"MM\0\x2A")
+        || head.starts_with(b"II\x2B\0")
+        || head.starts_with(b"MM\0\x2B");
+    (tiff && (raw_extension || tiff_has_raw_ifd_marker(head)))
+        || head.starts_with(b"FUJIFILMCCD-RAW")
+        || head.starts_with(b"FFF\0")
+        || head.starts_with(b"FOVb")
+        || head.starts_with(b"\0MRM")
+        || head.starts_with(b"IIRO")
+        || head.starts_with(b"MMOR")
+        || head.starts_with(b"IIU\0")
+        || (head.len() >= 12
+            && &head[4..8] == b"ftyp"
+            && (&head[8..12] == b"crx " || &head[8..12] == b"cr3 "))
+}
+
+fn tiff_has_raw_ifd_marker(head: &[u8]) -> bool {
+    let little = match head.get(..4) {
+        Some(b"II\x2A\0") => true,
+        Some(b"MM\0\x2A") => false,
+        _ => return false, // BigTIFF needs an extension; its IFD layout differs.
+    };
+    let u16_at = |offset: usize| -> Option<u16> {
+        let end = offset.checked_add(2)?;
+        let bytes: [u8; 2] = head.get(offset..end)?.try_into().ok()?;
+        Some(if little {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        })
+    };
+    let u32_at = |offset: usize| -> Option<u32> {
+        let end = offset.checked_add(4)?;
+        let bytes: [u8; 4] = head.get(offset..end)?.try_into().ok()?;
+        Some(if little {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        })
+    };
+
+    let Some(ifd) = u32_at(4).map(|value| value as usize) else {
+        return false;
+    };
+    let Some(count) = u16_at(ifd).map(|value| (value as usize).min(4096)) else {
+        return false;
+    };
+    for index in 0..count {
+        let Some(entry) = index
+            .checked_mul(12)
+            .and_then(|offset| ifd.checked_add(2)?.checked_add(offset))
+        else {
+            return false;
+        };
+        let Some(tag) = u16_at(entry) else {
+            return false;
+        };
+        // CFA/DNG tags are structurally parsed from IFD0, not searched as arbitrary
+        // byte strings. This prevents a normal camera-authored TIFF's EXIF/XMP maker
+        // text from accidentally rerouting it through the RAW shortcut.
+        if matches!(
+            tag,
+            0x828D | 0x828E | 0xC612 | 0xC614 | 0xC616 | 0xC61A | 0xC627
+        ) {
+            return true;
+        }
+        let Some(type_offset) = entry.checked_add(2) else {
+            return false;
+        };
+        let Some(count_offset) = entry.checked_add(4) else {
+            return false;
+        };
+        let Some(value_offset) = entry.checked_add(8) else {
+            return false;
+        };
+        if tag == 0x0106 && u32_at(count_offset) == Some(1) {
+            let Some(field_type) = u16_at(type_offset) else {
+                return false;
+            };
+            let value = match field_type {
+                3 => match u16_at(value_offset) {
+                    Some(value) => value as u32,
+                    None => return false,
+                },
+                4 => match u32_at(value_offset) {
+                    Some(value) => value,
+                    None => return false,
+                },
+                _ => continue,
+            };
+            // TIFF/EP CFA and LinearRaw photometric interpretations.
+            if matches!(value, 32_803 | 34_892) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Read up to a bounded PREFIX off the stream head in big sequential gulps, for the
@@ -761,12 +992,28 @@ impl std::io::Seek for IStreamReader {
 
 /// Drain an IStream into a Vec, bounded by `max`.
 unsafe fn read_all(stream: &IStream, max: usize, size_hint: Option<u64>) -> Result<Vec<u8>> {
+    read_all_append(stream, max, size_hint, Vec::new())
+}
+
+/// Continue draining an IStream after an already-read prefix, bounded by `max`.
+/// The caller positions the stream immediately after `out` before entering.
+unsafe fn read_all_append(
+    stream: &IStream,
+    max: usize,
+    size_hint: Option<u64>,
+    mut out: Vec<u8>,
+) -> Result<Vec<u8>> {
+    if out.len() > max {
+        return Err(Error::from(E_FAIL));
+    }
     // Pre-size from the (already size-checked) stream length to skip the doubling
     // realloc churn on multi-MB images. Cap the upfront reservation so a stream that
     // lies about its size can't trick us into a giant allocation — the growth loop +
     // the `max` check below still bound the true read.
     let cap = size_hint.map_or(0, |h| (h as usize).min(max).min(64 << 20));
-    let mut out: Vec<u8> = Vec::with_capacity(cap);
+    if cap > out.len() {
+        out.reserve(cap - out.len());
+    }
     // 1 MiB chunks: the stream is marshaled (often cross-process), so per-Read
     // overhead is real — 64 KiB chunks cost a 100 MB file ~1,600 round trips.
     let mut chunk = vec![0u8; 1 << 20];
@@ -785,10 +1032,10 @@ unsafe fn read_all(stream: &IStream, max: usize, size_hint: Option<u64>) -> Resu
             break; // success + 0 bytes == genuine EOF
         }
         let n = (got as usize).min(chunk.len()); // never trust got > buffer
-        out.extend_from_slice(&chunk[..n]);
-        if out.len() > max {
+        if n > max - out.len() {
             return Err(Error::from(E_FAIL));
         }
+        out.extend_from_slice(&chunk[..n]);
     }
     Ok(out)
 }
@@ -830,6 +1077,153 @@ mod tests {
             MAX_BYTES as u64
         );
         assert_eq!(decode::effective_input_cap(1 << 20), 1 << 20);
+    }
+
+    fn substantial_jpeg() -> Vec<u8> {
+        let image = image::RgbImage::from_fn(320, 240, |x, y| {
+            // Deterministic high-detail pixels keep the encoded preview well
+            // above the 16 KiB real-preview floor.
+            image::Rgb([
+                ((x * 37 + y * 13) & 255) as u8,
+                ((x * 11 + y * 53) & 255) as u8,
+                ((x * 71 + y * 19) & 255) as u8,
+            ])
+        });
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95)
+            .encode_image(&image::DynamicImage::ImageRgb8(image))
+            .expect("encode test JPEG");
+        assert!(out.len() >= decode::MIN_RAW_PREVIEW);
+        out
+    }
+
+    fn mark_synthetic_tiff_raw(bytes: &mut [u8]) {
+        assert!(bytes.len() >= 26);
+        bytes[..8].copy_from_slice(b"II\x2A\0\x08\0\0\0");
+        bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+        bytes[10..12].copy_from_slice(&0x0106u16.to_le_bytes()); // PhotometricInterpretation
+        bytes[12..14].copy_from_slice(&3u16.to_le_bytes()); // SHORT
+        bytes[14..18].copy_from_slice(&1u32.to_le_bytes());
+        bytes[18..20].copy_from_slice(&32_803u16.to_le_bytes()); // CFA
+    }
+
+    #[test]
+    fn raw_prefix_carver_returns_a_complete_early_preview() {
+        let jpeg = substantial_jpeg();
+        let mut raw = b"II\x2A\0raw-header".to_vec();
+        raw.extend_from_slice(&[0x55; 4096]);
+        raw.extend_from_slice(&jpeg);
+        raw.extend_from_slice(&[0xA5; 4096]);
+
+        let got = decode::largest_embedded_jpeg(&raw, decode::MIN_RAW_PREVIEW)
+            .expect("early RAW preview");
+        assert_eq!(got, jpeg.as_slice());
+        assert!(
+            image::load_from_memory(got).is_ok(),
+            "must return a full JPEG"
+        );
+    }
+
+    #[test]
+    fn raw_fast_path_gate_rejects_plain_tiff_and_non_raw() {
+        assert!(is_raw_extension("pef"));
+        assert!(!is_raw_extension("tif"));
+        assert!(looks_like_raw_container(b"II\x2A\0rest", true));
+        assert!(!looks_like_raw_container(b"II\x2A\0rest", false));
+        let mut raw_tiff = [0u8; 26];
+        mark_synthetic_tiff_raw(&mut raw_tiff);
+        assert!(looks_like_raw_container(&raw_tiff, false));
+        assert!(looks_like_raw_container(b"FUJIFILMCCD-RAW", false));
+        assert!(!looks_like_raw_container(b"not a camera raw", true));
+    }
+
+    #[test]
+    fn raw_fast_path_respects_the_configured_input_cap() {
+        let large_raw = (RAW_PREFIX_BYTES as u64) + 1;
+        assert!(raw_preview_size_allowed(large_raw, u64::MAX));
+        assert!(!raw_preview_size_allowed(large_raw, 1024 * 1024));
+    }
+
+    #[test]
+    fn unnamed_raw_stream_returns_only_its_early_preview_and_honors_max_size() {
+        let jpeg = substantial_jpeg();
+        let mut raw = vec![0u8; RAW_PREFIX_BYTES + 1];
+        mark_synthetic_tiff_raw(&mut raw);
+        let jpeg_start = 4096;
+        raw[jpeg_start..jpeg_start + jpeg.len()].copy_from_slice(&jpeg);
+
+        let stream = unsafe { SHCreateMemStream(Some(&raw)) }.expect("SHCreateMemStream");
+        match unsafe { stream_source(&stream, u64::MAX, "test") } {
+            Ok(StreamSource::Bytes(bytes)) => assert_eq!(bytes, jpeg),
+            _ => panic!("unnamed RAW stream should use its embedded preview"),
+        }
+
+        let stream = unsafe { SHCreateMemStream(Some(&raw)) }.expect("SHCreateMemStream");
+        assert!(
+            unsafe { stream_source(&stream, 1024 * 1024, "test") }.is_err(),
+            "RAW fast path must not bypass the configured MaxSize"
+        );
+        drop(stream);
+
+        raw[jpeg_start..jpeg_start + jpeg.len()].fill(0);
+        *raw.last_mut().unwrap() = 0xA5;
+        let stream = unsafe { SHCreateMemStream(Some(&raw)) }.expect("SHCreateMemStream");
+        match unsafe { stream_source(&stream, u64::MAX, "test") } {
+            Ok(StreamSource::Bytes(bytes)) => {
+                assert_eq!(bytes.len(), raw.len());
+                assert_eq!(bytes.last(), Some(&0xA5));
+                assert_eq!(&bytes[..26], &raw[..26]);
+            }
+            _ => panic!("RAW without an early preview should keep the full-read fallback"),
+        }
+    }
+
+    #[test]
+    fn real_large_pef_stream_uses_bounded_preview_when_corpus_is_available() {
+        let Some(parent) = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent() else {
+            return;
+        };
+        let path = parent.join("test-corpus-real").join("sample.pef");
+        if !path.exists() {
+            return;
+        }
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let stream = unsafe {
+            SHCreateStreamOnFileEx(
+                PCWSTR(wide.as_ptr()),
+                (STGM_READ | STGM_SHARE_DENY_NONE).0,
+                0,
+                false,
+                None,
+            )
+            .expect("SHCreateStreamOnFileEx")
+        };
+        match unsafe { stream_source(&stream, u64::MAX, "test") } {
+            Ok(StreamSource::Bytes(bytes)) => {
+                assert!(bytes.len() >= decode::MIN_RAW_PREVIEW);
+                assert!(
+                    bytes.len() < RAW_PREFIX_BYTES,
+                    "must return only the embedded preview, not the RAW prefix"
+                );
+                let thumb = decode::decode_thumbnail_opts(&bytes, 256, true)
+                    .expect("embedded PEF preview should decode");
+                assert_eq!(
+                    (thumb.width, thumb.height),
+                    (256, 171),
+                    "shell fast path should match the corpus PEF thumbnail orientation"
+                );
+            }
+            _ => panic!("large PEF should return its bounded embedded preview"),
+        }
+        drop(stream);
+        if com {
+            unsafe { CoUninitialize() };
+        }
     }
 
     #[test]
