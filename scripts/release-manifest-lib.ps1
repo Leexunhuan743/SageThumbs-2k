@@ -473,22 +473,45 @@ function Assert-ReleaseMsixPackage {
     } else {
         Resolve-ReleaseSignTool
     }
-    $verifyOutput = @(& $tool verify /pa /all /v $Path 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "MSIX signature verification failed using signtool:`n$($verifyOutput -join "`n")"
-    }
-
-    $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    if ($null -eq $signature -or [string]$signature.Status -cne 'Valid' -or
-        $null -eq $signature.SignerCertificate) {
-        $status = if ($null -eq $signature) { '<no result>' } else { [string]$signature.Status }
-        throw "MSIX Authenticode signature is not valid: $status"
-    }
-
     $expectedCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
         (Resolve-Path -LiteralPath $CertificatePath -ErrorAction Stop).Path
     )
+    $trustedPeople = [Security.Cryptography.X509Certificates.X509Store]::new(
+        'TrustedPeople',
+        [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+    )
+    $addedTemporaryTrust = $false
     try {
+        # The shipped package deliberately uses a self-signed app-package
+        # certificate. Verify it against that exact bundled public certificate
+        # without requiring a release runner to have installed SageThumbs first.
+        # TrustedPeople is the same non-root store used by the installer.
+        $trustedPeople.Open(
+            [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
+        )
+        $trusted = $trustedPeople.Certificates.Find(
+            [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+            $expectedCertificate.Thumbprint,
+            $false
+        )
+        if ($trusted.Count -eq 0) {
+            $trustedPeople.Add($expectedCertificate)
+            $addedTemporaryTrust = $true
+        }
+        $trustedPeople.Close()
+
+        $verifyOutput = @(& $tool verify /pa /all /v $Path 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "MSIX signature verification failed using signtool:`n$($verifyOutput -join "`n")"
+        }
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $Path
+        if ($null -eq $signature -or [string]$signature.Status -cne 'Valid' -or
+            $null -eq $signature.SignerCertificate) {
+            $status = if ($null -eq $signature) { '<no result>' } else { [string]$signature.Status }
+            throw "MSIX Authenticode signature is not valid: $status"
+        }
+
         $expectedCertificateHash = [Convert]::ToHexString(
             [Security.Cryptography.SHA256]::HashData($expectedCertificate.RawData)
         )
@@ -505,6 +528,30 @@ function Assert-ReleaseMsixPackage {
             -Version $Version `
             -ExpectedPublisher $expectedCertificate.Subject
     } finally {
+        $trustedPeople.Close()
+        if ($addedTemporaryTrust) {
+            $cleanupStore = [Security.Cryptography.X509Certificates.X509Store]::new(
+                'TrustedPeople',
+                [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+            )
+            try {
+                $cleanupStore.Open(
+                    [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
+                )
+                $temporaryCertificates = $cleanupStore.Certificates.Find(
+                    [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+                    $expectedCertificate.Thumbprint,
+                    $false
+                )
+                foreach ($temporaryCertificate in $temporaryCertificates) {
+                    $cleanupStore.Remove($temporaryCertificate)
+                }
+            } finally {
+                $cleanupStore.Close()
+                $cleanupStore.Dispose()
+            }
+        }
+        $trustedPeople.Dispose()
         $expectedCertificate.Dispose()
     }
 }
