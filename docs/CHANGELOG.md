@@ -4,14 +4,17 @@ All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
 ## 1.3.7
 
-- **The right-click preview is a picture again.** On PCs whose context menu is drawn by a
-  third-party shell skin (StartAllBack, ExplorerPatcher and similar), the preview had been
-  squashed into a thin strip a few pixels tall since 1.3.2: those skins size any picture in a
-  menu as if it were a small icon. The preview now claims its own height the way it did before,
-  so the thumbnail, file name and dimensions are fully visible again. Machines without such a
-  skin were unaffected. As before 1.3.2, a menu showing the preview is drawn in the classic
-  Windows style; keeping the preview inside the SageThumbs submenu (the default) leaves the
-  rest of the right-click menu untouched, and turning the preview off restores it completely.
+### Fixed
+
+- **The right-click preview shows the picture again.** Since 1.3.2 it had been squashed into a
+  strip a few pixels tall on PCs running a third-party menu skin such as StartAllBack. The
+  thumbnail, file name and dimensions are all visible again.
+
+### Note
+
+- A menu that shows the preview is drawn in the classic Windows style, as it was before 1.3.2.
+  The default (preview inside the SageThumbs submenu) leaves the rest of your right-click menu
+  untouched, and switching the preview off restores the standard look everywhere.
 
 ## 1.3.6
 
