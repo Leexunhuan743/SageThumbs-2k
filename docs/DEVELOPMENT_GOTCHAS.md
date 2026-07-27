@@ -66,12 +66,39 @@ recognises as owner-drawn and whose command id it can map back to this handler.
   passed while the preview was a sliver, because they assert what we hand to the menu and
   the menu is what mangles it. Drive Explorer, screenshot the popup, look at it.
 
-**Open question (untested).** Windows' own *dark* classic menu could not be sampled on the
-reporting machine, because StartAllBack replaces it. If a clean Windows 11 dark-mode
-"Show more options" menu sizes an `MF_BITMAP` item correctly, then the ideal build picks
-per host: bitmap item when no menu skin is injected (tile **and** dark theme), owner-draw
-when one is (`GetModuleHandleW("StartAllBackX64.dll")` and friends). Test on a clean
-machine before building that; do not infer it.
+### Two different symptoms, two different culprits
+
+The earlier open question is now measured, in a process with no skin injected, forced into
+dark mode with the `uxtheme` ordinals (`SetPreferredAppMode(2)` + `FlushMenuThemes`) so a
+*dark themed* popup could be sampled without touching the reporting machine's shell:
+
+| host | bitmap item (`MF_BITMAP`) | owner-drawn item |
+| --- | --- | --- |
+| No menu skin, dark theme | **full tile, popup stays dark** | full tile, **popup turns light** |
+| StartAllBack skin (`explorer.exe`) | ~6 px sliver | full tile, popup turns light |
+
+So the two complaints have unrelated causes, and it is worth keeping them apart:
+
+- **The sliver is the skin.** Windows sizes bitmap menu items from the bitmap. StartAllBack's
+  measurement pass does not.
+- **The white popup is Windows.** One owner-drawn item makes USER32 abandon the themed
+  drawing path for the *entire* popup, including every other handler's items, and fall back
+  to classic system colours. Reproduced with zero skin DLLs in the process: a menu of plain
+  text items renders dark, and adding a single owner-drawn item to that same menu turns the
+  whole thing light. The v1.3.1-era comment claiming this was right; it was only the *other*
+  half of the 1.3.2 rationale that was wrong.
+
+**Therefore the ideal build picks per host**, and this is now evidence-backed rather than
+inferred: bitmap item when no menu skin is injected (tile **and** a dark themed popup, which
+is better than any version has ever shipped), owner-draw when one is. Detection would be an
+in-process `GetModuleHandleW` for `StartAllBackX64.dll`, `DarkMagicX64.dll`, ExplorerPatcher's
+`ep_*.dll` and equivalents.
+
+**The catch, before anyone builds it:** that detection is a name list, and a name list fails
+silently in the wrong direction. A skin we have not heard of reads as "no skin", we insert a
+bitmap item, and the user is back to the sliver with nothing in the logs. Whoever implements
+this should decide deliberately how to handle the unknown-skin case rather than inherit this
+paragraph's assumption.
 
 Practical traps hit while splitting a monolith file into a directory module (the pattern
 used for `settings_dlg/` and `preview/`, see §4) and while diagnosing preview-pane rendering.
