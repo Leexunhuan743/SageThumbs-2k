@@ -3,6 +3,76 @@
 Hard-won traps in this codebase. Each one cost real debugging time; none is
 obvious from reading the code.
 
+## The menu preview MUST be an owner-drawn item (regression 1.3.2 → 1.3.6)
+
+**Symptom.** The right-click preview (thumbnail + filename + `3000 x 2000 px - 600 KB`)
+renders as a ~6 px horizontal strip of squashed image instead of the ~144 x 136 tile.
+Reported 2026-07-26 against 1.3.5 ("since the last update the preview is fucked up, the
+image is a tall rectangle"). Present in every build from **1.3.2** onward; 1.3.1 and
+earlier were correct.
+
+**Root cause.** Not the compositing, not the decode, not a stale GDI handle: those were
+all verified healthy (`cargo run --example previewshot` produced a perfect 144 × 136 PNG
+throughout). The item is fine; the *menu host* refuses to give it a row.
+
+A **third-party menu skin** draws the popup itself: StartAllBack, whose `StartAllBackX64.dll`
+and `DarkMagicX64.dll` are injected into `explorer.exe` to give Windows 11 a
+Windows-10-style dark classic context menu. Its measurement pass treats **every bitmap
+menu item as an icon**: it takes the bitmap's width but clamps the row to icon height and
+clips everything below it. ExplorerPatcher and similar shell skins are the same class of
+host. This is *not* Windows: the identical 144 × 136 `MF_BITMAP` item in a plain
+non-injected process renders at full size (verified).
+
+**Why the 1.3.2 change looked right and wasn't.** 1.3.2 ("fix menu theming") moved the
+tile from owner-draw to `hbmpItem` on the stated premise that *"bitmap items are drawn
+natively, so the popup keeps its own dark/light theme"*. The theming half is true. The
+premise that the tile survives is false, and nobody re-checked the tile afterwards. The
+change was verified against the bug it fixed, not against the feature it moved.
+
+**What was tried, live in Explorer, before concluding** (each one screenshotted; the whole
+point is that none of this is deducible from the docs):
+
+| mechanism | result |
+| --- | --- |
+| `hbmpItem` on an empty `MF_STRING` item (1.3.2–1.3.6) | ~6 px sliver |
+| `InsertMenuItemW` with `MIIM_BITMAP \| MIIM_ID` | ~6 px sliver |
+| `MF_BITMAP` item, 32-bpp DIB section | ~6 px sliver |
+| `MF_BITMAP` item, screen-compatible DDB | ~6 px sliver |
+| `MF_BITMAP` item, 24-bpp DDB | ~6 px sliver |
+| `hbmpItem = HBMMENU_CALLBACK` | **no** `WM_MEASUREITEM`/`WM_DRAWITEM` is ever delivered |
+| `MF_OWNERDRAW`, id **outside** the range `QueryContextMenu` claimed | item present, zero-sized, never measured |
+| `MF_OWNERDRAW`, id **inside** the claimed range | **full 144 × 136 tile** |
+
+So the bitmap *format* never mattered, and `HBMMENU_CALLBACK` is a dead end here: the
+shell forwards owner-draw messages to `IContextMenu2`/`IContextMenu3` only for items it
+recognises as owner-drawn and whose command id it can map back to this handler.
+
+**Rules that follow.**
+
+- The preview item is `MF_OWNERDRAW` with `WM_MEASUREITEM`/`WM_DRAWITEM` handled in
+  `contextmenu.rs`. Do not "improve" it into a bitmap item again: `preview_item_is_owner_drawn`
+  and the flyout assertion in `tests/context_menu_latency.rs` exist to stop exactly that.
+- **Its command id must be inside the range `QueryContextMenu` returns.** An id one past
+  the range gets no messages at all, so the item silently measures to nothing. This is the
+  single easiest way to "fix" the preview into invisibility.
+- The known cost, unchanged since 1.3.1: **one owner-drawn item drops the entire popup
+  onto the classic (light) drawing path**, including every other handler's items. That is
+  the real trade, and it is why the preview is opt-out: `MenuPreview = 0` inserts no
+  owner-drawn item and the menu renders natively. `MenuPreview = 1` (the default, with the
+  preview inside the SageThumbs flyout) confines the classic look to our own flyout and
+  leaves the main menu themed; `MenuPreview = 2` puts the preview, and therefore the
+  classic look, on the main menu.
+- **Verify menu changes by looking at a real menu, not at a test.** Every unit test here
+  passed while the preview was a sliver, because they assert what we hand to the menu and
+  the menu is what mangles it. Drive Explorer, screenshot the popup, look at it.
+
+**Open question (untested).** Windows' own *dark* classic menu could not be sampled on the
+reporting machine, because StartAllBack replaces it. If a clean Windows 11 dark-mode
+"Show more options" menu sizes an `MF_BITMAP` item correctly, then the ideal build picks
+per host: bitmap item when no menu skin is injected (tile **and** dark theme), owner-draw
+when one is (`GetModuleHandleW("StartAllBackX64.dll")` and friends). Test on a clean
+machine before building that; do not infer it.
+
 Practical traps hit while splitting a monolith file into a directory module (the pattern
 used for `settings_dlg/` and `preview/`, see §4) and while diagnosing preview-pane rendering.
 Read this before doing either again.

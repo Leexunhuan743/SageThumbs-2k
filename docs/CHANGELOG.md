@@ -2,6 +2,17 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
+## 1.3.7
+
+- **The right-click preview is a picture again.** On PCs whose context menu is drawn by a
+  third-party shell skin (StartAllBack, ExplorerPatcher and similar), the preview had been
+  squashed into a thin strip a few pixels tall since 1.3.2: those skins size any picture in a
+  menu as if it were a small icon. The preview now claims its own height the way it did before,
+  so the thumbnail, file name and dimensions are fully visible again. Machines without such a
+  skin were unaffected. As before 1.3.2, a menu showing the preview is drawn in the classic
+  Windows style; keeping the preview inside the SageThumbs submenu (the default) leaves the
+  rest of the right-click menu untouched, and turning the preview off restores it completely.
+
 ## 1.3.6
 
 - **Explorer stays responsive when menus and metadata appear.** Right-click construction no longer
@@ -24,7 +35,7 @@ All notable user-facing changes to **SageThumbs 2K**. Newest first.
   installable application without development folders, and release validation checks the visible
   executable and installer branding before publication.
 - **Huge archives now return immediately instead of tying up Explorer.** The archive limit
-  is enforced before 7z parsing on every shell-stream path—even when Max file size is set
+  is enforced before 7z parsing on every shell-stream path, even when Max file size is set
   to Unlimited or a provider omits the filename or length. The reported 909,208,825-byte
   project archive was tested directly and rejected before parsing; network-share timing
   is allowed to vary.
