@@ -238,12 +238,20 @@ pub(super) unsafe fn paint_into(hwnd: HWND, hdc: HDC) {
             }
         }
         ContentKind::Video => {
-            // The video render child covers the video area; paint black behind it (brief
-            // pre-first-frame) then draw the transport strip in the bottom band.
+            // For VIDEO the render child covers this area, so the black is only visible in the
+            // brief pre-first-frame window. For AUDIO there is no picture and the child is hidden
+            // (see `video::create`), so this IS the visible surface: paint the track's embedded
+            // cover art aspect-fit on black, or plain black when it has none. Either way the
+            // transport strip draws in the bottom band.
             let vr = video_rect(hwnd);
-            let brush = CreateSolidBrush(COLORREF(0x0000_0000));
-            FillRect(hdc, &vr, brush);
-            let _ = DeleteObject(brush.into());
+            match st.art.borrow().as_ref() {
+                Some(art) => content::paint_image(hdc, &vr, art, 0x0000_0000, 1.0, (0, 0)),
+                None => {
+                    let brush = CreateSolidBrush(COLORREF(0x0000_0000));
+                    FillRect(hdc, &vr, brush);
+                    let _ = DeleteObject(brush.into());
+                }
+            }
             if let Some(v) = st.video.borrow().as_ref() {
                 draw_scrub_strip(hwnd, hdc, &scrub_rect(hwnd), v, text, subtle);
             }

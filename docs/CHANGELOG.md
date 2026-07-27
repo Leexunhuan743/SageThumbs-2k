@@ -6,15 +6,18 @@ All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
 ### Fixed
 
-- **The right-click preview shows the picture again.** Since 1.3.2 it had been squashed into a
-  strip a few pixels tall on PCs running a third-party menu skin such as StartAllBack. The
-  thumbnail, file name and dimensions are all visible again.
+- **The right-click preview shows the picture again, without recolouring your menu.** Since 1.3.2
+  the preview had been squashed into a strip a few pixels tall on PCs running a third-party menu
+  skin such as StartAllBack or ExplorerPatcher. It is drawn full size on those PCs now. Everyone
+  else keeps the menu exactly as Windows draws it, because the two kinds of PC need the preview
+  drawn two different ways and SageThumbs now picks the right one for yours. There is no setting to
+  get wrong: if you have never heard of a menu skin, nothing about your menu changes.
 
-### Note
+### Added
 
-- A menu that shows the preview is drawn in the classic Windows style, as it was before 1.3.2.
-  The default (preview inside the SageThumbs submenu) leaves the rest of your right-click menu
-  untouched, and switching the preview off restores the standard look everywhere.
+- **Music files show their album art.** Pressing Space on an MP3, FLAC, M4A, OGG or WMA already
+  played the track with a seek bar; the picture area behind it was blank. It now shows the cover
+  art stored in the file. Tracks without any keep the plain dark background.
 
 ## 1.3.6
 

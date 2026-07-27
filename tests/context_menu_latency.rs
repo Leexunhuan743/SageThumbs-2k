@@ -23,8 +23,23 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, DestroyMenu, GetMenuItemCount, GetMenuItemInfoW, GetSubMenu, HMENU,
-    MENUITEMINFOW, MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_FTYPE, WM_INITMENUPOPUP,
+    MENUITEMINFOW, MFT_BITMAP, MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_FTYPE, WM_INITMENUPOPUP,
 };
+
+/// The handler's own host probe, repeated here (it is crate-private, and this test drives the DLL
+/// from outside). A menu skin is injected into the host process, so an in-process module check is
+/// the whole test.
+fn menu_skin_loaded() -> bool {
+    use windows::core::w;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    [
+        w!("StartAllBackX64.dll"),
+        w!("DarkMagicX64.dll"),
+        w!("ExplorerPatcher.amd64.dll"),
+    ]
+    .iter()
+    .any(|n| unsafe { GetModuleHandleW(*n) }.is_ok())
+}
 
 const CLSID_CONTEXT_MENU: GUID = GUID::from_u128(0x9F3A2B1C_5E8D_4A7F_9C2E_1B6D4F8A0E53);
 const TEST_SETTINGS_ROOT: &str = r"Software\SageThumbs2K\__test_context_menu_latency_absent";
@@ -100,8 +115,12 @@ fn first_query_context_menu_is_fast_with_default_preview_enabled() {
         // Product defaults place the preview inside the SageThumbs submenu. QueryContextMenu
         // must only reserve that slot; Explorer sends WM_INITMENUPOPUP immediately before it
         // paints the flyout. Drive that exact lifecycle through IContextMenu3 and prove the
-        // bitmap preview + separating divider appear once, even if Explorer repeats the
-        // notification.
+        // preview + separating divider appear once, even if Explorer repeats the notification.
+        //
+        // The budget below is load-bearing on the BITMAP branch specifically: that branch has to
+        // hand over real pixels at insert time, so the bounded decode wait happens right here
+        // rather than in the WM_MEASUREITEM that follows. Same total stall either way, but this
+        // is the message that now carries it, so this is where it has to stay bounded.
         let submenu = GetSubMenu(popup, 0);
         assert!(
             !submenu.is_invalid(),
@@ -139,12 +158,27 @@ fn first_query_context_menu_is_fast_with_default_preview_enabled() {
             ..Default::default()
         };
         GetMenuItemInfoW(submenu, 0, true, &mut preview).expect("preview menu item info");
-        assert!(
-            preview.fType.contains(MFT_OWNERDRAW),
-            "the flyout preview must be OWNER-DRAWN ({:?}): a themed popup measures any \
-             bitmap item as an icon and clips the tile to a sliver",
-            preview.fType
-        );
+        // The handler picks the item kind from the HOST (see contextmenu.rs): a menu-skinning
+        // shell clips any bitmap item to an icon-sized sliver, so those get owner-draw; everyone
+        // else gets a real bitmap item, because one owner-drawn item un-themes the whole popup.
+        // Re-probe the same way the handler does, so this asserts the branch rather than one
+        // machine's answer. A plain test process has no skin injected, so in practice this is the
+        // bitmap branch, which is exactly the default worth guarding.
+        if menu_skin_loaded() {
+            assert!(
+                preview.fType.contains(MFT_OWNERDRAW),
+                "on a menu-skinned host the flyout preview must be OWNER-DRAWN ({:?}): a skin \
+                 measures any bitmap item as an icon and clips the tile to a sliver",
+                preview.fType
+            );
+        } else {
+            assert!(
+                preview.fType.contains(MFT_BITMAP) && !preview.fType.contains(MFT_OWNERDRAW),
+                "on a stock host the flyout preview must be a BITMAP item ({:?}): one \
+                 owner-drawn item drops the entire popup off the themed drawing path",
+                preview.fType
+            );
+        }
         let mut divider = MENUITEMINFOW {
             cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
             fMask: MIIM_FTYPE,

@@ -10,31 +10,48 @@
 //! menu item showing the image's thumbnail + name + dimensions/size, either at the
 //! top of our submenu or directly on the main menu (Options).
 //!
-//! 1.3.2-1.3.6 made that tile a BITMAP item (`hbmpItem`, later `MF_BITMAP`) to keep
-//! the popup on its themed drawing path. Verified live in Explorer, that does not
-//! work: a themed popup measures EVERY bitmap item as an icon and clips the ~136 px
-//! tile to a ~6 px strip (32-bpp DIB, screen DDB and 24-bpp DDB all behave the same).
-//! Owner-draw is the only item kind whose height we can claim, via `WM_MEASUREITEM`.
-//! Its known cost is unchanged from 1.3.1: one owner-drawn item drops the whole popup
-//! onto the classic (light) drawing path, so the preview stays opt-out via
-//! `MenuPreview = 0`. See [`insert_preview_item`]. (The stock Win11 modern menu can
-//! host neither, so the preview only appears in the classic / "Show more options"
+//! **Which item kind draws that tile depends on the HOST**, because neither kind is
+//! correct everywhere. Measured live on both machine classes:
+//!
+//! | machine | bitmap item | owner-drawn item |
+//! | --- | --- | --- |
+//! | no menu skin (the common case) | full tile, menu stays dark | full tile, **menu turns light** |
+//! | menu skin loaded (StartAllBack, ExplorerPatcher, …) | **~6 px sliver** | full tile, menu turns light |
+//!
+//! Two independent causes, deliberately kept apart:
+//!
+//! - **The sliver is the SKIN.** Windows sizes a bitmap menu item from the bitmap;
+//!   a skin's own measurement pass sizes it as an icon and clips the rest. No bitmap
+//!   format escapes it (32-bpp DIB, screen DDB and 24-bpp DDB clamp identically) —
+//!   this is what 1.3.2-1.3.6 shipped and it is the "preview is a thin sliver" report.
+//! - **The light menu is WINDOWS.** One owner-drawn item makes USER32 drop the *entire*
+//!   popup off the themed drawing path, including every other handler's items.
+//!   Reproduced with zero skin DLLs in the process, so uninstalling the skin does not
+//!   avoid it. This is the 1.3.1 / 1.3.7 cost.
+//!
+//! So [`menu_skin_loaded`] probes the host once and the insertion sites branch:
+//! **the bitmap item is the DEFAULT, owner-draw is the positive-match exception.**
+//! That direction is the whole safety argument — a skin we have never heard of falls
+//! through to the bitmap item and its user sees exactly what they see today, so the
+//! name list can only ever *add* fixes, never remove one. The preview also stays
+//! opt-out entirely via `MenuPreview = 0`. (The stock Win11 modern menu can host
+//! neither kind, so the preview only appears in the classic / "Show more options"
 //! path.)
 
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use windows::core::{Error, Ref, Result, HRESULT, HSTRING, PCWSTR, PSTR};
+use windows::core::{w, Error, Ref, Result, HRESULT, HSTRING, PCWSTR, PSTR};
 use windows::Win32::Foundation::{
     COLORREF, E_FAIL, E_NOTIMPL, LPARAM, LRESULT, RECT, SIZE, S_OK, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    AlphaBlend, CreateCompatibleDC, CreateDIBSection, CreateFontIndirectW, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, FillRect, GdiFlush, GetStockObject, GetSysColor,
-    GetTextExtentPoint32W, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER,
-    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_MENU,
-    COLOR_MENUTEXT, DEFAULT_GUI_FONT, DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE,
-    HBITMAP, HDC, HFONT, HGDIOBJ, TRANSPARENT,
+    AlphaBlend, CreateCompatibleBitmap, CreateCompatibleDC, CreateDIBSection, CreateFontIndirectW,
+    CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, FillRect, GdiFlush, GetDC, GetStockObject,
+    GetSysColor, GetTextExtentPoint32W, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
+    AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, COLOR_HIGHLIGHT,
+    COLOR_HIGHLIGHTTEXT, COLOR_MENU, COLOR_MENUTEXT, DEFAULT_GUI_FONT, DIB_RGB_COLORS, DT_CENTER,
+    DT_END_ELLIPSIS, DT_SINGLELINE, HBITMAP, HDC, HFONT, HGDIOBJ, TRANSPARENT,
 };
 use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
 use windows::Win32::System::Ole::ReleaseStgMedium;
@@ -45,9 +62,10 @@ use windows::Win32::UI::Shell::{
     DragQueryFileW, IContextMenu2_Impl, IContextMenu3, IContextMenu3_Impl, IContextMenu_Impl,
     IShellExtInit, IShellExtInit_Impl, ShellExecuteW, CMINVOKECOMMANDINFO, HDROP,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, GetSystemMetrics, InsertMenuW, SetMenuItemInfoW,
-    SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BYPOSITION, MF_OWNERDRAW, MF_POPUP,
+    SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BITMAP, MF_BYPOSITION, MF_OWNERDRAW, MF_POPUP,
     MF_SEPARATOR, MF_STRING, MIIM_BITMAP, NONCLIENTMETRICSW, SM_CXMENUCHECK, SM_CYMENUCHECK,
     SPI_GETNONCLIENTMETRICS, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_DRAWITEM,
     WM_INITMENUPOPUP, WM_MEASUREITEM,
@@ -110,6 +128,12 @@ pub struct ContextMenu {
     /// Prevent duplicate preview insertion if Explorer forwards more than one
     /// initialization message for the same flyout.
     preview_submenu_inserted: Cell<bool>,
+    /// The composed tile handed to the menu on the BITMAP branch (unskinned hosts).
+    /// A menu never takes ownership of an `MF_BITMAP` handle, so it is owned here and
+    /// must outlive the on-screen menu; freed in `Drop` (the shell releases this
+    /// object only after the menu is dismissed). Stays invalid on the owner-draw
+    /// branch, which composes straight into the DC the shell hands us.
+    tile: Cell<HBITMAP>,
 }
 
 impl Default for ContextMenu {
@@ -125,6 +149,18 @@ impl Default for ContextMenu {
             preview_cmd: Cell::new(None),
             preview_submenu: Cell::new(HMENU::default()),
             preview_submenu_inserted: Cell::new(false),
+            tile: Cell::new(HBITMAP::default()),
+        }
+    }
+}
+
+impl Drop for ContextMenu {
+    fn drop(&mut self) {
+        let bmp = self.tile.replace(HBITMAP::default());
+        if !bmp.is_invalid() {
+            unsafe {
+                let _ = DeleteObject(bmp.into());
+            }
         }
     }
 }
@@ -356,19 +392,94 @@ fn menu_logo() -> HBITMAP {
     HBITMAP(h as *mut core::ffi::c_void)
 }
 
-/// Insert the preview as an OWNER-DRAWN item — the only item kind a menu will make
-/// tall enough for an image.
+/// Menu-skinning shells whose own measurement pass clips a bitmap menu item to an
+/// icon-sized sliver. A skin is injected into `explorer.exe`, and the classic handler
+/// runs *inside* `explorer.exe`, so an in-process module check is the direct signal —
+/// no registry sniffing, no process enumeration, nothing that can go stale.
+const MENU_SKIN_MODULES: [PCWSTR; 3] = [
+    w!("StartAllBackX64.dll"),
+    w!("DarkMagicX64.dll"),
+    w!("ExplorerPatcher.amd64.dll"),
+];
+
+/// Is a menu-skinning shell loaded into THIS process?
 ///
-/// 1.3.2 replaced this with a bitmap item (`hbmpItem`, later `MF_BITMAP`) to keep the
-/// popup themed. Verified live in Explorer, that trade does not exist: a themed popup
-/// sizes ANY bitmap item as an icon and clips the 136 px tile to a ~6 px strip — the
-/// "preview is a thin sliver" report. 32-bpp DIB, screen DDB and 24-bpp DDB all
-/// clamp identically; only an owner-drawn item is measured from what we report in
-/// `WM_MEASUREITEM`.
+/// Cached: the answer cannot change without the host process restarting, and this is
+/// consulted on every right-click. **A false answer here is safe by construction** —
+/// see the module header: `false` picks the bitmap item, which is exactly what every
+/// user gets today, so an unrecognized skin degrades to the status quo rather than to
+/// something new. That is why the list is a positive-match allowlist and never a
+/// blocklist.
+fn menu_skin_loaded() -> bool {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        MENU_SKIN_MODULES
+            .iter()
+            .any(|n| unsafe { GetModuleHandleW(*n) }.is_ok())
+    })
+}
+
+/// Compose the preview tile into a screen-compatible **DDB** for an `MF_BITMAP` item.
 ///
-/// The known cost is unchanged from 1.3.1: one owner-drawn item drops the whole
-/// popup onto the classic (light) drawing path. That is why the preview stays opt-out
-/// — `MenuPreview = 0` inserts no owner-drawn item and the menu renders natively.
+/// A DDB rather than the 32-bpp DIB section the owner-draw path paints into: `MF_BITMAP`
+/// was verified live against a DDB, and a menu blits a bitmap item rather than
+/// alpha-blending it, so the DIB's alpha channel buys nothing here and its behaviour on
+/// this path was never measured. The tile is still painted by the same
+/// [`paint_preview`] used by the owner-drawn branch and the diagnostic PNG, so the two
+/// renderings cannot drift.
+///
+/// The caller owns the returned handle (see [`ContextMenu::tile`]).
+unsafe fn preview_ddb(p: &Preview) -> HBITMAP {
+    let (iw, ih) = tile_size(p);
+    if iw <= 0 || ih <= 0 {
+        return HBITMAP::default();
+    }
+    let screen = GetDC(None);
+    if screen.is_invalid() {
+        return HBITMAP::default();
+    }
+    let bmp = CreateCompatibleBitmap(screen, iw, ih);
+    let memdc = CreateCompatibleDC(Some(screen));
+    ReleaseDC(None, screen);
+    if bmp.is_invalid() || memdc.is_invalid() {
+        if !bmp.is_invalid() {
+            let _ = DeleteObject(bmp.into());
+        }
+        if !memdc.is_invalid() {
+            let _ = DeleteDC(memdc);
+        }
+        return HBITMAP::default();
+    }
+    let old = SelectObject(memdc, bmp.into());
+    let (bg, fg) = menu_theme_colors();
+    paint_preview(
+        memdc,
+        RECT {
+            left: 0,
+            top: 0,
+            right: iw,
+            bottom: ih,
+        },
+        p,
+        bg,
+        fg,
+    );
+    let _ = GdiFlush();
+    SelectObject(memdc, old);
+    let _ = DeleteDC(memdc);
+    bmp
+}
+
+/// Insert the preview as an OWNER-DRAWN item — the only item kind whose height we can
+/// claim, via `WM_MEASUREITEM`.
+///
+/// **This is the SKINNED-host branch only.** A skin's measurement pass sizes any bitmap
+/// item as an icon and clips the ~136 px tile to a ~6 px strip (32-bpp DIB, screen DDB
+/// and 24-bpp DDB clamp identically), so owner-draw is the only thing that survives
+/// there. Its cost is that one owner-drawn item drops the whole popup onto the classic
+/// (light) drawing path — which is why unskinned hosts get [`insert_preview_bitmap`]
+/// instead, and why the preview stays opt-out via `MenuPreview = 0` either way.
 unsafe fn insert_preview_item(hmenu: HMENU, pos: u32, cmd: u32) -> bool {
     InsertMenuW(
         hmenu,
@@ -376,6 +487,29 @@ unsafe fn insert_preview_item(hmenu: HMENU, pos: u32, cmd: u32) -> bool {
         MF_BYPOSITION | MF_OWNERDRAW,
         cmd as usize,
         PCWSTR::null(),
+    )
+    .is_ok()
+}
+
+/// Insert the preview as a real `MF_BITMAP` item — the DEFAULT (unskinned) branch.
+///
+/// `MF_BITMAP` rather than `hbmpItem` on an empty-string item (the 1.3.2 shape): both
+/// render correctly unskinned, but `MF_BITMAP` gives the tile its own row, whereas
+/// `hbmpItem` puts it in the icon gutter and shoves every label right (a menu measured
+/// 317 px wide versus 254 px for the same tile). `hbmpItem` remains the fallback if
+/// `MF_BITMAP` ever misbehaves; it has four shipped versions of field time behind it.
+///
+/// `bmp` must outlive the menu — the menu does not take ownership.
+unsafe fn insert_preview_bitmap(hmenu: HMENU, pos: u32, cmd: u32, bmp: HBITMAP) -> bool {
+    if bmp.is_invalid() {
+        return false;
+    }
+    InsertMenuW(
+        hmenu,
+        pos,
+        MF_BYPOSITION | MF_BITMAP,
+        cmd as usize,
+        PCWSTR(bmp.0 as *const u16),
     )
     .is_ok()
 }
@@ -456,9 +590,59 @@ impl ContextMenu {
         false
     }
 
-    /// Report the preview item's real pixel size. Nothing else can: a themed popup
-    /// measures every bitmap item as an icon, so this is the only channel through
-    /// which a 136 px-tall tile can claim its row. See [`insert_preview_item`].
+    /// Decode the selection (if not already) and compose the tile bitmap for the
+    /// BITMAP branch, remembering it on `self` so it outlives this call and stays
+    /// valid while the menu is on screen. Returns an invalid handle when there is
+    /// nothing to show, in which case the caller adds no preview item at all.
+    unsafe fn build_tile(&self) -> HBITMAP {
+        if !self.ensure_preview() {
+            return HBITMAP::default();
+        }
+        let bmp = {
+            let preview = self.preview.borrow();
+            match preview.as_ref() {
+                Some(p) => preview_ddb(p),
+                None => HBITMAP::default(),
+            }
+        };
+        if !bmp.is_invalid() {
+            // A second QueryContextMenu on the same object would otherwise leak the
+            // first tile.
+            let old = self.tile.replace(bmp);
+            if !old.is_invalid() {
+                let _ = DeleteObject(old.into());
+            }
+        }
+        bmp
+    }
+
+    /// Insert the preview item at `pos`, picking the rendering technique for THIS host.
+    ///
+    /// Bitmap item by default, owner-draw only on a positive skin match — see the
+    /// module header for the measurement matrix and for why the default points this
+    /// way rather than the other.
+    ///
+    /// The two branches differ in WHEN they decode. Owner-draw stays lazy until
+    /// `WM_MEASUREITEM`; the bitmap branch needs real pixels to hand over, so it
+    /// decodes here. That costs nothing in mode 2 (the decode was prefetched during
+    /// `Initialize`), and in mode 1 this runs from `WM_INITMENUPOPUP` — i.e. only once
+    /// the user actually opens our flyout — so a plain right-click stays metadata-only
+    /// on both branches.
+    unsafe fn insert_preview(&self, hmenu: HMENU, pos: u32, cmd: u32) -> bool {
+        if menu_skin_loaded() {
+            return insert_preview_item(hmenu, pos, cmd);
+        }
+        // No tile means no pixels to hand a bitmap item. Insert nothing rather than
+        // falling back to owner-draw: an owner-drawn item would drop the whole popup
+        // onto the light drawing path in exchange for a 1×1 blank, which is a strictly
+        // worse trade than simply having no preview.
+        insert_preview_bitmap(hmenu, pos, cmd, self.build_tile())
+    }
+
+    /// Report the preview item's real pixel size. Nothing else can on a skinned host:
+    /// its measurement pass sizes every bitmap item as an icon, so this is the only
+    /// channel through which a 136 px-tall tile can claim its row. Reached only on the
+    /// owner-draw branch — see [`insert_preview`](Self::insert_preview).
     unsafe fn measure_preview(&self, cmd: u32, lparam: LPARAM) -> bool {
         let mis = &mut *(lparam.0 as *mut MEASUREITEMSTRUCT);
         if mis.CtlType != ODT_MENU || mis.itemID != cmd {
@@ -539,7 +723,7 @@ impl ContextMenu {
         }
 
         self.preview_submenu_inserted.set(true);
-        if !insert_preview_item(submenu, 0, cmd) {
+        if !self.insert_preview(submenu, 0, cmd) {
             return false;
         }
         let _ = InsertMenuW(submenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null());
@@ -996,11 +1180,11 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                 // menu can't double-list "SageThumbs 2K" — see AppxManifest.xml / register.rs.)
                 let mut pos = indexmenu;
 
-                // 1) Preview directly on the main menu (mode 2), topmost. Owner-drawn
-                //    — the only item kind a popup will size to an image; see
-                //    `insert_preview_item` for the bitmap-item attempts that don't.
+                // 1) Preview directly on the main menu (mode 2), topmost. A bitmap item
+                //    on a stock host, owner-drawn on a menu-skinned one — see
+                //    `insert_preview` and the module header for why the host decides.
                 if let Some(cmd) = self.preview_cmd.get() {
-                    if mode == 2 && insert_preview_item(hmenu, pos, cmd) {
+                    if mode == 2 && self.insert_preview(hmenu, pos, cmd) {
                         pos += 1;
                     }
                 }
@@ -1237,7 +1421,8 @@ impl IContextMenu3_Impl for ContextMenu_Impl {
 mod tests {
     use super::*;
     use windows::Win32::UI::WindowsAndMessaging::{
-        DestroyMenu, GetMenuItemInfoW, MFT_OWNERDRAW, MIIM_FTYPE, MIIM_ID,
+        DestroyMenu, GetMenuItemInfoW, MENU_ITEM_TYPE, MFT_BITMAP, MFT_OWNERDRAW, MIIM_FTYPE,
+        MIIM_ID,
     };
 
     /// The preview slot must have a real, image-sized rect to claim. Uses the
@@ -1262,35 +1447,100 @@ mod tests {
         }
     }
 
-    /// The preview MUST be owner-drawn. Every bitmap item form — `hbmpItem` on a text
-    /// item, `MF_BITMAP`, 32-bpp DIB, screen DDB, 24-bpp DDB — is measured as an ICON
-    /// by a themed popup and clipped to a ~6 px strip (verified live in Explorer; the
-    /// 1.3.2-1.3.6 "preview is a sliver" regression). Only `WM_MEASUREITEM` can claim
-    /// the height, and only an owner-drawn item gets one.
+    /// Read the item type + id of the menu item at `pos`.
+    unsafe fn item_type_and_id(menu: HMENU, pos: u32) -> (MENU_ITEM_TYPE, u32) {
+        let mut item = MENUITEMINFOW {
+            cbSize: core::mem::size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_FTYPE | MIIM_ID,
+            ..Default::default()
+        };
+        GetMenuItemInfoW(menu, pos, true, &mut item).expect("GetMenuItemInfoW");
+        (item.fType, item.wID)
+    }
+
+    /// The SKINNED branch must stay OWNER-DRAWN. A menu-skinning shell measures every
+    /// bitmap item form — `hbmpItem` on a text item, `MF_BITMAP`, 32-bpp DIB, screen
+    /// DDB, 24-bpp DDB — as an ICON and clips the ~136 px tile to a ~6 px strip
+    /// (verified live; the 1.3.2-1.3.6 "preview is a sliver" regression). Only
+    /// `WM_MEASUREITEM` can claim the height, and only an owner-drawn item gets one.
     #[test]
-    fn preview_item_is_owner_drawn() {
+    fn skinned_preview_item_is_owner_drawn() {
         unsafe {
             let menu = CreatePopupMenu().expect("CreatePopupMenu");
             assert!(
                 insert_preview_item(menu, 0, 42),
                 "preview item insertion must succeed"
             );
-
-            let mut item = MENUITEMINFOW {
-                cbSize: core::mem::size_of::<MENUITEMINFOW>() as u32,
-                fMask: MIIM_FTYPE | MIIM_ID,
-                ..Default::default()
-            };
-            GetMenuItemInfoW(menu, 0, true, &mut item).expect("GetMenuItemInfoW");
-            assert_eq!(item.wID, 42, "preview command id must be retained");
+            let (ftype, id) = item_type_and_id(menu, 0);
+            assert_eq!(id, 42, "preview command id must be retained");
             assert!(
-                item.fType.contains(MFT_OWNERDRAW),
-                "the preview must be OWNER-DRAWN ({:?}); any bitmap item form is \
-                 measured as an icon and clipped to a sliver",
-                item.fType
+                ftype.contains(MFT_OWNERDRAW),
+                "the skinned-host preview must be OWNER-DRAWN ({ftype:?}); any bitmap \
+                 item form is measured as an icon there and clipped to a sliver"
             );
-
             let _ = DestroyMenu(menu);
         }
+    }
+
+    /// The DEFAULT (unskinned) branch must be a real `MF_BITMAP` item and must NOT be
+    /// owner-drawn: a single owner-drawn item drops the whole popup off Windows' themed
+    /// drawing path, turning a dark menu light for every other handler's items too.
+    #[test]
+    fn unskinned_preview_item_is_a_bitmap() {
+        unsafe {
+            let menu = CreatePopupMenu().expect("CreatePopupMenu");
+            let p = Preview {
+                hbm: HBITMAP::default(),
+                w: 0,
+                h: 0,
+                name: crate::wide("photo.jpg"),
+                info: crate::wide("1500 x 1500 px - 96 KB"),
+            };
+            let bmp = preview_ddb(&p);
+            assert!(!bmp.is_invalid(), "the caption-only tile must compose");
+            assert!(
+                insert_preview_bitmap(menu, 0, 42, bmp),
+                "bitmap preview insertion must succeed"
+            );
+            let (ftype, id) = item_type_and_id(menu, 0);
+            assert_eq!(id, 42, "preview command id must be retained");
+            assert!(
+                !ftype.contains(MFT_OWNERDRAW),
+                "the unskinned preview must NOT be owner-drawn ({ftype:?}); one \
+                 owner-drawn item un-themes the entire popup"
+            );
+            assert!(
+                ftype.contains(MFT_BITMAP),
+                "the unskinned preview must be a bitmap item ({ftype:?})"
+            );
+            let _ = DestroyMenu(menu);
+            let _ = DeleteObject(bmp.into());
+        }
+    }
+
+    /// A bitmap item with no bitmap would be an invisible, unclickable row, so the
+    /// insert must refuse it and let the caller add nothing at all.
+    #[test]
+    fn bitmap_preview_refuses_a_null_tile() {
+        unsafe {
+            let menu = CreatePopupMenu().expect("CreatePopupMenu");
+            assert!(
+                !insert_preview_bitmap(menu, 0, 42, HBITMAP::default()),
+                "a null tile must not be inserted"
+            );
+            let _ = DestroyMenu(menu);
+        }
+    }
+
+    /// The host probe is answered once and reused. Its VALUE is environment-dependent
+    /// (it is true only inside a skinned `explorer.exe`), so this asserts the property
+    /// that must hold everywhere: one right-click cannot disagree with the next.
+    #[test]
+    fn menu_skin_probe_is_cached() {
+        assert_eq!(
+            menu_skin_loaded(),
+            menu_skin_loaded(),
+            "the host probe must be stable within a process"
+        );
     }
 }

@@ -139,6 +139,12 @@ pub(super) struct ViewerState {
     pub(super) path: RefCell<Option<String>>,
     pub(super) kind: Cell<ContentKind>,
     pub(super) render: RefCell<Option<RenderData>>,
+    /// Cover art for an AUDIO file, painted as the backdrop behind the transport strip. Audio
+    /// rides the same Media Foundation engine as video (`ContentKind::Video`) but has no picture
+    /// of its own, so without this the content area is a flat black rectangle. Kept separate from
+    /// `render` because the kind stays Video: this is a backdrop, not the content, so it must not
+    /// pick up the Image path's zoom, pan, or arrow-key behaviour.
+    pub(super) art: RefCell<Option<RenderData>>,
     /// Animated-image frames (empty for static content). When non-empty the Image path shows
     /// `frames[cur_frame]` and cycles them on `ANIM_TIMER_ID`.
     pub(super) frames: RefCell<Vec<RenderData>>,
@@ -351,6 +357,7 @@ pub(super) unsafe fn create_viewer(
         path: RefCell::new(None),
         kind: Cell::new(ContentKind::Loading),
         render: RefCell::new(None),
+        art: RefCell::new(None),
         frames: RefCell::new(Vec::new()),
         frame_delays: RefCell::new(Vec::new()),
         cur_frame: Cell::new(0),
@@ -1063,6 +1070,23 @@ unsafe fn on_render(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         return; // stale — the user already switched files
     }
     let _ = wparam;
+    // A decode landing while the kind is STILL Video is the audio cover art (loader only asks for
+    // one in that case, and the video fallback path sets Loading before it asks). It is a backdrop,
+    // not the content: install it into `art`, leave the kind alone, and never fall back to the card
+    // for it — a track with no embedded picture just keeps the plain dark surface.
+    if st.kind.get() == ContentKind::Video {
+        if let Some(d) = decoded {
+            if let Some(hbmp) = content::make_dib(d.w, d.h, &d.rgba, letterbox_bg(st)) {
+                *st.art.borrow_mut() = Some(RenderData {
+                    hbmp,
+                    iw: d.w,
+                    ih: d.h,
+                });
+            }
+        }
+        let _ = InvalidateRect(Some(hwnd), None, false);
+        return;
+    }
     match decoded {
         Some(d) => match content::make_dib(d.w, d.h, &d.rgba, letterbox_bg(st)) {
             Some(hbmp) => {

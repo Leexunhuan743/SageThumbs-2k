@@ -2,8 +2,9 @@
 //! `IMFMediaEngine` in WINDOWED mode: the engine renders the decoded video into a child HWND we
 //! place over the content area and plays the audio itself — using the OS's installed codecs, so
 //! ZERO bundled bytes (same "use the OS" stance as the video frame-grab / WinRT-PDF tiers).
-//! Autoplays + loops; a click toggles play/pause. Audio-only files keep the cover-art image
-//! path; this is video-only for v1. A scrub bar + volume are a later refinement.
+//! Autoplays + loops; a click toggles play/pause. AUDIO tracks ride the same engine and transport
+//! strip (an audio file is a video with no picture), but their render child is created hidden so
+//! the viewer can paint the track's embedded cover art in that space instead.
 
 use core::ffi::c_void;
 
@@ -67,12 +68,16 @@ fn ensure_mf() {
 /// Create a player for `path`: a `WS_CHILD` render window over `rc` (client coords of `parent`),
 /// with the engine set to render into it. Events post to `viewer` (WM_APP_VIDEO). Autoplay
 /// happens on the CANPLAY event (see [`VideoPlayer::on_event`]).
+///
+/// `audio_only` marks a track with no video stream; its render window is created hidden so the
+/// viewer can paint cover art in that space instead.
 pub(super) unsafe fn create(
     parent: HWND,
     viewer: HWND,
     rc: &RECT,
     hinst: windows::Win32::Foundation::HINSTANCE,
     path: &str,
+    audio_only: bool,
 ) -> Option<VideoPlayer> {
     // mfplat is delay-loaded (see the build scripts): on a Windows edition without Media
     // Foundation, calling MFStartup would raise a structured exception under `panic = "abort"`.
@@ -82,11 +87,21 @@ pub(super) unsafe fn create(
     }
     ensure_mf();
     // The child render window (plain STATIC; the engine owns the swap chain on it).
+    //
+    // For an audio track it is created HIDDEN: the engine still needs a real, correctly-sized
+    // playback HWND, but an audio file has no video stream to draw into it, so leaving it visible
+    // would do nothing except clip the parent and hide the cover-art backdrop the viewer paints
+    // there instead. Hidden (rather than zero-sized) so the handle stays valid and `place` keeps
+    // working unchanged.
     let child = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         windows::core::w!("STATIC"),
         windows::core::w!(""),
-        WS_CHILD | WS_VISIBLE,
+        if audio_only {
+            WS_CHILD
+        } else {
+            WS_CHILD | WS_VISIBLE
+        },
         rc.left,
         rc.top,
         rc.right - rc.left,

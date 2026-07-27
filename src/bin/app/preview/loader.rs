@@ -25,6 +25,7 @@ pub(super) unsafe fn load(hwnd: HWND, path: &str) {
     let gen = st.decode_gen.get() + 1;
     st.decode_gen.set(gen);
     *st.render.borrow_mut() = None;
+    *st.art.borrow_mut() = None; // drops the previous track's cover-art DIB
     *st.card.borrow_mut() = None;
     *st.text.borrow_mut() = None;
     *st.video.borrow_mut() = None; // stop + tear down any previous video player
@@ -115,10 +116,17 @@ pub(super) unsafe fn load(hwnd: HWND, path: &str) {
             st.kind.set(ContentKind::Video);
             ensure_shown(hwnd);
             let cr = video_rect(hwnd); // render child leaves room for the scrub strip
-            match super::video::create(hwnd, hwnd, &cr, st.hinst, path) {
+            match super::video::create(hwnd, hwnd, &cr, st.hinst, path, is_audio(path)) {
                 Some(p) => {
                     *st.video.borrow_mut() = Some(p);
                     SetTimer(Some(hwnd), SCRUB_TIMER_ID, 250, None); // repaint the scrub position
+                    // Audio has no picture, so decode its embedded cover art for the backdrop.
+                    // The engine is already playing; this lands later and only repaints (see
+                    // `on_render`, which routes a decode arriving while the kind is still Video
+                    // into `art` rather than treating it as the content).
+                    if is_audio(path) {
+                        content::spawn_decode(hwnd, path.to_string(), gen);
+                    }
                 }
                 None => {
                     // Playback unavailable (codec/engine) → fall back to a still frame.
@@ -190,8 +198,24 @@ pub(super) unsafe fn load_sync(hwnd: HWND, path: Option<&str>, opts: &super::Sho
             place(hwnd, cw, ch, Some((-32000, -32000)));
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             st.shown.set(true);
-            if let Some(p) = super::video::create(hwnd, hwnd, &video_rect(hwnd), st.hinst, path) {
+            if let Some(p) =
+                super::video::create(hwnd, hwnd, &video_rect(hwnd), st.hinst, path, is_audio(path))
+            {
                 *st.video.borrow_mut() = Some(p);
+                // Headless `--play --shot` of a track: decode its art synchronously so the capture
+                // shows the same backdrop the live viewer paints (the async path never lands in a
+                // shot window, which pumps only briefly).
+                if is_audio(path) {
+                    if let Some(d) = content::decode_sync(path) {
+                        if let Some(hbmp) = content::make_dib(d.w, d.h, &d.rgba, 0x0000_0000) {
+                            *st.art.borrow_mut() = Some(RenderData {
+                                hbmp,
+                                iw: d.w,
+                                ih: d.h,
+                            });
+                        }
+                    }
+                }
             }
             set_title(hwnd);
             if let Some(h) = opts.hot {
@@ -566,6 +590,15 @@ pub(super) fn ext_of(path: &str) -> String {
 /// Whether `path` is a frame-animatable format (GIF/APNG/animated WebP).
 pub(super) fn is_animatable(path: &str) -> bool {
     matches!(ext_of(path).as_str(), "gif" | "png" | "apng" | "webp")
+}
+
+/// Whether `path` is an audio track. Audio and video share `ContentKind::Video` (one engine, one
+/// transport strip), so this is what separates "has a picture of its own" from "needs the cover-art
+/// backdrop". Reads the same `FORMATS` category table the rest of the app does, so a new audio
+/// extension is covered the moment it is registered.
+pub(super) fn is_audio(path: &str) -> bool {
+    use sagethumbs2k_core::formats;
+    matches!(formats::category(&ext_of(path)), formats::Category::Audio)
 }
 
 /// Show the window at the right size (first time) or resize to fit the current content
