@@ -72,10 +72,18 @@ The earlier open question is now measured, in a process with no skin injected, f
 dark mode with the `uxtheme` ordinals (`SetPreferredAppMode(2)` + `FlushMenuThemes`) so a
 *dark themed* popup could be sampled without touching the reporting machine's shell:
 
-| host | bitmap item (`MF_BITMAP`) | owner-drawn item |
-| --- | --- | --- |
-| No menu skin, dark theme | **full tile, popup stays dark** | full tile, **popup turns light** |
-| StartAllBack skin (`explorer.exe`) | ~6 px sliver | full tile, popup turns light |
+| host | `hbmpItem` (what 1.3.2-1.3.6 shipped) | bitmap item (`MF_BITMAP`) | owner-drawn item |
+| --- | --- | --- | --- |
+| No menu skin, dark theme | **full tile, popup stays dark** | **full tile, popup stays dark** | full tile, **popup turns light** |
+| StartAllBack skin (`explorer.exe`) | ~6 px sliver | ~6 px sliver | full tile, popup turns light |
+
+Note the top-left cell: **on an unskinned machine the 1.3.2 code was never broken.** The
+regression only ever existed under a menu skin, and the 1.3.7 owner-draw fix therefore
+*costs* unskinned users their themed popup to repair skinned ones. That is the argument for
+picking per host, and it also inverts the risk of doing so: with the **bitmap item as the
+default** and owner-draw only on a positive skin match, an unrecognised skin falls back to
+exactly today's behaviour rather than to something worse. A name list that can only add
+fixes is safe; the earlier warning below assumed the opposite default.
 
 So the two complaints have unrelated causes, and it is worth keeping them apart:
 
