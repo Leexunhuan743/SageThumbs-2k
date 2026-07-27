@@ -23,12 +23,13 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, DestroyMenu, GetMenuItemCount, GetMenuItemInfoW, GetSubMenu, HMENU,
-    MENUITEMINFOW, MFT_SEPARATOR, MIIM_BITMAP, MIIM_FTYPE, WM_INITMENUPOPUP,
+    MENUITEMINFOW, MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_FTYPE, WM_INITMENUPOPUP,
 };
 
 const CLSID_CONTEXT_MENU: GUID = GUID::from_u128(0x9F3A2B1C_5E8D_4A7F_9C2E_1B6D4F8A0E53);
 const TEST_SETTINGS_ROOT: &str = r"Software\SageThumbs2K\__test_context_menu_latency_absent";
-const FIRST_CALL_BUDGET: Duration = Duration::from_millis(750);
+const RIGHT_CLICK_BUDGET: Duration = Duration::from_millis(750);
+const POPUP_INIT_BUDGET: Duration = Duration::from_millis(500);
 
 type DllGetClassObjectFn =
     unsafe extern "system" fn(*const GUID, *const GUID, *mut *mut c_void) -> HRESULT;
@@ -84,16 +85,16 @@ fn first_query_context_menu_is_fast_with_default_preview_enabled() {
         .unwrap();
 
     unsafe {
+        let started = Instant::now();
         let menu = context_menu_for(&png).expect("create and initialize classic context menu");
         let popup: HMENU = CreatePopupMenu().expect("CreatePopupMenu");
-        let started = Instant::now();
         let result = menu.QueryContextMenu(popup, 0, 1, 0x7fff, 0);
         let elapsed = started.elapsed();
         result.ok().expect("QueryContextMenu");
         assert!(
-            elapsed < FIRST_CALL_BUDGET,
-            "first QueryContextMenu took {} ms (budget {} ms): preview work must stay lazy/off the shell thread",
-            elapsed.as_millis(), FIRST_CALL_BUDGET.as_millis()
+            elapsed < RIGHT_CLICK_BUDGET,
+            "context-menu initialization + first QueryContextMenu took {} ms (budget {} ms): preview work must stay off the shell thread",
+            elapsed.as_millis(), RIGHT_CLICK_BUDGET.as_millis()
         );
 
         // Product defaults place the preview inside the SageThumbs submenu. QueryContextMenu
@@ -109,6 +110,7 @@ fn first_query_context_menu_is_fast_with_default_preview_enabled() {
         let before = GetMenuItemCount(Some(submenu));
         assert!(before > 0, "SageThumbs submenu must contain command items");
         let menu3: IContextMenu3 = menu.cast().expect("IContextMenu3");
+        let popup_started = Instant::now();
         menu3
             .HandleMenuMsg2(
                 WM_INITMENUPOPUP,
@@ -117,6 +119,13 @@ fn first_query_context_menu_is_fast_with_default_preview_enabled() {
                 None,
             )
             .expect("first WM_INITMENUPOPUP");
+        let popup_elapsed = popup_started.elapsed();
+        assert!(
+            popup_elapsed < POPUP_INIT_BUDGET,
+            "opening the SageThumbs submenu took {} ms (budget {} ms): preview decode must not stall Explorer",
+            popup_elapsed.as_millis(),
+            POPUP_INIT_BUDGET.as_millis()
+        );
         let after_first = GetMenuItemCount(Some(submenu));
         assert_eq!(
             after_first,
@@ -126,13 +135,15 @@ fn first_query_context_menu_is_fast_with_default_preview_enabled() {
 
         let mut preview = MENUITEMINFOW {
             cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
-            fMask: MIIM_BITMAP,
+            fMask: MIIM_FTYPE,
             ..Default::default()
         };
         GetMenuItemInfoW(submenu, 0, true, &mut preview).expect("preview menu item info");
         assert!(
-            !preview.hbmpItem.is_invalid(),
-            "first inserted flyout item must carry the preview bitmap"
+            preview.fType.contains(MFT_OWNERDRAW),
+            "the flyout preview must be OWNER-DRAWN ({:?}): a themed popup measures any \
+             bitmap item as an icon and clips the tile to a sliver",
+            preview.fType
         );
         let mut divider = MENUITEMINFOW {
             cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,

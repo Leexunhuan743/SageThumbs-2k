@@ -6,19 +6,23 @@
 //! IContextMenu handlers appear. This handler covers those machines, surfacing
 //! the same verbs (verbs.rs) as a "SageThumbs 2K" submenu.
 //!
-//! It also draws the signature SageThumbs/XnShell **menu preview**: a BITMAP menu
-//! item (`hbmpItem`) showing the image's thumbnail + name + dimensions/size, either
-//! at the top of our submenu or directly on the main menu (Options).
+//! It also draws the signature SageThumbs/XnShell **menu preview**: an OWNER-DRAWN
+//! menu item showing the image's thumbnail + name + dimensions/size, either at the
+//! top of our submenu or directly on the main menu (Options).
 //!
-//! That tile used to be an OWNER-DRAWN item. A single owner-drawn item drops the
-//! entire popup onto Windows' classic, non-themed drawing path, and in dark mode
-//! that painted every OTHER item's label black on the dark background (reported
-//! against v1.3.1). Bitmap items are drawn natively, so the popup keeps its own
-//! dark/light theme and the tile is the only thing we paint. See
-//! [`preview_hbitmap`]. (The stock Win11 modern menu can host neither, so the
-//! preview only appears in the classic menu / "Show more options" path.)
+//! 1.3.2-1.3.6 made that tile a BITMAP item (`hbmpItem`, later `MF_BITMAP`) to keep
+//! the popup on its themed drawing path. Verified live in Explorer, that does not
+//! work: a themed popup measures EVERY bitmap item as an icon and clips the ~136 px
+//! tile to a ~6 px strip (32-bpp DIB, screen DDB and 24-bpp DDB all behave the same).
+//! Owner-draw is the only item kind whose height we can claim, via `WM_MEASUREITEM`.
+//! Its known cost is unchanged from 1.3.1: one owner-drawn item drops the whole popup
+//! onto the classic (light) drawing path, so the preview stays opt-out via
+//! `MenuPreview = 0`. See [`insert_preview_item`]. (The stock Win11 modern menu can
+//! host neither, so the preview only appears in the classic / "Show more options"
+//! path.)
 
 use core::cell::{Cell, RefCell};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use windows::core::{Error, Ref, Result, HRESULT, HSTRING, PCWSTR, PSTR};
 use windows::Win32::Foundation::{
@@ -28,13 +32,14 @@ use windows::Win32::Graphics::Gdi::{
     AlphaBlend, CreateCompatibleDC, CreateDIBSection, CreateFontIndirectW, CreateSolidBrush,
     DeleteDC, DeleteObject, DrawTextW, FillRect, GdiFlush, GetStockObject, GetSysColor,
     GetTextExtentPoint32W, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER,
-    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, COLOR_MENU, COLOR_MENUTEXT, DEFAULT_GUI_FONT,
-    DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, HBITMAP, HDC, HFONT, HGDIOBJ,
-    TRANSPARENT,
+    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_MENU,
+    COLOR_MENUTEXT, DEFAULT_GUI_FONT, DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE,
+    HBITMAP, HDC, HFONT, HGDIOBJ, TRANSPARENT,
 };
 use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
 use windows::Win32::System::Ole::ReleaseStgMedium;
 use windows::Win32::System::Registry::HKEY;
+use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_SELECTED, ODT_MENU};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     DragQueryFileW, IContextMenu2_Impl, IContextMenu3, IContextMenu3_Impl, IContextMenu_Impl,
@@ -42,9 +47,10 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, GetSystemMetrics, InsertMenuW, SetMenuItemInfoW,
-    SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BYPOSITION, MF_POPUP, MF_SEPARATOR, MF_STRING,
-    MIIM_BITMAP, NONCLIENTMETRICSW, SM_CXMENUCHECK, SM_CYMENUCHECK, SPI_GETNONCLIENTMETRICS,
-    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_INITMENUPOPUP,
+    SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BYPOSITION, MF_OWNERDRAW, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, MIIM_BITMAP, NONCLIENTMETRICSW, SM_CXMENUCHECK, SM_CYMENUCHECK,
+    SPI_GETNONCLIENTMETRICS, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_DRAWITEM,
+    WM_INITMENUPOPUP, WM_MEASUREITEM,
 };
 use windows_implement::implement;
 
@@ -87,6 +93,14 @@ pub struct ContextMenu {
     _ref: crate::ModuleRef,
     paths: RefCell<Vec<String>>,
     preview: RefCell<Option<Preview>>,
+    /// Direct-main-menu preview decode started from `IShellExtInit::Initialize`.
+    /// The shell can continue querying its other handlers while this worker runs,
+    /// so mode 2 normally arrives with no UI wait. Mode 1 stays fully lazy until
+    /// its submenu opens.
+    preview_job: RefCell<Option<std::sync::mpsc::Receiver<Option<MenuThumb>>>>,
+    /// Snapshot of the cheap single-image/size gate taken during initialization,
+    /// avoiding a second filesystem metadata query in `QueryContextMenu`.
+    preview_eligible: Cell<bool>,
     /// Absolute menu command id of the preview item (set in QueryContextMenu).
     preview_cmd: Cell<Option<u32>>,
     /// The SageThumbs flyout which will receive a mode-1 preview when Explorer
@@ -96,10 +110,6 @@ pub struct ContextMenu {
     /// Prevent duplicate preview insertion if Explorer forwards more than one
     /// initialization message for the same flyout.
     preview_submenu_inserted: Cell<bool>,
-    /// The composed preview tile handed to the menu as `hbmpItem`. Owned here so
-    /// it stays alive for as long as the menu can paint it (the shell releases us
-    /// after the menu is dismissed); freed in `Drop`.
-    tile: Cell<HBITMAP>,
 }
 
 impl Default for ContextMenu {
@@ -110,21 +120,11 @@ impl Default for ContextMenu {
             _ref: crate::ModuleRef::default(),
             paths: RefCell::new(Vec::new()),
             preview: RefCell::new(None),
+            preview_job: RefCell::new(None),
+            preview_eligible: Cell::new(false),
             preview_cmd: Cell::new(None),
             preview_submenu: Cell::new(HMENU::default()),
             preview_submenu_inserted: Cell::new(false),
-            tile: Cell::new(HBITMAP::default()),
-        }
-    }
-}
-
-impl Drop for ContextMenu {
-    fn drop(&mut self) {
-        let tile = self.tile.get();
-        if !tile.is_invalid() {
-            unsafe {
-                let _ = DeleteObject(tile.into());
-            }
         }
     }
 }
@@ -179,61 +179,101 @@ struct MenuThumb {
     oh: u32,
 }
 
-/// Wall-clock budget for the off-thread menu-preview decode. Normal files decode well under
-/// this; the cap exists so a slow-but-in-cap image (complex HEIC/AVIF, a 16384² file) can't
-/// delay the previewing flyout for longer than this before falling back to caption-only.
-const MENU_PREVIEW_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+/// Wall-clock budget for the off-thread menu-preview decode. A shell menu callback must feel
+/// immediate; if the cheap decoder cannot finish inside this small allowance, show the
+/// caption-only tile instead of making Explorer wait.
+const MENU_PREVIEW_BUDGET: std::time::Duration = std::time::Duration::from_millis(125);
+/// Timed-out workers finish in the background. Bound their count so repeated right-clicks on a
+/// pathological image cannot accumulate an unbounded number of decoders inside Explorer.
+const MAX_MENU_PREVIEW_WORKERS: usize = 2;
+static MENU_PREVIEW_WORKERS: AtomicUsize = AtomicUsize::new(0);
 
-/// Read + decode `path` to a scaled menu thumbnail on a DETACHED worker under a budget, so the
-/// decode never blocks explorer.exe's menu paint thread past [`MENU_PREVIEW_BUDGET`]. Mirrors
+struct MenuPreviewWorker;
+
+impl Drop for MenuPreviewWorker {
+    fn drop(&mut self) {
+        MENU_PREVIEW_WORKERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Start reading + decoding `path` to a scaled menu thumbnail on a detached worker. Mirrors
 /// `propstore::probe_budgeted` / `decode_svg`: the worker holds a `crate::ModuleRef` and inits
-/// COM (the WIC HEIC/AVIF/RAW tier needs an apartment); on timeout it finishes + exits on its
-/// own and the caller degrades to a caption-only tile. Uses ONLY the cheap in-process tiers
-/// (`decode_menu_preview` — container covers, the fast image/WIC tiers, and pure-Rust resvg
-/// for SVG; no magick/video/pdf), so the worker is fast and bundled-byte-free.
-fn decode_menu_thumb_budgeted(path: &str) -> Option<MenuThumb> {
+/// COM (the WIC HEIC/AVIF/RAW tier needs an apartment). Uses only the cheap in-process tiers
+/// (`decode_menu_preview` — container covers, fast image/WIC tiers, and pure-Rust resvg for
+/// SVG; no magick/video/pdf), so the worker is fast and bundled-byte-free.
+fn start_menu_thumb(path: &str) -> Option<std::sync::mpsc::Receiver<Option<MenuThumb>>> {
+    if MENU_PREVIEW_WORKERS
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            (active < MAX_MENU_PREVIEW_WORKERS).then_some(active + 1)
+        })
+        .is_err()
+    {
+        return None;
+    }
+
     let path = path.to_string();
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        #[allow(clippy::default_constructed_unit_structs)]
-        let _module = crate::ModuleRef::default();
-        let inited = unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
-            )
-        }
-        .is_ok();
-        let out = (|| {
-            let bytes = std::fs::read(&path).ok()?;
-            let img = crate::decode::decode_menu_preview(&bytes).ok()?;
-            let (ow, oh) =
-                crate::container::real_dims(&bytes).unwrap_or((img.width(), img.height()));
-            // Width up to PREVIEW_WIDE, height up to PREVIEW_BOX: wide images render wide,
-            // normal/tall ones stay capped at the 88px height.
-            let thumb = img.thumbnail(PREVIEW_WIDE, PREVIEW_BOX);
-            let rgba = thumb.to_rgba8();
-            let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-            Some(MenuThumb {
-                rgba: rgba.into_raw(),
-                w,
-                h,
-                ow,
-                oh,
-            })
-        })();
-        if inited {
-            unsafe { windows::Win32::System::Com::CoUninitialize() };
-        }
-        let _ = tx.send(out);
-    });
+    let worker = std::thread::Builder::new()
+        .name("st2k-menu-preview".into())
+        .spawn(move || {
+            let _worker = MenuPreviewWorker;
+            #[allow(clippy::default_constructed_unit_structs)]
+            let _module = crate::ModuleRef::default();
+            let inited = unsafe {
+                windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+                )
+            }
+            .is_ok();
+            let out = (|| {
+                let bytes = std::fs::read(&path).ok()?;
+                let img = crate::decode::decode_menu_preview(&bytes).ok()?;
+                let (ow, oh) =
+                    crate::container::real_dims(&bytes).unwrap_or((img.width(), img.height()));
+                // Width up to PREVIEW_WIDE, height up to PREVIEW_BOX: wide images render wide,
+                // normal/tall ones stay capped at the 88px height.
+                let thumb = img.thumbnail(PREVIEW_WIDE, PREVIEW_BOX);
+                let rgba = thumb.to_rgba8();
+                let (w, h) = (rgba.width() as i32, rgba.height() as i32);
+                Some(MenuThumb {
+                    rgba: rgba.into_raw(),
+                    w,
+                    h,
+                    ow,
+                    oh,
+                })
+            })();
+            if inited {
+                unsafe { windows::Win32::System::Com::CoUninitialize() };
+            }
+            let _ = tx.send(out);
+        });
+    if worker.is_err() {
+        MENU_PREVIEW_WORKERS.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
+    Some(rx)
+}
+
+/// Finish a previously-started decode, or start one on demand for diagnostic
+/// callers. The shell path normally supplies a prefetched receiver, hiding most
+/// or all of this bounded wait behind Explorer's own menu construction.
+fn decode_menu_thumb_budgeted(
+    path: &str,
+    prefetched: Option<std::sync::mpsc::Receiver<Option<MenuThumb>>>,
+) -> Option<MenuThumb> {
+    let rx = prefetched.or_else(|| start_menu_thumb(path))?;
     rx.recv_timeout(MENU_PREVIEW_BUDGET).ok().flatten()
 }
 
 /// Decode `path` into the menu-preview payload (thumbnail DIB + caption lines).
 /// Called only when a preview is about to be displayed, never while
 /// `QueryContextMenu` is constructing a mode-1 flyout.
-fn build_preview(path: &str) -> Option<Preview> {
+fn build_preview(
+    path: &str,
+    prefetched: Option<std::sync::mpsc::Receiver<Option<MenuThumb>>>,
+) -> Option<Preview> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > PREVIEW_MAX_BYTES || meta.len() > settings::max_file_size_bytes() {
         return None;
@@ -259,7 +299,7 @@ fn build_preview(path: &str) -> Option<Preview> {
     // canvas) so a 4700×800 PSD doesn't read "160 × 26 px" from its thumbnail.
     //
     // On decode failure (a corrupt or in-practice-undecodable file) fall back to a
-    // CAPTION-ONLY tile (name + size, no thumbnail): the owner-draw slot was already
+    // CAPTION-ONLY tile (name + size, no thumbnail): the preview command slot was already
     // reserved in QueryContextMenu, so a name+size row degrades more gracefully than
     // a blank gap. `null` hbm + 0×0 are handled by `paint_preview`.
     // Decode OFF explorer's menu paint thread under a wall-clock budget (the in-proc-COM rule):
@@ -267,7 +307,7 @@ fn build_preview(path: &str) -> Option<Preview> {
     // has no internal TIME bound and this would otherwise run on the menu's own paint thread.
     // The DIB (a GDI object) is created HERE from the worker's plain-RGBA result; only the
     // decode (the slow part) is offloaded. On timeout -> caption-only tile (handled below).
-    let decoded = decode_menu_thumb_budgeted(path).and_then(|t| {
+    let decoded = decode_menu_thumb_budgeted(path, prefetched).and_then(|t| {
         let hbm = unsafe { crate::dib::create_premultiplied_dib(t.w, t.h, &t.rgba).ok()? };
         Some((hbm, t.w, t.h, t.ow, t.oh))
     });
@@ -316,17 +356,28 @@ fn menu_logo() -> HBITMAP {
     HBITMAP(h as *mut core::ffi::c_void)
 }
 
-/// Attach `bmp` to the menu item at `pos` as its `hbmpItem`. Vista+ draws such
-/// bitmap items natively (keeping the popup's theme), which is why the preview tile
-/// and the brand logo both ride this instead of owner-draw.
-unsafe fn set_item_bitmap(hmenu: HMENU, pos: u32, bmp: HBITMAP) {
-    let mii = MENUITEMINFOW {
-        cbSize: core::mem::size_of::<MENUITEMINFOW>() as u32,
-        fMask: MIIM_BITMAP,
-        hbmpItem: bmp,
-        ..Default::default()
-    };
-    let _ = SetMenuItemInfoW(hmenu, pos, true, &mii);
+/// Insert the preview as an OWNER-DRAWN item — the only item kind a menu will make
+/// tall enough for an image.
+///
+/// 1.3.2 replaced this with a bitmap item (`hbmpItem`, later `MF_BITMAP`) to keep the
+/// popup themed. Verified live in Explorer, that trade does not exist: a themed popup
+/// sizes ANY bitmap item as an icon and clips the 136 px tile to a ~6 px strip — the
+/// "preview is a thin sliver" report. 32-bpp DIB, screen DDB and 24-bpp DDB all
+/// clamp identically; only an owner-drawn item is measured from what we report in
+/// `WM_MEASUREITEM`.
+///
+/// The known cost is unchanged from 1.3.1: one owner-drawn item drops the whole
+/// popup onto the classic (light) drawing path. That is why the preview stays opt-out
+/// — `MenuPreview = 0` inserts no owner-drawn item and the menu renders natively.
+unsafe fn insert_preview_item(hmenu: HMENU, pos: u32, cmd: u32) -> bool {
+    InsertMenuW(
+        hmenu,
+        pos,
+        MF_BYPOSITION | MF_OWNERDRAW,
+        cmd as usize,
+        PCWSTR::null(),
+    )
+    .is_ok()
 }
 
 /// Recursively append the verb tree into `parent`, assigning command ids in
@@ -387,17 +438,17 @@ unsafe fn build_menu_into(
 }
 
 impl ContextMenu {
-    /// Build the preview on first demand. In submenu mode this is called from the
-    /// flyout's `WM_INITMENUPOPUP`, so right-clicking never reads or decodes the
-    /// selected file unless the user opens SageThumbs. Idempotent: builds at most
-    /// once, caching into `self.preview`. Returns whether a preview is available.
+    /// Build the preview on first demand. Direct-placement decode may already be
+    /// running; submenu placement starts here and waits only for the small fixed
+    /// budget. Idempotent: builds at most once, caching into `self.preview`.
     unsafe fn ensure_preview(&self) -> bool {
         if self.preview.borrow().is_some() {
             return true;
         }
         let path = self.paths.borrow().first().cloned();
         if let Some(path) = path {
-            if let Some(p) = build_preview(&path) {
+            let prefetched = self.preview_job.borrow_mut().take();
+            if let Some(p) = build_preview(&path, prefetched) {
                 *self.preview.borrow_mut() = Some(p);
                 return true;
             }
@@ -405,41 +456,76 @@ impl ContextMenu {
         false
     }
 
-    /// Decode the selection (if not already) and compose the preview tile bitmap,
-    /// remembering it on `self` so it outlives this call and stays valid while the
-    /// menu is on screen. Returns an invalid handle when there is nothing to show,
-    /// in which case the caller simply adds no preview item.
-    ///
-    /// The tile is a BITMAP item (`hbmpItem`), not an owner-drawn one: a single
-    /// owner-drawn item drops the entire popup onto Windows' classic non-themed
-    /// path, which in dark mode painted every other item's label black on black.
-    /// See [`preview_hbitmap`].
-    unsafe fn build_tile(&self) -> HBITMAP {
+    /// Report the preview item's real pixel size. Nothing else can: a themed popup
+    /// measures every bitmap item as an icon, so this is the only channel through
+    /// which a 136 px-tall tile can claim its row. See [`insert_preview_item`].
+    unsafe fn measure_preview(&self, cmd: u32, lparam: LPARAM) -> bool {
+        let mis = &mut *(lparam.0 as *mut MEASUREITEMSTRUCT);
+        if mis.CtlType != ODT_MENU || mis.itemID != cmd {
+            return false;
+        }
+        // The mode-1 flyout decodes here, at first measure. If that fails — the file
+        // vanished or changed between QueryContextMenu and the paint — claim a
+        // minimal slot so the reserved item has a valid size and just draws blank.
         if !self.ensure_preview() {
-            return HBITMAP::default();
+            mis.itemWidth = 1;
+            mis.itemHeight = 1;
+            return true;
         }
-        let bmp = {
-            let preview = self.preview.borrow();
-            match preview.as_ref() {
-                Some(p) => preview_hbitmap(p),
-                None => HBITMAP::default(),
-            }
+        let preview = self.preview.borrow();
+        let Some(p) = preview.as_ref() else {
+            return false;
         };
-        if !bmp.is_invalid() {
-            // A second QueryContextMenu on the same object would otherwise leak the
-            // first tile.
-            let old = self.tile.replace(bmp);
-            if !old.is_invalid() {
-                let _ = DeleteObject(old.into());
-            }
-        }
-        bmp
+        let (iw, ih) = tile_size(p);
+        mis.itemWidth = iw as u32;
+        mis.itemHeight = ih as u32;
+        true
     }
 
-    /// Lazily insert the mode-1 bitmap tile when Explorer is about to open our
-    /// flyout. `hbmpItem` remains a native bitmap item, preserving themed (including
-    /// dark-mode) rendering for every other menu item.
-    unsafe fn menu_msg(&self, umsg: u32, wparam: WPARAM, _lparam: LPARAM) -> bool {
+    /// Paint the tile into the rect the menu gave us, following the hover state.
+    unsafe fn draw_preview_item(&self, cmd: u32, lparam: LPARAM) -> bool {
+        let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
+        if dis.CtlType != ODT_MENU || dis.itemID != cmd {
+            return false;
+        }
+        // Measure runs before draw and builds the preview; ensure it anyway.
+        if !self.ensure_preview() {
+            return true; // nothing to draw (rare: lazy build failed)
+        }
+        let preview = self.preview.borrow();
+        let Some(p) = preview.as_ref() else {
+            return false;
+        };
+        let (bg, fg) = if (dis.itemState.0 & ODS_SELECTED.0) != 0 {
+            (
+                GetSysColor(COLOR_HIGHLIGHT),
+                GetSysColor(COLOR_HIGHLIGHTTEXT),
+            )
+        } else {
+            menu_theme_colors()
+        };
+        paint_preview(dis.hDC, dis.rcItem, p, bg, fg);
+        true
+    }
+
+    /// Lazily insert the mode-1 preview when Explorer is about to open our flyout,
+    /// and own the preview item's measurement and painting.
+    unsafe fn menu_msg(&self, umsg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
+        // The shell always passes a valid struct pointer for the owner-draw
+        // messages, but guard anyway: a null lparam would make the casts UB.
+        if matches!(umsg, WM_MEASUREITEM | WM_DRAWITEM) {
+            let Some(cmd) = self.preview_cmd.get() else {
+                return false;
+            };
+            if lparam.0 == 0 {
+                return false;
+            }
+            return if umsg == WM_MEASUREITEM {
+                self.measure_preview(cmd, lparam)
+            } else {
+                self.draw_preview_item(cmd, lparam)
+            };
+        }
         if umsg != WM_INITMENUPOPUP || self.preview_submenu_inserted.get() {
             return false;
         }
@@ -453,23 +539,9 @@ impl ContextMenu {
         }
 
         self.preview_submenu_inserted.set(true);
-        let tile = self.build_tile();
-        if tile.is_invalid() {
+        if !insert_preview_item(submenu, 0, cmd) {
             return false;
         }
-
-        if InsertMenuW(
-            submenu,
-            0,
-            MF_BYPOSITION | MF_STRING,
-            cmd as usize,
-            &HSTRING::new(),
-        )
-        .is_err()
-        {
-            return false;
-        }
-        set_item_bitmap(submenu, 0, tile);
         let _ = InsertMenuW(submenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null());
         true
     }
@@ -547,7 +619,7 @@ unsafe fn caption_width_of(p: &Preview) -> i32 {
 #[doc(hidden)]
 pub fn render_preview_png(path: &str, out_png: &str, bg: Option<u32>) -> bool {
     unsafe {
-        let Some(p) = build_preview(path) else {
+        let Some(p) = build_preview(path, None) else {
             return false;
         };
         let text_w = caption_width_of(&p);
@@ -792,73 +864,12 @@ unsafe fn paint_preview(hdc: HDC, rc: RECT, p: &Preview, bg: u32, fg: u32) {
     SelectObject(hdc, oldf);
 }
 
-/// The composed tile's pixel size: wide enough for the thumbnail and the (capped)
-/// caption, tall enough for the image plus the two caption rows. Shared by the menu
-/// bitmap and the diagnostic PNG so the two can't drift.
+/// The preview item's pixel size: wide enough for the thumbnail and the (capped)
+/// caption, tall enough for the image plus the two caption rows. Reported to the menu
+/// from `WM_MEASUREITEM` and reused by the diagnostic PNG so the two can't drift.
 unsafe fn tile_size(p: &Preview) -> (i32, i32) {
     let text_w = caption_width_of(p);
     (p.w.max(text_w).max(72) + 12, p.h + 48)
-}
-
-/// Compose the preview tile into a 32-bpp DIB for the menu item's `hbmpItem`.
-///
-/// THIS is what keeps the flyout themed. The tile used to be an OWNER-DRAWN item,
-/// and a single owner-drawn item drops the whole popup onto Windows' classic,
-/// non-themed path: in dark mode every OTHER item's label then painted black on the
-/// dark background, which is unreadable (reported against v1.3.1). Bitmap items are
-/// drawn natively, so the popup keeps its own dark/light theme and the only pixels
-/// we own are this tile.
-///
-/// GDI's `FillRect`/`DrawTextW` never write the alpha byte, and menus alpha-blend
-/// `hbmpItem`, so a tile left at alpha 0 would render invisible. We force it opaque
-/// afterwards, which is also exactly how the owner-drawn tile looked.
-unsafe fn preview_hbitmap(p: &Preview) -> HBITMAP {
-    let (iw, ih) = tile_size(p);
-    if iw <= 0 || ih <= 0 {
-        return HBITMAP::default();
-    }
-    let mut bmi = BITMAPINFO::default();
-    bmi.bmiHeader.biSize = core::mem::size_of::<BITMAPINFOHEADER>() as u32;
-    bmi.bmiHeader.biWidth = iw;
-    bmi.bmiHeader.biHeight = -ih; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    let mut bits: *mut core::ffi::c_void = core::ptr::null_mut();
-    let Ok(dib) = CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) else {
-        return HBITMAP::default();
-    };
-    if bits.is_null() {
-        let _ = DeleteObject(dib.into());
-        return HBITMAP::default();
-    }
-    let memdc = CreateCompatibleDC(None);
-    let oldbmp = SelectObject(memdc, dib.into());
-    let (bg, fg) = menu_theme_colors();
-    paint_preview(
-        memdc,
-        RECT {
-            left: 0,
-            top: 0,
-            right: iw,
-            bottom: ih,
-        },
-        p,
-        bg,
-        fg,
-    );
-    let _ = GdiFlush();
-    SelectObject(memdc, oldbmp);
-    let _ = DeleteDC(memdc);
-
-    // Checked math: `(iw * ih) as usize` would multiply as i32 first and could wrap
-    // into an undersized length for the slice below (unsound).
-    if let Some(px) = (iw as usize).checked_mul(ih as usize) {
-        let buf = core::slice::from_raw_parts_mut(bits as *mut u8, px * 4);
-        for i in 0..px {
-            buf[i * 4 + 3] = 255;
-        }
-    }
-    dib
 }
 
 /// Open the file with its default app (the preview item's click action).
@@ -886,6 +897,18 @@ impl IShellExtInit_Impl for ContextMenu_Impl {
         safety::guard(|| {
             let obj = pdtobj.ok()?;
             let paths = unsafe { hdrop_paths(obj)? };
+            let preview_mode = settings::menu_preview();
+            let eligible = settings::menu_enabled()
+                && preview_mode != 0
+                && paths.len() == 1
+                && verbs::is_image(&paths[0])
+                && preview_size_ok(&paths[0]);
+            self.preview_eligible.set(eligible);
+            *self.preview_job.borrow_mut() = if eligible && preview_mode == 2 {
+                start_menu_thumb(&paths[0])
+            } else {
+                None
+            };
             *self.paths.borrow_mut() = paths;
             Ok(())
         })
@@ -950,10 +973,11 @@ impl IContextMenu_Impl for ContextMenu_Impl {
             let mode = settings::menu_preview();
             // For a 1-file selection, `any_image` already == is_image(paths[0]).
             let single = paths.len() == 1 && any_image;
-            // Reserve the bitmap preview slot when one is wanted and the file passes
-            // the CHEAP metadata size gate. Mode 2 builds the tile now; mode 1 waits
-            // for its SageThumbs flyout's WM_INITMENUPOPUP before decoding.
-            if mode != 0 && single && avail > leaves_n && preview_size_ok(&paths[0]) {
+            // Reserve the bitmap preview slot when one is wanted and the file passed
+            // the cheap initialization-time metadata gate. Decoding has already
+            // started on a bounded worker for mode 2 (prefetched during Initialize);
+            // mode 1 remains lazy until Explorer opens the SageThumbs flyout.
+            if mode != 0 && single && avail > leaves_n && self.preview_eligible.get() {
                 // The preview occupies the slot just past the last leaf;
                 // id_for(Preview) encapsulates that "== leaves.len()" convention.
                 self.preview_cmd
@@ -972,25 +996,12 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                 // menu can't double-list "SageThumbs 2K" — see AppxManifest.xml / register.rs.)
                 let mut pos = indexmenu;
 
-                // 1) Preview directly on the main menu (mode 2), topmost. A BITMAP
-                //    item (`hbmpItem`), never owner-drawn: Windows draws bitmap items
-                //    natively, so this popup keeps its dark/light theme. (Owner-draw
-                //    used to force the whole popup onto the classic non-themed path,
-                //    which painted every other label black on a dark menu.)
+                // 1) Preview directly on the main menu (mode 2), topmost. Owner-drawn
+                //    — the only item kind a popup will size to an image; see
+                //    `insert_preview_item` for the bitmap-item attempts that don't.
                 if let Some(cmd) = self.preview_cmd.get() {
-                    if mode == 2 {
-                        let tile = self.build_tile();
-                        if !tile.is_invalid() {
-                            let _ = InsertMenuW(
-                                hmenu,
-                                pos,
-                                MF_BYPOSITION | MF_STRING,
-                                cmd as usize,
-                                &HSTRING::new(),
-                            );
-                            set_item_bitmap(hmenu, pos, tile);
-                            pos += 1;
-                        }
+                    if mode == 2 && insert_preview_item(hmenu, pos, cmd) {
+                        pos += 1;
                     }
                 }
 
@@ -1225,15 +1236,15 @@ impl IContextMenu3_Impl for ContextMenu_Impl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::Graphics::Gdi::{GetObjectW, BITMAP};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DestroyMenu, GetMenuItemInfoW, MFT_OWNERDRAW, MIIM_FTYPE, MIIM_ID,
+    };
 
-    /// The preview tile must compose into a real 32-bpp bitmap at the size
-    /// [`tile_size`] reports. It is handed to the menu as `hbmpItem`; an invalid or
-    /// mis-sized bitmap is how the tile would silently vanish from the flyout.
-    /// Uses the caption-only shape (no decoded thumbnail), which is also the
-    /// real fallback when a file passes the size gate but fails to decode.
+    /// The preview slot must have a real, image-sized rect to claim. Uses the
+    /// caption-only shape (no decoded thumbnail), which is also the real fallback
+    /// when a file passes the size gate but fails to decode.
     #[test]
-    fn preview_tile_composes_a_32bpp_bitmap() {
+    fn preview_measures_a_real_tile_rect() {
         let p = Preview {
             hbm: HBITMAP::default(),
             w: 0,
@@ -1244,27 +1255,42 @@ mod tests {
         unsafe {
             let (iw, ih) = tile_size(&p);
             assert!(iw > 0 && ih > 0, "tile must have a positive size");
-            let bmp = preview_hbitmap(&p);
-            assert!(!bmp.is_invalid(), "tile bitmap must be created");
+            assert!(
+                ih >= 48,
+                "even a caption-only tile needs both caption rows ({ih} px)"
+            );
+        }
+    }
 
-            let mut bm = BITMAP::default();
-            let got = GetObjectW(
-                bmp.into(),
-                core::mem::size_of::<BITMAP>() as i32,
-                Some(&mut bm as *mut _ as *mut core::ffi::c_void),
-            );
-            assert!(got > 0, "GetObjectW must describe the bitmap");
-            assert_eq!(
-                (bm.bmWidth, bm.bmHeight),
-                (iw, ih),
-                "tile size must match tile_size()"
-            );
-            assert_eq!(
-                bm.bmBitsPixel, 32,
-                "menus alpha-blend hbmpItem: must be 32-bpp"
+    /// The preview MUST be owner-drawn. Every bitmap item form — `hbmpItem` on a text
+    /// item, `MF_BITMAP`, 32-bpp DIB, screen DDB, 24-bpp DDB — is measured as an ICON
+    /// by a themed popup and clipped to a ~6 px strip (verified live in Explorer; the
+    /// 1.3.2-1.3.6 "preview is a sliver" regression). Only `WM_MEASUREITEM` can claim
+    /// the height, and only an owner-drawn item gets one.
+    #[test]
+    fn preview_item_is_owner_drawn() {
+        unsafe {
+            let menu = CreatePopupMenu().expect("CreatePopupMenu");
+            assert!(
+                insert_preview_item(menu, 0, 42),
+                "preview item insertion must succeed"
             );
 
-            let _ = DeleteObject(bmp.into());
+            let mut item = MENUITEMINFOW {
+                cbSize: core::mem::size_of::<MENUITEMINFOW>() as u32,
+                fMask: MIIM_FTYPE | MIIM_ID,
+                ..Default::default()
+            };
+            GetMenuItemInfoW(menu, 0, true, &mut item).expect("GetMenuItemInfoW");
+            assert_eq!(item.wID, 42, "preview command id must be retained");
+            assert!(
+                item.fType.contains(MFT_OWNERDRAW),
+                "the preview must be OWNER-DRAWN ({:?}); any bitmap item form is \
+                 measured as an icon and clipped to a sliver",
+                item.fType
+            );
+
+            let _ = DestroyMenu(menu);
         }
     }
 }
