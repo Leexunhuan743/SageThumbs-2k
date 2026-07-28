@@ -451,11 +451,28 @@ fn colr_box_profile_extraction() {
         colr_profile(&[&b"rICC"[..], &[9, 9]].concat()),
         Some(vec![9, 9])
     );
-    // CICP nclx Display-P3 (primaries = 12) → a non-empty built-in profile.
+    // CICP nclx Display-P3 (primaries = 12, sRGB transfer = 13) → built-in profile.
     assert!(
         colr_profile(&[b'n', b'c', b'l', b'x', 0, 12, 0, 13, 0, 1, 0])
             .is_some_and(|v| !v.is_empty()),
         "nclx Display-P3 maps to a profile"
+    );
+    // P3 primaries alone are insufficient: a different transfer curve must never be
+    // interpreted through the sRGB curve baked into the Display-P3 ICC profile.
+    assert_eq!(
+        colr_profile(&[b'n', b'c', b'l', b'x', 0, 12, 0, 1, 0, 1, 0]),
+        None,
+        "P3 primaries with BT.709 transfer are not Display P3"
+    );
+    assert_eq!(
+        colr_profile(&[b'n', b'c', b'l', b'x', 0, 12, 0, 16, 0, 9, 0x80]),
+        None,
+        "P3 primaries with PQ transfer are not Display P3"
+    );
+    assert_eq!(
+        colr_profile(&[b'n', b'c', b'l', b'x', 0, 12]),
+        None,
+        "truncated nclx is ignored"
     );
     // nclx BT.709/sRGB (primaries = 1) is a no-op; junk / empty → None.
     assert_eq!(

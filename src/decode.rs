@@ -1636,11 +1636,16 @@ fn colr_profile(body: &[u8]) -> Option<Vec<u8>> {
             (!icc.is_empty() && icc.len() <= 4 * 1024 * 1024).then(|| icc.to_vec())
         }
         b"nclx" => {
-            // colour_primaries (u16), then transfer + matrix we don't need here.
+            // WIC has already used matrix_coefficients/full_range_flag while converting the
+            // encoded YCbCr frame to RGBA.  The ICC we synthesize describes those RGB values,
+            // so its primaries AND transfer curve must match the nclx signal.  Display P3 uses
+            // the sRGB transfer curve; treating P3 primaries paired with BT.709, PQ, HLG, etc.
+            // as Display P3 would apply the wrong tone curve and visibly skew the thumbnail.
             let primaries = u16::from_be_bytes(body.get(4..6)?.try_into().ok()?);
-            match primaries {
-                12 => moxcms::ColorProfile::new_display_p3().encode().ok(), // SMPTE EG 432-1
-                _ => None, // 1 = BT.709/sRGB (no-op); others left untouched
+            let transfer = u16::from_be_bytes(body.get(6..8)?.try_into().ok()?);
+            match (primaries, transfer) {
+                (12, 13) => moxcms::ColorProfile::new_display_p3().encode().ok(),
+                _ => None, // unsupported tuple: leave WIC's RGBA untouched, never guess
             }
         }
         _ => None,
