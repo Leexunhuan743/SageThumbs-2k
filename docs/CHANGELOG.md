@@ -2,6 +2,15 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
+## 1.3.8
+
+### Fixed
+
+- **HEIC and AVIF thumbnails keep their declared colors.** Files that pair Display-P3
+  primaries with a non-sRGB transfer curve are no longer forced through an incompatible
+  Display-P3 profile, which could produce a visible color cast. Embedded ICC profiles and
+  standard iPhone Display-P3 images continue through the normal color-managed path.
+
 ## 1.3.7
 
 ### Fixed
