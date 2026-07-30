@@ -46,6 +46,9 @@ const IDM_CAPTURE: usize = 101;
 const IDM_SETTINGS: usize = 102;
 const IDM_QUIT: usize = 103;
 const IDM_HIDE: usize = 104;
+/// "Copy text on screen (OCR)" — the same capture-overlay OCR mode the custom hotkey can be
+/// bound to, reachable with a click so it needs no hotkey set up first.
+const IDM_OCR: usize = 105;
 /// Periodic update check (only this already-resident process runs it — no scheduled task).
 const UPDATE_TIMER_ID: usize = 9;
 /// Re-attempt every 6h; `update::lazy_check_worker` throttles the actual network hit to 1/day.
@@ -83,10 +86,12 @@ pub(super) const CLASS: PCWSTR = w!("SageThumbs2KShotDaemon");
 /// Spawn a fresh instance of ourselves in the requested mode (capture overlay, or
 /// the Settings window). A separate process keeps the tray alive across captures.
 fn spawn(arg: Option<&str>) {
-    match arg {
+    // Nothing to clean up if it doesn't start (no temp file changes hands here), so the
+    // success flag is deliberately dropped.
+    let _ = match arg {
         Some(a) => super::spawn_self(&[a]),
         None => super::spawn_self(&[]),
-    }
+    };
 }
 
 pub(crate) unsafe fn run_daemon(hinst: HINSTANCE) {
@@ -304,6 +309,7 @@ unsafe fn remove_tray_icon(hwnd: HWND) {
 unsafe fn show_tray_menu(hwnd: HWND) {
     let Ok(menu) = CreatePopupMenu() else { return };
     let _ = AppendMenuW(menu, MF_STRING, IDM_CAPTURE, w!("Take Screenshot"));
+    let _ = AppendMenuW(menu, MF_STRING, IDM_OCR, w!("Copy text on screen (OCR)"));
     let _ = AppendMenuW(menu, MF_STRING, IDM_SETTINGS, w!("Settings"));
     let _ = AppendMenuW(menu, MF_STRING, IDM_HIDE, w!("Hide tray icon"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -480,6 +486,7 @@ extern "system" fn daemon_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             WM_COMMAND => {
                 match wparam.0 & 0xffff {
                     IDM_CAPTURE => spawn(Some("--screenshot")),
+                    IDM_OCR => spawn(Some("--screenshot-ocr")),
                     IDM_SETTINGS => spawn(None),
                     IDM_HIDE => {
                         // Hide the tray icon but keep the hotkey running (matches the

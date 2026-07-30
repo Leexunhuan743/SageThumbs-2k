@@ -5,18 +5,13 @@
 use core::cell::RefCell;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::dark::dark_ctlcolor;
-use crate::win::{
-    ctl, gui_font, run_dialog, set_clipboard_text, t, wide, BUTTON, EDIT, IDCANCEL, IDOK,
-};
+use crate::win::{ctl, run_dialog, t, wide, BUTTON, EDIT, IDOK, ID_RESULT_COPY};
 
 const ID_EDIT: i32 = 100;
-const ID_COPY: i32 = 101;
 
 thread_local! {
     /// The metadata text to show — set just before `run_dialog`, read in WM_CREATE.
@@ -42,18 +37,19 @@ pub fn run_image_info(path: &str) {
 }
 
 unsafe fn build(hwnd: HWND, hinst: HINSTANCE) {
-    // Lay out against the REAL client area (in design px). `run_dialog`'s w/h size the whole
-    // WINDOW, so the client is narrower/shorter by the frame + caption; hardcoding the design
-    // coords clipped the Copy/Close row below the client bottom. GetClientRect is physical
-    // px → divide back to 96-DPI design px, because `ctl` re-scales design px to DPI.
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    let dpi = GetDpiForWindow(hwnd).max(96) as i32;
-    let cw = rc.right * 96 / dpi; // client width, design px
-    let ch = rc.bottom * 96 / dpi; // client height, design px
-    let m = 10;
-    let (btn_w, btn_h, gap) = (82, 28, 8);
-    let btn_y = ch - m - btn_h;
+    // Shared with the Upload-links and OCR result windows — see `win::result_layout` for why
+    // this has to come off the real client rect rather than the design size.
+    let crate::win::ResultLayout {
+        cw,
+        m,
+        btn_w,
+        btn_h,
+        gap,
+        btn_y,
+        close_x,
+        copy_x,
+        ..
+    } = crate::win::result_layout(hwnd);
     let edit_h = (btn_y - gap - m).max(48);
 
     // Read-only, word-wrapped, vertically scrollable — the verbose dump can be long.
@@ -77,21 +73,14 @@ unsafe fn build(hwnd: HWND, hinst: HINSTANCE) {
     if crate::dark::is_dark() {
         crate::dark::dark_control(edit, w!("DarkMode_Explorer"));
     }
-    // Edit controls want CRLF line breaks (a lone LF renders as a box).
-    let text = INFO.with(|i| i.borrow().replace('\n', "\r\n"));
+    // Edit controls want CRLF line breaks (a lone LF renders as a box). `to_crlf` rather than a
+    // one-way `\n` -> `\r\n` replace: a line that is ALREADY CRLF (any EXIF/XMP value carrying
+    // its own line breaks) would come out as `\r\r\n` and show a stray box anyway.
+    let text = INFO.with(|i| sagethumbs2k_core::clipboard::to_crlf(&i.borrow()).into_owned());
     let w = wide(&text);
     let _ = SetWindowTextW(edit, PCWSTR(w.as_ptr()));
-    let f = gui_font();
-    SendMessageW(
-        edit,
-        WM_SETFONT,
-        Some(WPARAM(f.0 as usize)),
-        Some(LPARAM(1)),
-    );
 
     // Buttons bottom-right, inside the client (Close rightmost, Copy to its left).
-    let close_x = cw - m - btn_w;
-    let copy_x = close_x - gap - btn_w;
     ctl(
         hwnd,
         BUTTON,
@@ -101,7 +90,7 @@ unsafe fn build(hwnd: HWND, hinst: HINSTANCE) {
         btn_y,
         btn_w,
         btn_h,
-        ID_COPY,
+        ID_RESULT_COPY,
         hinst,
     );
     ctl(
@@ -118,39 +107,20 @@ unsafe fn build(hwnd: HWND, hinst: HINSTANCE) {
     );
 }
 
+/// What the Copy button puts on the clipboard: the whole stored dump.
+unsafe fn copy_source(_hwnd: HWND) -> String {
+    INFO.with(|i| i.borrow().clone())
+}
+
 extern "system" fn info_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         if let Some(r) = dark_ctlcolor(msg, wparam) {
             return r;
         }
-        match msg {
-            WM_CREATE => {
-                let hinst: HINSTANCE = GetModuleHandleW(None).unwrap().into();
-                build(hwnd, hinst);
-                LRESULT(0)
-            }
-            WM_COMMAND => {
-                let id = (wparam.0 & 0xFFFF) as i32;
-                match id {
-                    ID_COPY => INFO.with(|i| {
-                        let _ = set_clipboard_text(&i.borrow());
-                    }),
-                    IDOK | IDCANCEL => {
-                        let _ = DestroyWindow(hwnd);
-                    }
-                    _ => {}
-                }
-                LRESULT(0)
-            }
-            WM_CLOSE => {
-                let _ = DestroyWindow(hwnd);
-                LRESULT(0)
-            }
-            WM_DESTROY => {
-                PostQuitMessage(0); // let run_dialog's pump_until_quit exit
-                LRESULT(0)
-            }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        // Create / Copy / close / quit are identical across the three result dialogs.
+        if let Some(r) = crate::win::result_wndproc(hwnd, msg, wparam, build, copy_source) {
+            return r;
         }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 }

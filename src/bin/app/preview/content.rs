@@ -234,27 +234,243 @@ fn is_binary(bytes: &[u8]) -> bool {
         .any(|(a, b)| *a == 0 && *b == 0)
 }
 
-/// Decode bytes to a String: honor a UTF-16 LE/BE or UTF-8 BOM, otherwise UTF-8 lossy (covers
-/// the overwhelming majority of code/text; other single-byte encodings are a later refinement).
+/// Decode bytes to a String: honor a UTF-16 LE/BE or UTF-8 BOM, sniff BOM-less UTF-16, take
+/// strict UTF-8 when it validates, and otherwise fall back to the legacy codepage tiers in
+/// [`decode_legacy`].
+///
+/// The UTF-8-lossy-everything shortcut this replaced turned every non-Unicode CJK file into a
+/// solid wall of U+FFFD: GBK/GB18030 is still a Chinese national standard, and Shift-JIS,
+/// Big5 and EUC-KR are all over real-world `.txt`/`.csv`/`.srt` files. Those users saw
+/// nothing but replacement characters.
 fn decode_text(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(rest).into_owned();
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let u: Vec<u16> = rest
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        return String::from_utf16_lossy(&u);
+        return utf16_le(rest);
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let u: Vec<u16> = rest
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
-            .collect();
-        return String::from_utf16_lossy(&u);
+        return utf16_be(rest);
     }
-    String::from_utf8_lossy(bytes).into_owned()
+    // BOM-less UTF-16. Notepad writes a BOM but plenty of tools (and Windows' own older
+    // exports) don't; without this such a file decodes as interleaved-NUL garbage. ASCII-range
+    // UTF-16 text never trips `is_binary` (it has no two CONSECUTIVE NULs), so it reaches here.
+    match sniff_utf16(bytes) {
+        Some(true) => return utf16_le(bytes),
+        Some(false) => return utf16_be(bytes),
+        None => {}
+    }
+    // Strict, not lossy: valid UTF-8 is the overwhelmingly common case and must win outright,
+    // but a FAILED validation is now real evidence that this is a legacy-codepage file rather
+    // than something to paper over with U+FFFD.
+    match core::str::from_utf8(bytes) {
+        Ok(s) => s.to_owned(),
+        Err(_) => decode_legacy(bytes),
+    }
+}
+
+/// Decode `bytes` as UTF-16LE (odd trailing byte dropped).
+fn utf16_le(bytes: &[u8]) -> String {
+    let u: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&u)
+}
+
+/// Decode `bytes` as UTF-16BE (odd trailing byte dropped).
+fn utf16_be(bytes: &[u8]) -> String {
+    let u: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&u)
+}
+
+/// BOM-less UTF-16 sniff over the first 4 KB: `Some(true)` = LE, `Some(false)` = BE, `None` =
+/// not UTF-16. Looks for the giveaway pattern of ASCII-range text — a NUL in a consistent
+/// parity slot for most 2-byte units — and demands a strong majority so a legacy-codepage file
+/// (which has essentially no NULs at all) can never be mistaken for UTF-16.
+fn sniff_utf16(bytes: &[u8]) -> Option<bool> {
+    let head = &bytes[..bytes.len().min(4096)];
+    if head.len() < 16 {
+        return None;
+    }
+    let pairs = head.len() / 2;
+    let (mut hi_nul, mut lo_nul) = (0usize, 0usize);
+    for c in head.chunks_exact(2) {
+        // c[1] is the high byte in LE: NUL there means an ASCII-range char stored little-endian.
+        if c[1] == 0 && c[0] != 0 {
+            hi_nul += 1;
+        }
+        if c[0] == 0 && c[1] != 0 {
+            lo_nul += 1;
+        }
+    }
+    // 60% of units carrying the same-parity NUL is far above anything 8-bit text produces.
+    let thresh = pairs * 3 / 5;
+    match (hi_nul > thresh, lo_nul > thresh) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    }
+}
+
+/// Decode non-UTF-8 bytes via Windows' in-box codepage tables — zero bundled bytes, since every
+/// one of these ships with the OS.
+///
+/// The double-byte codepages are tried FIRST, and only they compete on score. That ordering is
+/// the whole trick: a single-byte codepage like Windows-1252 maps almost every possible byte, so
+/// "1252 validated" is no evidence at all, and letting it into the contest means Latin-1
+/// mojibake (`ÖÐÄÄ`) beats the correct `中文` on any per-character scoring you care to invent. A
+/// DBCS codepage validating the WHOLE buffer under `MB_ERR_INVALID_CHARS` is real evidence,
+/// because it requires every high byte to form a well-formed lead/trail pair — an ordinary
+/// Latin-1 file with isolated accented characters fails that immediately.
+///
+/// Ties fall to the system ANSI codepage when it is itself DBCS, which is the case that matters
+/// most: a Chinese/Japanese/Korean user opening a local file on their own localized Windows,
+/// where the ACP already IS 936/932/949.
+///
+/// Known limit: pure-ideograph text with no kana or hangul is genuinely ambiguous between GBK,
+/// Shift-JIS and EUC-KR — the same bytes are valid in all three. Real sentences carry kana or
+/// hangul and [`cjk_score`] keys off those, but a short hanzi-only string on a non-CJK machine
+/// can still land on the wrong one. Dedicated detectors have the same problem without
+/// frequency tables, which are more weight than this is worth.
+fn decode_legacy(bytes: &[u8]) -> String {
+    use windows::Win32::Globalization::GetACP;
+
+    let acp = unsafe { GetACP() };
+    // ACP first when it's double-byte, so it wins ties; then the rest, minus any duplicate.
+    let mut candidates: Vec<u32> = Vec::with_capacity(DBCS_CODEPAGES.len() + 1);
+    if is_dbcs(acp) {
+        candidates.push(acp);
+    }
+    candidates.extend(DBCS_CODEPAGES.iter().copied().filter(|cp| *cp != acp));
+
+    let mut best: Option<(i64, String)> = None;
+    for cp in candidates {
+        let Some(s) = decode_codepage(bytes, cp, true) else {
+            continue;
+        };
+        let score = cjk_score(&s);
+        if score <= 0 {
+            continue; // validated, but the result doesn't look like CJK text
+        }
+        // Strictly-greater, so a tie goes to whichever was scored FIRST.
+        if best.as_ref().is_none_or(|(b, _)| score > *b) {
+            best = Some((score, s));
+        }
+    }
+    if let Some((_, s)) = best {
+        return s;
+    }
+
+    // No double-byte reading held up. Fall back to the system codepage — correct for the
+    // single-byte locales (Cyrillic, Greek, Turkish, Vietnamese, Arabic, Thai) where a user's
+    // own files match their own ACP — and finally to a lossy 1252, which maps every byte and so
+    // always yields something readable instead of U+FFFD soup.
+    decode_codepage(bytes, acp, true)
+        .or_else(|| decode_codepage(bytes, acp, false))
+        .or_else(|| decode_codepage(bytes, 1252, false))
+        .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// The double-byte codepages worth testing, in preference order. These are the encodings
+/// real-world text files in the affected markets are actually saved in.
+const DBCS_CODEPAGES: &[u32] = &[
+    936, // GBK / GB18030 — Simplified Chinese
+    932, // Shift-JIS — Japanese
+    949, // EUC-KR / Unified Hangul — Korean
+    950, // Big5 — Traditional Chinese
+];
+
+/// Is `cp` one of the double-byte codepages we test?
+fn is_dbcs(cp: u32) -> bool {
+    DBCS_CODEPAGES.contains(&cp)
+}
+
+/// Decode `bytes` with Windows codepage `cp`. With `strict`, an invalid byte sequence for that
+/// codepage makes this return `None` (that's `MB_ERR_INVALID_CHARS`); without it, undecodable
+/// bytes become the codepage's default char.
+fn decode_codepage(bytes: &[u8], cp: u32, strict: bool) -> Option<String> {
+    use windows::Win32::Globalization::{MultiByteToWideChar, MB_ERR_INVALID_CHARS};
+
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    let flags = if strict {
+        MB_ERR_INVALID_CHARS
+    } else {
+        Default::default()
+    };
+    let n = unsafe { MultiByteToWideChar(cp, flags, bytes, None) };
+    if n <= 0 {
+        return None;
+    }
+    let mut buf = vec![0u16; n as usize];
+    let written = unsafe { MultiByteToWideChar(cp, flags, bytes, Some(&mut buf)) };
+    if written <= 0 {
+        return None;
+    }
+    buf.truncate(written as usize);
+    Some(String::from_utf16_lossy(&buf))
+}
+
+/// How much does this decode look like genuine CJK text? `0` means "reject this codepage".
+///
+/// Only non-ASCII characters are judged — the ASCII in a source file or a CSV decodes
+/// identically under every candidate, so counting it would just dilute the signal.
+///
+/// The discrimination comes from SCRIPT DOMINANCE, not from per-character weights. A per-char
+/// bonus for kana/hangul reads well and is wrong: decoding Chinese GBK bytes through EUC-KR
+/// yields a roughly 50/50 hangul-and-hanja mixture, and enough of those small bonuses beat the
+/// correct all-ideograph reading outright (it did, until this was rewritten). What actually
+/// separates the languages is the SHAPE of the mixture — real Korean is overwhelmingly hangul,
+/// real Japanese always carries a solid fraction of kana, and real Chinese has neither — so the
+/// bonus is awarded once, on the whole string, only when a script genuinely dominates.
+fn cjk_score(s: &str) -> i64 {
+    // Letters are the script evidence; CJK punctuation is shared by all of them and so is
+    // counted as plausible but kept out of the fractions.
+    let (mut ideo, mut kana, mut hangul, mut punct, mut bad, mut non_ascii) = (0i64, 0, 0, 0, 0, 0);
+    for ch in s.chars().take(20_000) {
+        let c = ch as u32;
+        if c < 0x80 {
+            continue;
+        }
+        non_ascii += 1;
+        match c {
+            0x3040..=0x30FF => kana += 1,
+            0xAC00..=0xD7A3 => hangul += 1,
+            0x4E00..=0x9FFF => ideo += 1,
+            0x3000..=0x303F | 0xFF01..=0xFF60 | 0xFFE0..=0xFFE6 => punct += 1,
+            // Halfwidth katakana is DELIBERATELY not kana: bytes 0xA1–0xDF decode to it under
+            // Shift-JIS unconditionally, so any high-byte run validates as a katakana string and
+            // would otherwise hijack every Chinese and Korean file on the machine.
+            0xFF61..=0xFF9F => bad += 1,
+            // Private use, specials, rare extension and compatibility blocks: what a WRONG
+            // table produces.
+            0xE000..=0xF8FF | 0xFFF0..=0xFFFF => bad += 3,
+            0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x2_0000..=0x3_FFFF => bad += 2,
+            _ => bad += 1,
+        }
+    }
+    if non_ascii == 0 {
+        return 0; // pure ASCII — a double-byte reading adds nothing over plain UTF-8
+    }
+    let good = ideo + kana + hangul + punct;
+    // Demand a strong majority of the non-ASCII content be plausible CJK, so an ordinary
+    // Latin-1 file that happens to validate can't be dragged into a CJK reading.
+    if good * 4 < non_ascii * 3 {
+        return 0;
+    }
+    let letters = ideo + kana + hangul;
+    // Dominance thresholds: Korean prose is almost entirely hangul (a wrong reading of Chinese
+    // lands near half), and any real Japanese sentence carries particles and okurigana in kana.
+    // Chinese matches neither and wins on the base score alone, plus the ACP/list ordering that
+    // breaks its tie with Big5.
+    let dominant = letters > 0 && ((hangul * 20 >= letters * 13) || (kana * 20 >= letters * 3));
+    let bonus = if dominant { 1_000 } else { 0 };
+    (good - bad + bonus).max(1)
 }
 
 /// Cap any single line at `max` chars (so one minified/no-newline line can't blow up layout).
@@ -570,4 +786,106 @@ pub(super) unsafe fn paint_image(
     );
     SelectObject(memdc, old);
     let _ = DeleteDC(memdc);
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+
+    /// True if `s` contains a common CJK ideograph — the marker of a decode gone wrong when the
+    /// input was Latin text.
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| matches!(c as u32, 0x4E00..=0x9FFF))
+    }
+
+    #[test]
+    fn utf8_wins_outright() {
+        assert_eq!(decode_text("hello — 世界 🌏".as_bytes()), "hello — 世界 🌏");
+        assert_eq!(decode_text(b"plain ascii\n"), "plain ascii\n");
+        assert_eq!(decode_text(b""), "");
+    }
+
+    #[test]
+    fn strips_boms() {
+        let mut b = vec![0xEF, 0xBB, 0xBF];
+        b.extend_from_slice("héllo".as_bytes());
+        assert_eq!(decode_text(&b), "héllo");
+
+        let mut le = vec![0xFF, 0xFE];
+        le.extend("hi".encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(decode_text(&le), "hi");
+
+        let mut be = vec![0xFE, 0xFF];
+        be.extend("hi".encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(decode_text(&be), "hi");
+    }
+
+    #[test]
+    fn bomless_utf16_is_sniffed() {
+        let text = "the quick brown fox jumps over the lazy dog";
+        let le: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode_text(&le), text);
+        let be: Vec<u8> = text.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        assert_eq!(decode_text(&be), text);
+    }
+
+    /// GBK is still a Chinese national standard; before this these bytes were a wall of U+FFFD.
+    #[test]
+    fn gbk_chinese_decodes() {
+        const GBK: &[u8] = &[
+            0xC4, 0xE3, 0xBA, 0xC3, 0xA3, 0xAC, 0xCA, 0xC0, 0xBD, 0xE7, 0xA3, 0xA1, 0xD5, 0xE2,
+            0xCA, 0xC7, 0xD2, 0xBB, 0xB8, 0xF6, 0xB2, 0xE2, 0xCA, 0xD4, 0xCE, 0xC4, 0xBC, 0xFE,
+            0xA1, 0xA3,
+        ];
+        assert_eq!(decode_text(GBK), "你好，世界！这是一个测试文件。");
+    }
+
+    /// Kana is the signal that keeps Shift-JIS from being read as GBK.
+    #[test]
+    fn shift_jis_japanese_decodes() {
+        const SJIS: &[u8] = &[
+            0x82, 0xB1, 0x82, 0xEA, 0x82, 0xCD, 0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, 0x82, 0xCC,
+            0x83, 0x65, 0x83, 0x4C, 0x83, 0x58, 0x83, 0x67, 0x82, 0xC5, 0x82, 0xB7, 0x81, 0x42,
+        ];
+        assert_eq!(decode_text(SJIS), "これは日本語のテキストです。");
+    }
+
+    /// Hangul is the equivalent signal for EUC-KR.
+    #[test]
+    fn euc_kr_korean_decodes() {
+        const EUCKR: &[u8] = &[
+            0xBE, 0xC8, 0xB3, 0xE7, 0xC7, 0xCF, 0xBC, 0xBC, 0xBF, 0xE4, 0x20, 0xC7, 0xD1, 0xB1,
+            0xB9, 0xBE, 0xEE, 0x20, 0xC5, 0xD8, 0xBD, 0xBA, 0xC6, 0xAE, 0xC0, 0xD4, 0xB4, 0xCF,
+            0xB4, 0xD9, 0x2E,
+        ];
+        assert_eq!(decode_text(EUCKR), "안녕하세요 한국어 텍스트입니다.");
+    }
+
+    /// The regression that matters in the other direction: ordinary accented Latin text must
+    /// never be dragged into a CJK reading just because some table accepted the bytes.
+    #[test]
+    fn latin1_is_not_mangled_into_cjk() {
+        const L1: &[u8] = &[
+            0x43, 0x61, 0x66, 0xE9, 0x20, 0x72, 0xE9, 0x73, 0x75, 0x6D, 0xE9, 0x20, 0x6E, 0x61,
+            0xEF, 0x76, 0x65, 0x20, 0x73, 0x65, 0xF1, 0x6F, 0x72,
+        ];
+        let out = decode_text(L1);
+        assert!(!has_cjk(&out), "Latin-1 text decoded as CJK: {out:?}");
+        assert!(out.starts_with("Caf"), "unexpected decode: {out:?}");
+    }
+
+    /// A pure-ASCII byte stream must come back byte-identical whatever the machine's ACP is.
+    #[test]
+    fn ascii_is_never_reinterpreted() {
+        let src = "fn main() { println!(\"hi\"); }\n";
+        assert_eq!(decode_text(src.as_bytes()), src);
+    }
+
+    #[test]
+    fn cjk_score_rejects_halfwidth_katakana_soup() {
+        // What Shift-JIS makes of arbitrary high bytes — must not qualify as CJK text.
+        assert_eq!(cjk_score("ﾖﾐﾄﾄﾊﾟ"), 0);
+        // Real Japanese does.
+        assert!(cjk_score("これは日本語です") > 0);
+    }
 }

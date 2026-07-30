@@ -243,14 +243,14 @@ plus these viewer-only extras:
 - **Font specimens** for `.ttf`/`.otf`/`.ttc`: the font's own name, a pangram at several sizes, and
   an A–Z / a–z / 0–9 glyph sheet, all rendered in the font itself (via the OS text stack).
 - **Archive listings** for `.zip`/`.7z`/`.rar` (and .jar/.apk/…): a sorted file tree with sizes,
-  read from the central directory / headers only — nothing is extracted.
+  read from the central directory / headers only; nothing is extracted.
 - **Local HTML rendering** (opt-in, off by default) in an embedded **locked-down** WebView2:
   JavaScript disabled and **every non-`file://` request blocked**, so a page cannot phone home or
   load remote trackers. A separate opt-in can live-load a `.url` shortcut's real page in a throwaway
   session; left off, a `.url` shows its target address as text. Adds next to nothing to the app size
   and never touches the shell-extension DLL (the browser engine ships with Windows 11).
 - **Rendered Markdown**, GitHub-style: headings, lists, block quotes, fenced code, and inline
-  **bold**/*italic*/`code`/~~strike~~ plus **clickable links** (http/https/mailto only) — including
+  **bold**/*italic*/`code`/~~strike~~ plus **clickable links** (http/https/mailto only), including
   **bare URLs** typed straight into the text (`https://…` / `www.…`), GitHub-style, without needing
   `[text](url)`. URLs inside code stay literal. README
   "hero" sections written in raw HTML (centered banner + title + tagline + badges) render properly,
@@ -270,14 +270,27 @@ plus these viewer-only extras:
   tracebacks) display beneath their cells.
 - **Syntax-highlighted** text/code with **line numbers**, editor-style, for the common languages
   (Rust, Python, JS/TS, JSON, Java, Go, C/C++, C#, Ruby, PHP, Lua, Kotlin, Swift, shell, HTML/CSS,
-  SQL, YAML/TOML/ini and more — comments, strings, numbers, keywords, and JSON/object keys in their
+  SQL, YAML/TOML/ini and more: comments, strings, numbers, keywords, and JSON/object keys in their
   own colour), a small pure-Rust lexer, in both standalone code files and Markdown code fences.
-- **View source**: anything that RENDERS can be flipped to its raw text and back — a Markdown file,
+- **View source**: anything that RENDERS can be flipped to its raw text and back: a Markdown file,
   a CSV/TSV table, a Jupyter notebook, a rendered HTML page, an SVG. Hit the toolbar's **`{ }`**
   button or press **Ctrl+U** and you get the underlying file, syntax-highlighted with line numbers,
   fully selectable and copyable; press it again to go back. The mode sticks while the window is
   open, so **←/→** keeps showing source as you flip through a folder, and a fresh preview always
   opens rendered. The button only appears on files that actually have both views.
+- **Non-Unicode text files decode properly.** A text file that isn't UTF-8 is worked out rather
+  than mangled: **GBK/GB18030** (Simplified Chinese), **Shift-JIS** (Japanese), **Big5**
+  (Traditional Chinese) and **EUC-KR** (Korean), plus your own system codepage for the
+  single-byte languages, and UTF-16 saved without a byte-order mark. Uses the tables already in
+  Windows, so it adds nothing to the download.
+- **Chinese, Japanese, Korean and Thai text wraps instead of running off the edge.** Those
+  scripts don't separate words with spaces, so lines are broken between characters instead,
+  following the usual typesetting rules: closing punctuation is never pushed to the start of a
+  line, opening brackets are never stranded at the end of one, and vowel/tone marks stay attached
+  to the character they belong to. For CJK that per-character break is the correct convention. For
+  **Thai** it is an improvement, not perfection: proper Thai line breaking needs dictionary-based
+  word segmentation, which isn't bundled, so a break can land inside a word. The text is readable
+  and fully on-screen either way.
 - **Multi-page PDF navigation**: PageUp/PageDown or the arrow keys (or on-screen ◀ ▶ buttons) page
   through the document, with a "current / total" indicator in the title bar.
 - **Zoom + pan** on images (wheel to zoom at the cursor, drag to pan, double-click to toggle
@@ -286,7 +299,7 @@ plus these viewer-only extras:
 - **Select & copy**: drag-select in text/code/log **and rendered Markdown** previews
   (double-click selects a word; **Shift+arrows**, Shift+Home/End/PgUp/PgDn and the Ctrl
   word-wise variants select from the keyboard; **Ctrl+A** selects all), then **Ctrl+C** copies
-  the selection — or, with nothing selected, the whole document. Markdown copies as the text you
+  the selection, or, with nothing selected, the whole document. Markdown copies as the text you
   SEE (tables come out tab-separated, so they paste into a spreadsheet as columns); **Ctrl+Shift+C**
   copies the raw Markdown source instead. Ctrl+C elsewhere copies the content too: the image
   itself (the exact PDF page / animation frame being shown), or the info card's text. The
@@ -295,8 +308,15 @@ plus these viewer-only extras:
 - **Folder browsing + full-screen**: **←/→** (or PgUp/PgDn) flip through the current folder's
   previewable files without closing the popup, QuickLook-style; **F11** toggles borderless
   full-screen (Esc restores).
-- A slim caption **toolbar** (Segoe Fluent icons): keep-on-top, copy path, file info, upload &
-  copy link, open with…, open, close.
+- A slim caption **toolbar** (Segoe Fluent icons): keep-on-top, copy path, **copy text (OCR)**,
+  file info, upload & copy link, open with…, open, close.
+- **Copy text (OCR)** right from the toolbar: click it and the words in the picture you're
+  looking at land on your clipboard, and open in a small editable window so you can fix anything
+  the scan misread. It works on **every format SageThumbs can decode**, not just the few Windows
+  can open on its own, because the file is decoded through the normal pipeline before it reaches
+  the recognizer: a PSD, a camera RAW, a HEIC, a scanned DjVu all work. On a multi-page PDF it
+  reads **the page you are on**, not page 1. The button only appears for picture-ish content:
+  a text or Markdown preview already has selectable words.
 - A calm **info card** (icon, name, size, date) for unsupported files or folders, never an error.
 
 The viewer is a separate single-instance process, so a hostile-file decode can only take down a
@@ -344,14 +364,26 @@ long scroll is gone.)
   pixel readout** follows the selection so you can size a capture precisely. In the editor,
   hold **Shift** while drawing a line or arrow to snap it to the nearest **45° angle**;
   Esc first cancels the active editor action before closing the capture, and
-  **Ctrl+C copies to the clipboard and Ctrl+S saves** (Enter copies too). **Save to a set
+  **Ctrl+C copies to the clipboard and Ctrl+S saves** (Enter copies too). A **Copy text
+  (OCR)** button on the editor toolbar (or **Ctrl+T**) reads the *words* out of the region
+  instead of the pixels: the text lands on the clipboard and opens in a small **editable**
+  window, so a misread character can be fixed before you paste it. Works on anything on
+  screen: a dialog you can't select text in, a video frame, a screenshared document.
+  Recognition uses Windows' built-in engine, so it adds nothing to the download.
+  **Save to a set
   folder on Ctrl+S** (a toggle): when on, Ctrl+S auto-saves a timestamped PNG to a folder
   you pick with **Set save folder…** (defaults to your Desktop); when off, Ctrl+S asks where
   to save each time. **Custom action hotkey:** assign ONE global
   hotkey to any of a curated set of actions: **pick a color** (the screen color picker),
   take a screenshot, Convert…, rotate right, move files into a new folder, strip metadata,
-  **upload (copy link)**, **copy text (OCR)** straight to the clipboard, or open
-  Settings. Screen-wide actions run instantly; the file actions operate on the
+  **upload (copy link)**, **copy text (OCR)** straight to the clipboard,
+  **copy text on screen (OCR)**, or open
+  Settings. **Copy text on screen (OCR)** is the one-key version of the editor button: the
+  capture overlay opens, you drag over the text, and it reads it and closes the moment you
+  release. No editor, no toolbar, no click: press, drag, paste.
+  You don't have to bind a hotkey for it either: the tray icon's menu has
+  **Copy text on screen (OCR)** as a plain click.
+  Screen-wide actions run instantly; the file actions operate on the
   current **Explorer selection** (or prompt with a file picker when nothing is selected).
   It rides the same opt-in helper, so binding one needs no extra background process.
 - **Quick preview:** enable the Space-bar previewer (see §3) and tune it: **hold-Space
@@ -391,10 +423,17 @@ long scroll is gone.)
   background and confirms with a quiet tray notification when it's done. You can still grab
   the installer from the releases page by hand if you prefer.
 - **About:** a compact card: the eye logo, a **version pill that links to the GitHub
-  repo** (with the GitHub mark), and a live **"Up to date" / update-available pill** that
-  re-checks on click, plus the licence, copyright, and the clickable LunarWerx Studios
-  wordmark. Opens **centered over the Settings window**. The Settings main view also carries
-  a small author credit and a promo banner.
+  repo** (with the GitHub mark), a live **"Up to date" / update-available pill** that
+  re-checks on click, and a **Send feedback** pill, plus the licence, copyright, and the
+  clickable LunarWerx Studios wordmark. Opens **centered over the Settings window**. The
+  Settings main view also carries a small author credit and a promo banner.
+- **Send feedback:** the pill on the About card opens a box for a suggestion, a bug report,
+  or a "please support this format" request, sent straight to the developer without needing
+  a GitHub account. Choose the category, write the message, hit Send. The email field is
+  **optional** and labelled as such: leave it blank and the message still gets through, you
+  simply don't get a reply. The box also links to the GitHub issue tracker for anyone who'd
+  rather file it in public, and if the send can't get through your text is copied to the
+  clipboard so nothing is lost.
 
 ---
 
@@ -405,7 +444,8 @@ long scroll is gone.)
   input yields the default icon, never a crash.
 - **Use the OS, bundle nothing extra, where possible:** PDF rendering and OCR both
   use in-box WinRT APIs (`Windows.Data.Pdf`, `Windows.Media.Ocr`); zero added
-  bytes. PDF *writing* (Combine-to-PDF) is a hand-rolled minimal `/DCTDecode` PDF;
+  bytes. The screenshot editor's **Copy text (OCR)** rides the same recognizer as the
+  right-click verb, so screen OCR cost nothing in download size either. PDF *writing* (Combine-to-PDF) is a hand-rolled minimal `/DCTDecode` PDF;
   no PDF library. HEIC/AVIF normally decode through WIC: Microsoft's free **HEIF Image
   Extensions** (+ **HEVC Video Extensions** for iPhone HEIC) and **AV1 Video Extension**
   provide that path. The Full installer also retains ImageMagick's HEIF engine because

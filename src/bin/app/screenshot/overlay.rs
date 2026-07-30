@@ -94,6 +94,10 @@ struct Shot {
     // the real editor/input/paint pipeline while fencing off clipboard, disk,
     // dialogs, and upload/network side effects.
     automation: Option<AutomationState>,
+    // "Copy text on screen (OCR)" launch mode (the custom hotkey action): the FIRST
+    // completed region drag runs OCR and closes, skipping the editor entirely. The
+    // annotation toolbar never appears, because there is nothing to annotate.
+    ocr_mode: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -250,7 +254,14 @@ unsafe fn activate_overlay(hwnd: HWND) {
 }
 
 pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
-    run_capture_inner(hinst, false);
+    run_capture_inner(hinst, false, false);
+}
+
+/// `--screenshot-ocr`: the same capture overlay, but the first finished region drag goes
+/// straight to OCR and closes. One keystroke, one drag, text on the clipboard — no editor,
+/// no toolbar click. Bound to the custom hotkey action "Copy text on screen (OCR)".
+pub(crate) unsafe fn run_capture_ocr(hinst: HINSTANCE) {
+    run_capture_inner(hinst, false, true);
 }
 
 /// Hidden integration-test route: the real full-screen editor over a deterministic,
@@ -258,7 +269,7 @@ pub(crate) unsafe fn run_capture(hinst: HINSTANCE) {
 /// installed build can be exercised through Windows automation without exposing the
 /// user's desktop or producing clipboard/file/network side effects.
 pub(crate) unsafe fn run_capture_automation(hinst: HINSTANCE) {
-    run_capture_inner(hinst, true);
+    run_capture_inner(hinst, true, false);
 }
 
 fn overlay_ex_style() -> WINDOW_EX_STYLE {
@@ -269,7 +280,7 @@ fn overlay_ex_style() -> WINDOW_EX_STYLE {
     WS_EX_TOPMOST | WS_EX_NOACTIVATE
 }
 
-unsafe fn run_capture_inner(hinst: HINSTANCE, automation: bool) {
+unsafe fn run_capture_inner(hinst: HINSTANCE, automation: bool, ocr_mode: bool) {
     // Claim one shared mutex before any window lookup or screen allocation. Two
     // near-simultaneous hotkey/test launches can both pass FindWindow; the kernel
     // mutex closes that TOCTOU race and covers normal + automation classes together.
@@ -389,6 +400,9 @@ unsafe fn run_capture_inner(hinst: HINSTANCE, automation: bool) {
             status: "ready",
             published_title: String::new(),
         }),
+        // The automation route owns the editor pipeline it exercises, so it never runs in
+        // OCR mode even if both flags were somehow passed.
+        ocr_mode: ocr_mode && !automation,
     });
 
     let class = if automation {
@@ -837,6 +851,15 @@ extern "system" fn shot_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     let r = tools::norm(s.sel_anchor, p);
                     if (r.right - r.left) > 4 && (r.bottom - r.top) > 4 {
                         s.sel = Some(r);
+                        // OCR launch mode: the region IS the whole gesture. Recognize and
+                        // close instead of raising the annotation toolbar. A too-small drag
+                        // falls through with no selection, so the overlay stays up for a
+                        // second try rather than closing on a mis-click.
+                        if s.ocr_mode {
+                            finish_ocr(s);
+                            let _ = DestroyWindow(hwnd);
+                            return LRESULT(0);
+                        }
                     }
                 } else if s.typing_drag {
                     s.typing_drag = false;
@@ -1142,6 +1165,19 @@ unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
         }
         return false;
     }
+    // Ctrl+T = read the region's text (OCR) and close. Also checked ahead of the
+    // plain-letter shortcuts, so 'T' alone stays the Text tool.
+    if ctrl && vk == b'T' as u16 {
+        if block_automation_output(s, "blocked-ocr") {
+            return true;
+        }
+        if s.sel.is_some() {
+            commit_text(s);
+            finish_ocr(s);
+            let _ = DestroyWindow(hwnd);
+        }
+        return false;
+    }
     if ctrl && vk == b'S' as u16 {
         if block_automation_output(s, "blocked-save") {
             return true;
@@ -1152,6 +1188,13 @@ unsafe fn handle_key(hwnd: HWND, vk: u16) -> bool {
                 let _ = DestroyWindow(hwnd);
             }
         }
+        return false;
+    }
+
+    // OCR launch mode never reaches the annotation pass, so the tool / colour / thickness
+    // shortcuts below have nothing to act on — and the Eyedropper's pick-without-a-region
+    // click would hijack the one drag the mode exists for. Swallow them.
+    if s.ocr_mode {
         return false;
     }
 
@@ -1864,10 +1907,12 @@ unsafe fn draw_hint(hdc: HDC, s: &Shot) {
         format!("size {}", s.thickness)
     };
     let txt = if s.sel.is_none() {
-        if s.sel_dragging {
-            "Release to capture the region  ·  Esc cancels".to_string()
-        } else {
-            "Drag to select a region  ·  Esc cancels".to_string()
+        match (s.ocr_mode, s.sel_dragging) {
+            // OCR launch mode: the drag is the whole interaction, so say what it does.
+            (true, false) => "Drag over the text to copy it  ·  Esc cancels".to_string(),
+            (true, true) => "Release to read the text  ·  Esc cancels".to_string(),
+            (false, false) => "Drag to select a region  ·  Esc cancels".to_string(),
+            (false, true) => "Release to capture the region  ·  Esc cancels".to_string(),
         }
     } else {
         let snap = if matches!(s.tool, Tool::Line | Tool::Arrow) {
@@ -1884,7 +1929,7 @@ unsafe fn draw_hint(hdc: HDC, s: &Shot) {
             ""
         };
         format!(
-            "[{tool}]  ·  [ ] {sz}  ·  #{cr:02X}{cg:02X}{cb:02X}{snap}  ·  Ctrl-drag moves  ·  Enter copy  ·  Ctrl+S save  ·  Esc close",
+            "[{tool}]  ·  [ ] {sz}  ·  #{cr:02X}{cg:02X}{cb:02X}{snap}  ·  Ctrl-drag moves  ·  Enter copy  ·  Ctrl+T text  ·  Ctrl+S save  ·  Esc close",
             tool = s.tool.label(),
         )
     };
@@ -1904,7 +1949,9 @@ unsafe fn draw_hint(hdc: HDC, s: &Shot) {
             },
         ),
     };
-    let bar_w = s.vw.min(crate::win::dpi_scale_dpi(980, dpi));
+    // Wide enough for the longest hint string (the committed-selection one, which grew
+    // with Ctrl+T) — a short bar leaves the tail of the text spilling onto the capture.
+    let bar_w = s.vw.min(crate::win::dpi_scale_dpi(1080, dpi));
     let bar_h = crate::win::dpi_scale_dpi(26, dpi);
     let gap = crate::win::dpi_scale_dpi(6, dpi); // gap above the selection
     let inset = crate::win::dpi_scale_dpi(4, dpi); // inset when there's no room above
@@ -2008,6 +2055,34 @@ unsafe fn finish_copy(s: &Shot) {
     }
 }
 
+/// Composite the capture to a throwaway temp PNG and hand it to a helper process
+/// (`--upload <png>` / `--ocr <png>`), which owns the file from then on and deletes it
+/// once it has read it.
+///
+/// Out-of-process because both jobs take a beat (a network round-trip; the WinRT OCR engine
+/// spinning up) and the overlay is about to be destroyed — doing either here would freeze a
+/// fullscreen topmost window while it worked. If the helper never starts we delete the PNG
+/// ourselves: it is a picture of the user's screen, and nothing else would ever clean it up.
+unsafe fn compose_and_spawn(s: &Shot, mode: &str) {
+    if let Some((buf, w, h)) = compose(s) {
+        if let Some(path) = output::save_temp_png(&buf, w, h) {
+            if !super::spawn_self(&[mode, &path]) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
+/// Hand the composited capture to the OCR helper process (`--ocr <png>`), which reads
+/// the text out of it, puts it on the clipboard, and shows the result window.
+/// (Caller commits in-progress text first.)
+unsafe fn finish_ocr(s: &Shot) {
+    if s.automation.is_some() {
+        return;
+    }
+    compose_and_spawn(s, "--ocr");
+}
+
 /// Save the composited capture. With the "fixed save folder" option on, auto-saves a
 /// timestamped PNG into the configured folder (Desktop by default) and returns true.
 /// Otherwise prompts via a Save-As dialog and returns true iff the user picked a path
@@ -2061,6 +2136,7 @@ unsafe fn finish_save(hwnd: HWND, s: &Shot) -> bool {
 unsafe fn handle_button(hwnd: HWND, s: &mut Shot, btn: Button) -> bool {
     let blocked_status = match btn {
         Button::Copy => Some("blocked-copy"),
+        Button::Ocr => Some("blocked-ocr"),
         Button::Save => Some("blocked-save"),
         Button::Upload => Some("blocked-upload"),
         _ => None,
@@ -2126,6 +2202,12 @@ unsafe fn handle_button(hwnd: HWND, s: &mut Shot, btn: Button) -> bool {
             let _ = DestroyWindow(hwnd);
             true
         }
+        Button::Ocr => {
+            commit_text(s);
+            finish_ocr(s);
+            let _ = DestroyWindow(hwnd);
+            true
+        }
         Button::Save => {
             commit_text(s);
             if finish_save(hwnd, s) {
@@ -2137,11 +2219,7 @@ unsafe fn handle_button(hwnd: HWND, s: &mut Shot, btn: Button) -> bool {
         }
         Button::Upload => {
             commit_text(s);
-            if let Some((buf, w, h)) = compose(s) {
-                if let Some(path) = output::save_temp_png(&buf, w, h) {
-                    spawn_mode("--upload", &path);
-                }
-            }
+            compose_and_spawn(s, "--upload");
             let _ = DestroyWindow(hwnd);
             true
         }
@@ -2151,11 +2229,6 @@ unsafe fn handle_button(hwnd: HWND, s: &mut Shot, btn: Button) -> bool {
         }
         Button::Sep => false, // not clickable (hit() skips separators)
     }
-}
-
-/// Spawn ourselves in `mode` (e.g. `--upload`) over `path`, separate process.
-fn spawn_mode(mode: &str, path: &str) {
-    super::spawn_self(&[mode, path]);
 }
 
 /// Is point `p` inside rect `r`?

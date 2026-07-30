@@ -92,12 +92,12 @@ pub(super) unsafe fn doc_len(hwnd: HWND) -> Option<usize> {
     with_doc(&*state(hwnd), |d| d.len())
 }
 
-/// The text Ctrl+C puts on the clipboard: the selection, else the whole document. Markdown text
-/// is synthesized with bare `\n`, so it's normalized to CRLF for pasting; text-pane slices keep
-/// the file's own line endings verbatim.
+/// The text Ctrl+C puts on the clipboard: the selection, else the whole document. Line endings
+/// are NOT normalized here — [`sagethumbs2k_core::clipboard::utf16_nul_bytes`] does it for every
+/// text copy in the product, and doing it twice would allocate a second full copy of what can be
+/// a multi-megabyte document.
 pub(super) unsafe fn copy_text(hwnd: HWND) -> Option<String> {
     let st = &*state(hwnd);
-    let md = st.kind.get() == ContentKind::Markdown;
     let range = sel_range(st);
     with_doc(st, |doc| {
         // Never trust a slice not to panic (panic=abort kills the viewer) — fall back to all.
@@ -105,18 +105,9 @@ pub(super) unsafe fn copy_text(hwnd: HWND) -> Option<String> {
             Some((a, b)) => doc.get(a..b).unwrap_or(doc),
             None => doc,
         };
-        if md {
-            crlf(piece)
-        } else {
-            piece.to_string()
-        }
+        piece.to_string()
     })
     .filter(|s| !s.is_empty())
-}
-
-/// LF (or CRLF) -> CRLF: what every Windows text field expects on paste.
-fn crlf(s: &str) -> String {
-    s.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
 /// Client point -> document offset for the pane under it. `None` when the kind has no document.

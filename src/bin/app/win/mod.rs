@@ -94,8 +94,102 @@ pub(crate) unsafe fn wininet_drain(req: *mut c_void, max_bytes: usize) -> Option
     Some(data)
 }
 
-/// The system message font (Segoe UI / Segoe UI Variable on Win11), cached.
-/// Falls back to the stock GUI font if the metrics query fails.
+/// Shared geometry for the three "result" dialogs — Image info, Upload links, OCR text — which
+/// are all the same shape: a full-width scrollable EDIT with a Copy + Close button row at the
+/// bottom right. All values are 96-DPI DESIGN px, i.e. what [`ctl`] takes.
+///
+/// It has to be computed from the REAL client rect: [`run_dialog`]'s `w`/`h` size the whole
+/// WINDOW, so the client is narrower and shorter by the frame + caption, and laying out against
+/// the design size instead clipped the edit's scrollbar and the Close button off the right edge.
+/// `GetClientRect` is physical px, so divide back by the window's DPI to land in design px.
+pub(crate) struct ResultLayout {
+    pub(crate) cw: i32,
+    pub(crate) m: i32,
+    pub(crate) btn_w: i32,
+    pub(crate) btn_h: i32,
+    pub(crate) gap: i32,
+    /// Top of the button row.
+    pub(crate) btn_y: i32,
+    /// Close sits rightmost, Copy immediately to its left.
+    pub(crate) close_x: i32,
+    pub(crate) copy_x: i32,
+}
+
+/// The window-message half those same three dialogs share: create the controls, run Copy,
+/// close on OK/Cancel/X, and quit the pump on destroy. Returns `Some` when it handled the
+/// message; the caller falls through to `DefWindowProcW` on `None`.
+///
+/// `build` lays the dialog out (it gets the module handle already resolved). `copy` returns the
+/// text the Copy button should put on the clipboard — that is the ONLY behavioural difference
+/// between the three: Image info copies its stored dump, Upload copies just the links (not the
+/// heading above them), and OCR copies the EDIT's *current* contents so a correction the user
+/// typed is honoured.
+///
+/// Keeping this in one place is the point: `IDOK | IDCANCEL` must both close (Esc arrives as an
+/// IDCANCEL command from `IsDialogMessageW` even though no control carries that id), and
+/// `WM_DESTROY` must `PostQuitMessage` because these are top-level dialogs pumped by
+/// [`run_dialog`] — a copy of this that gets one of those wrong is a window that won't close.
+pub(crate) unsafe fn result_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    build: unsafe fn(HWND, HINSTANCE),
+    copy: unsafe fn(HWND) -> String,
+) -> Option<LRESULT> {
+    match msg {
+        WM_CREATE => {
+            let Ok(h) = GetModuleHandleW(None) else {
+                return Some(LRESULT(-1)); // fail the create rather than build into nothing
+            };
+            build(hwnd, h.into());
+            Some(LRESULT(0))
+        }
+        WM_COMMAND => {
+            match (wparam.0 & 0xFFFF) as i32 {
+                ID_RESULT_COPY => {
+                    let _ = set_clipboard_text(&copy(hwnd));
+                }
+                IDOK | IDCANCEL => {
+                    let _ = DestroyWindow(hwnd);
+                }
+                _ => {}
+            }
+            Some(LRESULT(0))
+        }
+        WM_CLOSE => {
+            let _ = DestroyWindow(hwnd);
+            Some(LRESULT(0))
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0); // let run_dialog's pump_until_quit exit
+            Some(LRESULT(0))
+        }
+        _ => None,
+    }
+}
+
+/// Control id of the Copy button in every result dialog (see [`result_wndproc`]).
+pub(crate) const ID_RESULT_COPY: i32 = 101;
+
+pub(crate) unsafe fn result_layout(hwnd: HWND) -> ResultLayout {
+    let mut rc = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc);
+    let dpi = GetDpiForWindow(hwnd).max(96) as i32;
+    let (m, btn_w, btn_h, gap) = (10, 82, 28, 8);
+    let (cw, ch) = (rc.right * 96 / dpi, rc.bottom * 96 / dpi);
+    let close_x = cw - m - btn_w;
+    ResultLayout {
+        cw,
+        m,
+        btn_w,
+        btn_h,
+        gap,
+        btn_y: ch - m - btn_h,
+        close_x,
+        copy_x: close_x - gap - btn_w,
+    }
+}
+
 /// Register a class, create + show a dialog, run its message pump. `w`/`h` are 96-DPI design px.
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn run_dialog(

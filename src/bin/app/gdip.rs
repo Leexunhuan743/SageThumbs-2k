@@ -174,3 +174,34 @@ pub(crate) unsafe fn stroke_round(
     let _ = GdipDrawPath(g, pen, p);
     let _ = GdipDeletePath(p);
 }
+
+/// The **OCR** mark: a viewfinder of four corner brackets around two text lines, scaled to
+/// fit `r` (`scale` = 1 at 96 DPI). Shared by the screenshot editor's action bar and the
+/// Quick preview's caption toolbar so the same feature carries the same icon in both places.
+///
+/// Drawn as a vector rather than a Segoe Fluent glyph because the icon font has no
+/// unambiguous OCR codepoint, and a wrong one renders as a tofu box. The corners are left
+/// OPEN on purpose — a closed rectangle reads as the screenshot editor's Rect tool.
+pub(crate) unsafe fn ocr_glyph(hdc: HDC, r: windows::Win32::Foundation::RECT, ink: COLORREF) {
+    let cx = (r.left + r.right) / 2;
+    let cy = (r.top + r.bottom) / 2;
+    // Scale off the cell so the mark keeps its proportions in the preview's larger caption
+    // buttons; the 28 px screenshot cell is the design size, i.e. scale 1.
+    let cell = (r.right - r.left).min(r.bottom - r.top).max(1);
+    let s = |v: i32| (v * cell / 28).max(1);
+    with_aa(hdc, |g| {
+        let p = pen(ink, 1);
+        for (sx, dx) in [(cx - s(8), 1), (cx + s(8), -1)] {
+            for (sy, dy) in [(cy - s(7), 1), (cy + s(7), -1)] {
+                line(g, p, sx, sy, sx + s(5) * dx, sy);
+                line(g, p, sx, sy, sx, sy + s(5) * dy);
+            }
+        }
+        drop_pen(p);
+        // Two text lines inside it, the second short like the end of a paragraph.
+        let t = pen_round(ink, s(2));
+        line(g, t, cx - s(4), cy - s(2), cx + s(4), cy - s(2));
+        line(g, t, cx - s(4), cy + s(2), cx + s(1), cy + s(2));
+        drop_pen(t);
+    });
+}

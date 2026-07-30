@@ -29,7 +29,11 @@ A modern, **crash-isolated** Rust shell extension for **Windows 11**: the clean-
 
 <br/><br/>
 
-<img src="assets/screenshots/preview-collage.png" alt="SageThumbs 2K Quick preview: press Space in Explorer for an instant QuickLook-style popup — shown previewing a photo, rendered Markdown, syntax-highlighted code and a data table" width="840" />
+<img src="assets/screenshots/preview-collage.png" alt="SageThumbs 2K Quick preview: press Space in Explorer for an instant QuickLook-style popup, shown previewing a photo, rendered Markdown, syntax-highlighted code and a data table" width="840" />
+
+<br/><br/>
+
+<img src="assets/screenshots/preview-quicklook.png" alt="SageThumbs 2K Quick preview showing a Rust source file with syntax highlighting, line numbers and the caption toolbar" width="840" />
 
 </div>
 
@@ -42,6 +46,7 @@ A modern, **crash-isolated** Rust shell extension for **Windows 11**: the clean-
 - ⚡ **Fast even on big files**: camera RAW thumbnails from its embedded preview instead of a slow demosaic (3–13× quicker), and no format is allowed to hang a folder.
 - 🧰 **Right-click toolkit:** convert, resize, lossless rotate, combine-to-PDF/CBZ, system-wide eyedropper, OCR, and more; all non-destructive, and **multi-file jobs run in parallel across every core**.
 - 👁️ **Press Space to preview** any file, QuickLook-style: an instant full-size popup with **video & audio playback**, **syntax-highlighted** code, **rendered Markdown**, **multi-page PDF** paging, **font specimens**, **archive listings**, arrow-key folder browsing and full-screen (F11).
+- 🔤 **Copy text off your screen**: drag a region and the words land on your clipboard, in an editable window so you can fix a misread. Uses Windows' own recognizer, so it adds nothing to the download.
 - 🎛️ **Make the menu yours**: **drag-reorder** (and show/hide) every right-click entry *and* its dividers; the context menu mirrors your layout exactly.
 - 🎨 **Redesigned Settings**: a Win11-style category nav rail with toggle switches, system-following **dark mode**, **36 languages**.
 - 🦀 100% clean-room **Rust**, **free for personal use** ([PolyForm Noncommercial](#-license)); no GFL, no spyware, no personal data.
@@ -87,6 +92,8 @@ The original **SageThumbs** was a Windows legend. It made Explorer show thumbnai
 | 🔧 **Repair file associations** | One button in **Settings ▸ Diagnostics** re-registers SageThumbs for every enabled format when another app has hijacked the thumbnails, then clears the thumbnail cache |
 | 🛡️ **Crash-isolated** | Out-of-process, `catch_unwind` under `panic = "abort"`, sandboxed ImageMagick child (20s kill-timeout), decompression-bomb guards |
 | 🌗 **Native Win11 UI** | Redesigned **Settings**: a Win11-style category nav rail (General · File types · Ebook/comic · Right-click menu · Screenshots · Quick action · Quick preview · Advanced · Data & Backup) with toggle switches, Common-Controls v6, **system-following dark mode**, 36 languages |
+| 🔤 **Screen OCR** | **Copy text (OCR)** wherever you need it: a button in the screenshot editor (or **Ctrl+T**), a button on the Quick preview toolbar, a one-click tray item, or a global hotkey that goes straight to drag-a-region-get-the-text. The words land on your clipboard *and* in an editable window, so a misread character is fixable before you paste. Small on-screen type is enlarged before it's read, which is what the in-box recognizer needs to see it at all |
+| 💬 **Send feedback** | A box in the About card mails a suggestion, bug report or format request straight to the developer: no GitHub account, no email address required (leave one only if you want a reply). A failed send puts your text on the clipboard so nothing is lost |
 | 🔍 **True transparency** | Real premultiplied-ARGB alpha: no more gray checkerboard behind transparent PNGs |
 
 <div align="center">
@@ -111,7 +118,7 @@ There's a checklist of little utilities people reinstall on every new Windows bo
 | A **color picker** (PowerToys, Just Color Picker, Instant Eyedropper) | A **system-wide eyedropper** with a 10x loupe; Space copies `#RRGGBB` |
 | A **metadata scrubber** (ExifCleaner, BatchPurifier) | Right-click **Strip metadata** (EXIF/IPTC/XMP/GPS), keeps your ICC profile |
 | A **screenshot + annotate** app (ShareX, Greenshot, Snagit) | Built-in **region capture** with an annotation editor and quick-save |
-| An **OCR** tool (Capture2Text) | Right-click **Copy text (OCR)**, straight to the clipboard |
+| An **OCR** tool (Capture2Text, PowerToys Text Extractor) | **Copy text (OCR)** four ways: right-click a file, **Ctrl+T** in the screenshot editor, the Quick preview toolbar, or a one-key hotkey / tray click that goes straight to drag-a-region-get-the-text **(new)** |
 | An **image uploader** (ShareX, Imgur apps) | **Upload (copy link)** to a keyless host, no account |
 | A **PDF / CBZ maker** (PDF24, manual 7-Zip) | **Combine into PDF** or **CBZ**, natural-sorted |
 | **ImageMagick** for scripts and AI agents | `st2k.exe`: a full CLI **and an MCP server**, so agents get an image toolbox with zero extra installs |

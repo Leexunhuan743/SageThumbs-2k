@@ -947,7 +947,8 @@ mod tests {
             paths.push(p.to_str().unwrap().to_string());
         }
 
-        let out = combined_path(&paths[0], "cbz");
+        let slot = combined_path(&paths[0], "cbz");
+        let out = slot.path().to_path_buf();
         combine_to_cbz(&paths, &out).unwrap();
         assert!(out.exists() && out.extension().unwrap() == "cbz");
 

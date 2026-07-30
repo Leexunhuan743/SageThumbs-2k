@@ -15,8 +15,35 @@ use rars::ArchiveReader;
 
 use super::select::{dedupe_by_name, pick_covers, Entry};
 
+/// Ceiling on how much of the archive we'll decompress-and-throw-away while walking TOWARDS the
+/// picked covers. RAR is sequential (a solid archive can't be entered mid-stream), so entries
+/// physically before a cover have to be decompressed even though their output is discarded — and
+/// the attacker picks the physical order. Without this, a small `.cbr` holding one huge highly
+/// compressible junk file ahead of a normally-named cover burns unbounded CPU in the thumbnail
+/// host. Mirrors 7z's `SOLID_SCAN_BUDGET`, which caps exactly the same drain.
+const SKIP_SCAN_BUDGET: u64 = 8 * 1024 * 1024;
+
 /// A `Write` sink that appends into a shared buffer, capped at `MAX_COVER`.
 struct CapBuf(Rc<RefCell<Vec<u8>>>);
+
+/// A `Write` sink that DISCARDS its input but charges it against a shared budget, erroring out
+/// (which aborts the whole `extract_to` walk) once the budget is spent. `std::io::sink()` costs
+/// nothing to write to but still costs full CPU to produce — this is what makes that bounded.
+struct BudgetSink(Rc<std::cell::Cell<u64>>);
+
+impl Write for BudgetSink {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let spent = self.0.get().saturating_add(data.len() as u64);
+        self.0.set(spent);
+        if spent > SKIP_SCAN_BUDGET {
+            return Err(std::io::Error::other("skip-scan budget exhausted"));
+        }
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 impl Write for CapBuf {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
@@ -77,6 +104,7 @@ pub fn extract_n(bytes: &[u8], want: usize) -> Option<Vec<Vec<u8>>> {
         .map(|_| Rc::new(RefCell::new(Vec::new())))
         .collect();
     let mut remaining = picks.len();
+    let drained = Rc::new(std::cell::Cell::new(0u64));
     let _ = archive.extract_to(None, |meta| {
         if remaining == 0 {
             return Err(std::io::Error::other("covers captured").into());
@@ -86,7 +114,8 @@ pub fn extract_n(bytes: &[u8], want: usize) -> Option<Vec<Vec<u8>>> {
             remaining -= 1;
             Ok(Box::new(CapBuf(Rc::clone(&bufs[rank]))) as Box<dyn Write>)
         } else {
-            Ok(Box::new(std::io::sink()) as Box<dyn Write>)
+            // Not a pick — discard, but on the clock (see `SKIP_SCAN_BUDGET`).
+            Ok(Box::new(BudgetSink(Rc::clone(&drained))) as Box<dyn Write>)
         }
     });
 

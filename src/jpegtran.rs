@@ -253,6 +253,14 @@ fn decode_block(
 ) -> Option<[i32; 64]> {
     let mut blk = [0i32; 64];
     let t = decode_huff(br, dc)? as u32;
+    // A DC category is 0..=15 (16 for the 12-bit extension). `DHT` parsing only range-checks the
+    // table id/class, never the symbol VALUES, so a crafted table can map a code to anything up to
+    // 255 — and `extend`'s `1 << (s - 1)` would then shift past the width of the type. Release
+    // builds have no overflow checks, so that doesn't panic: it silently masks and yields a garbage
+    // DC coefficient, i.e. a corrupted "lossless" rotate. Bail to the lossy re-encode instead.
+    if t > 16 {
+        return None;
+    }
     let diff = extend(br.receive(t)?, t);
     *pred += diff;
     blk[0] = *pred;

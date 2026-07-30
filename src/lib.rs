@@ -36,7 +36,11 @@ mod jpegtran;
 pub mod mcp;
 mod mkv;
 mod mp4;
-mod ocr;
+// In-box WinRT OCR (`Windows.Media.Ocr`). `pub` so the companion `SageThumbs2K` app bin
+// can read text out of a screen capture it already holds in memory, `doc(hidden)` because
+// it isn't a stable public API — same arrangement as `parallel` below.
+#[doc(hidden)]
+pub mod ocr;
 // Internal batch thread pool (Convert dialog / Combine / multi-file context-menu
 // verbs). `pub` so the companion `SageThumbs2K` app bin can drive it, `doc(hidden)`
 // because it isn't a stable public API — just a shared helper across our own crates.
@@ -137,8 +141,7 @@ pub fn render_preview_png(path: &str, out_png: &str, bg: Option<u32>) -> bool {
 /// text" verb uses, minus the clipboard write). None if no OCR pack / no text.
 #[doc(hidden)]
 pub fn ocr_probe(path: &str) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    ocr::recognize_bytes(&bytes)
+    ocr::recognize_bytes(std::fs::read(path).ok()?)
         .ok()
         .filter(|t| !t.trim().is_empty())
 }

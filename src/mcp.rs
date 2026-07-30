@@ -21,6 +21,48 @@ use crate::formats;
 /// MCP protocol revision we implement (the stable 2024-11-05 spec).
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// `BufRead::read_line` with a ceiling: reads one `\n`-terminated line into `line`, returning the
+/// bytes consumed, or `Ok(0)` on EOF **or** once the line exceeds `max` (the caller treats both as
+/// "stop"). Byte-oriented so an over-long line is abandoned without ever materializing.
+fn read_line_capped<R: BufRead>(
+    reader: &mut R,
+    line: &mut String,
+    max: usize,
+) -> std::io::Result<usize> {
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        // Consume out of the buffer in whole chunks (not byte at a time) — the newline scan is
+        // the same work `read_line` does, just with a ceiling on how much we're willing to keep.
+        let (done, used) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                (true, 0) // EOF
+            } else if let Some(i) = available.iter().position(|&b| b == b'\n') {
+                buf.extend_from_slice(&available[..=i]);
+                (true, i + 1)
+            } else {
+                buf.extend_from_slice(available);
+                (false, available.len())
+            }
+        };
+        reader.consume(used);
+        if done {
+            break;
+        }
+        if buf.len() > max {
+            return Ok(0); // oversized message — give up on this stream
+        }
+    }
+    if buf.is_empty() {
+        return Ok(0);
+    }
+    let n = buf.len();
+    // Invalid UTF-8 isn't valid JSON either; hand the lossy form to the parser, which
+    // answers with a proper JSON-RPC parse error.
+    line.push_str(&String::from_utf8_lossy(&buf));
+    Ok(n)
+}
+
 /// Read JSON-RPC messages from stdin and reply on stdout until EOF (the client
 /// closing its end). Locks both streams for the process lifetime — fine for a
 /// dedicated child server.
@@ -30,11 +72,17 @@ pub fn serve() -> std::io::Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
+    /// Cap on one JSON-RPC message. `read_line` grows its `String` until it sees a newline, so a
+    /// client (or anything else wired to our stdin) that streams megabytes without one would grow
+    /// the buffer without bound. Real requests are a few KB; a `view`/`compress` reply is big but
+    /// that's the OUTPUT side. Over the cap we drop the connection rather than keep buffering.
+    const MAX_MSG_BYTES: usize = 8 * 1024 * 1024;
+
     let mut line = String::new();
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break; // EOF: client closed the pipe
+        if read_line_capped(&mut reader, &mut line, MAX_MSG_BYTES)? == 0 {
+            break; // EOF: client closed the pipe, or a message blew the cap
         }
         // Trim whitespace AND a stray UTF-8 BOM (`U+FEFF`) — some clients/shells
         // prepend one to the stream, and Rust's `trim()` doesn't treat it as

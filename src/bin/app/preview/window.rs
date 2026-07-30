@@ -94,6 +94,10 @@ pub(super) enum Btn {
     PdfNext,
     Pin,
     Copy,
+    /// Read the text out of the picture you're looking at (OCR) and put it on the clipboard.
+    /// Only shown for image-ish content (see [`btn_visible`]) — there is nothing to recognize
+    /// in a text or Markdown pane, where you can already select the words.
+    Ocr,
     Info,
     Upload,
     Open,
@@ -102,19 +106,29 @@ pub(super) enum Btn {
 }
 
 /// All buttons, in left-to-right caption order (rightmost drawn is Close).
-pub(super) const BTNS: [Btn; 11] = [
+pub(super) const BTNS: [Btn; 12] = [
     Btn::Toc,
     Btn::Source,
     Btn::PdfPrev,
     Btn::PdfNext,
     Btn::Pin,
     Btn::Copy,
+    Btn::Ocr,
     Btn::Info,
     Btn::Upload,
     Btn::OpenWith,
     Btn::Open,
     Btn::Close,
 ];
+
+thread_local! {
+    /// GDI+ token for this window's lifetime — started in `WM_CREATE`, shut down in
+    /// `WM_DESTROY`, mirroring `settings_dlg`. GDI+ must be live on the thread before the
+    /// caption's anti-aliased OCR mark can draw; without it `GdipCreateFromHDC` fails and
+    /// [`crate::gdip::with_aa`] silently draws NOTHING (an empty button, which is exactly
+    /// how this was first noticed).
+    static GDIP_TOKEN: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
 
 /// Whether a toolbar button is currently shown (PDF pager only for multi-page PDFs; the outline
 /// toggle only for Markdown that has headings; the source toggle only for files that HAVE a
@@ -126,6 +140,9 @@ pub(super) fn btn_visible(st: &ViewerState, b: Btn) -> bool {
         }
         Btn::Toc => st.kind.get() == ContentKind::Markdown && st.md_has_headings.get(),
         Btn::Source => st.src_capable.get(),
+        // OCR needs pixels to read. A text/Markdown/HTML pane already has selectable words
+        // (Ctrl+C), and an InfoCard is our own chrome, so the button would be a no-op there.
+        Btn::Ocr => st.kind.get() == ContentKind::Image,
         _ => true,
     }
 }
@@ -411,6 +428,11 @@ pub(super) unsafe fn create_viewer(
         webview: RefCell::new(None),
     });
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
+    // GDI+ for this viewer's lifetime (torn down in WM_DESTROY). It goes HERE, not in a
+    // WM_CREATE arm: `wndproc` hands every message that arrives before GWLP_USERDATA is set
+    // straight to DefWindowProc, so a WM_CREATE arm would be dead code — and the only symptom
+    // is that `gdip::with_aa` silently draws nothing, leaving an empty toolbar button.
+    GDIP_TOKEN.with(|t| t.set(crate::gdip::startup()));
     if dark {
         crate::dark::dark_titlebar(hwnd);
     }
@@ -1043,6 +1065,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 LRESULT(0)
             }
             WM_DESTROY => {
+                let tok = GDIP_TOKEN.with(|t| t.replace(0));
+                if tok != 0 {
+                    crate::gdip::shutdown(tok);
+                }
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut ViewerState;
                 if !ptr.is_null() {
                     let tip = (*ptr).tip.get();
@@ -1247,6 +1273,27 @@ pub(super) unsafe fn do_action(hwnd: HWND, btn: Btn) {
                     sagethumbs2k_core::clipboard::CF_UNICODETEXT,
                     &bytes,
                 );
+            }
+        }
+        Btn::Ocr => {
+            // `--ocr-keep`, NOT `--ocr`: the capture path hands the helper a throwaway PNG it
+            // is expected to delete, and this is the user's own file.
+            //
+            // `--page` goes with EVERY pdf (`pdf_pages > 0`), not just multi-page ones. It looks
+            // like it should only matter when there's a page to choose, but it also selects the
+            // resolution the helper renders at: with `--page` it re-renders through
+            // `pdf::render_page_counted(.., 2400)`, and without it falls back to `decode_full`,
+            // whose PDF path is the 1024 px THUMBNAIL render. Gating on `> 1` therefore read a
+            // single-page scan — a receipt, a form, the most common PDF there is — at less than
+            // half the resolution of the identical page inside a 2-page file, and OCR accuracy
+            // tracks resolution directly. Non-PDFs keep `pdf_pages == 0` and pass no page.
+            if let Some(p) = path {
+                let page = st.pdf_page.get().to_string();
+                if st.pdf_pages.get() > 0 {
+                    super::spawn_self(&["--ocr-keep", &p, "--page", &page]);
+                } else {
+                    super::spawn_self(&["--ocr-keep", &p]);
+                }
             }
         }
         Btn::Info => {

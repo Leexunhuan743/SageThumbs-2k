@@ -653,7 +653,10 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             if imgs.is_empty() {
                 return ActionReport::default();
             }
-            let out = combined_pdf_path(&imgs[0]);
+            // Hold the slot for the whole write: it's what keeps a second, concurrent Combine
+            // from picking the same name and renaming over this one's finished file.
+            let slot = combined_pdf_path(&imgs[0]);
+            let out = slot.path().to_path_buf();
             match crate::topdf::combine_to_pdf(&imgs, &out, crate::settings::jpeg_quality()) {
                 Ok(_) => ActionReport {
                     output: Some(out),
@@ -674,7 +677,8 @@ pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
             if imgs.is_empty() {
                 return ActionReport::default();
             }
-            let out = combined_path(&imgs[0], "cbz");
+            let slot = combined_path(&imgs[0], "cbz");
+            let out = slot.path().to_path_buf();
             match combine_to_cbz(&imgs, &out) {
                 Ok(()) => ActionReport {
                     output: Some(out),
@@ -957,19 +961,20 @@ fn launch_tags_to_folders(audio: &[String]) {
     }
 }
 
-/// `combined.pdf` (deduped) next to the first image.
-fn combined_pdf_path(first: &str) -> PathBuf {
+/// `combined.pdf` (deduped) next to the first image, ATOMICALLY reserved — see
+/// [`crate::verbs::combined_path`] for why this can't be a `while cand.exists()` loop.
+fn combined_pdf_path(first: &str) -> crate::verbs::encode::OutSlot {
     let dir = Path::new(first)
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let mut cand = dir.join("combined.pdf");
-    let mut n = 2u32;
-    while cand.exists() {
-        cand = dir.join(format!("combined ({n}).pdf"));
-        n += 1;
-    }
-    cand
+    crate::verbs::encode::reserve(|n| {
+        if n == 0 {
+            dir.join("combined.pdf")
+        } else {
+            dir.join(format!("combined ({}).pdf", n + 1))
+        }
+    })
 }
 
 /// Open the verbose, copyable "Image info" window in the companion app (it gathers the
@@ -1273,12 +1278,47 @@ pub(crate) fn set_folder_icon(image_path: &str) -> Result<()> {
     // desktop.ini references the icon by a RELATIVE name (so it survives a move).
     // `IconResource` is the modern key; `IconFile`/`IconIndex` keep older Explorer
     // happy. CRLF + a trailing newline, matching what Explorer writes.
+    //
+    // MERGE, never clobber: a folder can already carry a desktop.ini that Explorer or another
+    // tool wrote — a `[LocalizedFileNames]` block, `[ViewState]`, an InfoTip, a ConfirmFileOp
+    // flag. Blindly overwriting it silently destroyed all of that. And write it atomically, like
+    // the .ico above: a half-written desktop.ini makes the folder lose its identity entirely.
     let ini_path = dir.join("desktop.ini");
-    let ini = format!(
-        "[.ShellClassInfo]\r\nIconResource={ico_name},0\r\nIconFile={ico_name}\r\nIconIndex=0\r\n"
-    );
-    std::fs::write(&ini_path, ini.as_bytes())
-        .map_err(|e| Error::new(E_FAIL, format!("write desktop.ini: {e}")))?;
+    let existing = std::fs::read(&ini_path).ok();
+    let (prior, utf16) = match existing.as_deref() {
+        // UTF-16 LE with BOM — what Explorer writes for a localized folder name.
+        Some(b) if b.starts_with(&[0xFF, 0xFE]) => (decode_utf16le(&b[2..]), true),
+        Some(b) => (String::from_utf8(b.to_vec()).ok(), false),
+        None => (Some(String::new()), false),
+    };
+    // An encoding we can't read is an encoding we can't safely rewrite. Better to fail the verb
+    // than to replace content we couldn't even see.
+    let prior = prior.ok_or_else(|| {
+        Error::new(
+            E_FAIL,
+            "desktop.ini is in an encoding we can't read — leaving it untouched",
+        )
+    })?;
+    let ini = merge_shell_class_info(&prior, ico_name);
+    let bytes: Vec<u8> = if utf16 {
+        let mut v = vec![0xFF, 0xFE];
+        v.extend(ini.encode_utf16().flat_map(u16::to_le_bytes));
+        v
+    } else {
+        ini.into_bytes()
+    };
+    let ini_tmp = with_tmp_suffix(&ini_path);
+    std::fs::write(&ini_tmp, &bytes).map_err(|e| {
+        let _ = std::fs::remove_file(&ini_tmp);
+        Error::new(E_FAIL, format!("write desktop.ini: {e}"))
+    })?;
+    // desktop.ini is normally Hidden+System, and a rename onto a hidden file fails on Windows
+    // unless the destination's attributes allow it — clear them first, then re-apply below.
+    clear_attrs(&ini_path, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+    std::fs::rename(&ini_tmp, &ini_path).map_err(|e| {
+        let _ = std::fs::remove_file(&ini_tmp);
+        Error::new(E_FAIL, format!("rename desktop.ini into place: {e}"))
+    })?;
 
     // Hide the helper files; mark the folder System+ReadOnly so Explorer actually
     // reads desktop.ini (the documented requirement to honor a custom icon).
@@ -1330,9 +1370,141 @@ fn add_attrs(path: &Path, add: FILE_FLAGS_AND_ATTRIBUTES) {
     }
 }
 
+/// Clear `drop` from a path's existing file attributes (best-effort). Needed before renaming
+/// onto an existing Hidden+System file, which Windows otherwise refuses.
+fn clear_attrs(path: &Path, drop: FILE_FLAGS_AND_ATTRIBUTES) {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(once(0)).collect();
+    unsafe {
+        let cur = GetFileAttributesW(PCWSTR(wide.as_ptr()));
+        if cur == u32::MAX {
+            return; // doesn't exist (or unreadable) — nothing to clear
+        }
+        let _ = SetFileAttributesW(
+            PCWSTR(wide.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(cur & !drop.0),
+        );
+    }
+}
+
+/// UTF-16 LE bytes (BOM already stripped) → `String`, or `None` if they aren't valid UTF-16.
+fn decode_utf16le(b: &[u8]) -> Option<String> {
+    if !b.len().is_multiple_of(2) {
+        return None;
+    }
+    let units: Vec<u16> = b
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16(&units).ok()
+}
+
+/// Rewrite the icon keys inside `prior`'s `[.ShellClassInfo]` section, leaving every other line —
+/// and every other section — byte-for-byte alone.
+///
+/// A folder's desktop.ini is shared state: Explorer puts `[LocalizedFileNames]` there for
+/// localized folder names, `InfoTip`/`ConfirmFileOp` live in `[.ShellClassInfo]` beside the icon
+/// keys, and other tools add their own sections. Replacing the whole file (what this used to do)
+/// silently deleted all of it. Only `IconResource` / `IconFile` / `IconIndex` are ours to touch.
+///
+/// Output is CRLF, matching what Explorer writes. Section matching is case-insensitive because
+/// INI section names are.
+fn merge_shell_class_info(prior: &str, ico_name: &str) -> String {
+    let icon_keys = [
+        format!("IconResource={ico_name},0"),
+        format!("IconFile={ico_name}"),
+        "IconIndex=0".to_string(),
+    ];
+    let is_ours = |l: &str| {
+        let k = l
+            .split('=')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        matches!(k.as_str(), "iconresource" | "iconfile" | "iconindex")
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut wrote = false;
+    for line in prior.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t.eq_ignore_ascii_case("[.ShellClassInfo]");
+            out.push(line.to_string());
+            if in_section {
+                out.extend(icon_keys.iter().cloned());
+                wrote = true;
+            }
+            continue;
+        }
+        // Drop the icon keys we're replacing; keep everything else (InfoTip, ConfirmFileOp,
+        // a stray comment, a blank line) exactly where it was.
+        if in_section && is_ours(t) {
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    if !wrote {
+        // No [.ShellClassInfo] yet — append one. A leading blank line only if there was content.
+        if out.iter().any(|l| !l.trim().is_empty()) {
+            out.push(String::new());
+        } else {
+            out.clear();
+        }
+        out.push("[.ShellClassInfo]".to_string());
+        out.extend(icon_keys.iter().cloned());
+    }
+    let mut s = out.join("\r\n");
+    s.push_str("\r\n");
+    s
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{reveal_is_noise, routed_edit_output_ext};
+    use super::{merge_shell_class_info, reveal_is_noise, routed_edit_output_ext};
+
+    /// Setting a folder icon must not eat the rest of desktop.ini. Explorer keeps localized
+    /// folder names and tooltips in the same file, and the old code replaced the whole thing.
+    #[test]
+    fn desktop_ini_merge_preserves_everything_else() {
+        // Empty / missing file → just our section.
+        let fresh = merge_shell_class_info("", "SageThumbsFolder.ico");
+        assert_eq!(
+            fresh,
+            "[.ShellClassInfo]\r\nIconResource=SageThumbsFolder.ico,0\r\n\
+             IconFile=SageThumbsFolder.ico\r\nIconIndex=0\r\n"
+        );
+
+        // Existing unrelated section survives, and our keys get their own section appended.
+        let loc = "[LocalizedFileNames]\r\nreport.docx=@shell32.dll,-1\r\n";
+        let merged = merge_shell_class_info(loc, "SageThumbsFolder.ico");
+        assert!(merged.contains("[LocalizedFileNames]"), "{merged}");
+        assert!(merged.contains("report.docx=@shell32.dll,-1"), "{merged}");
+        assert!(merged.contains("[.ShellClassInfo]"), "{merged}");
+
+        // An existing [.ShellClassInfo] keeps its NON-icon keys; the icon keys are replaced,
+        // not duplicated.
+        let prior = "[.ShellClassInfo]\r\nInfoTip=My photos\r\nIconResource=old.ico,3\r\n\
+                     IconFile=old.ico\r\nIconIndex=3\r\nConfirmFileOp=0\r\n";
+        let merged = merge_shell_class_info(prior, "SageThumbsFolder.ico");
+        assert!(merged.contains("InfoTip=My photos"), "{merged}");
+        assert!(merged.contains("ConfirmFileOp=0"), "{merged}");
+        assert!(!merged.contains("old.ico"), "{merged}");
+        assert_eq!(merged.matches("IconResource=").count(), 1, "{merged}");
+        assert_eq!(merged.matches("[.ShellClassInfo]").count(), 1, "{merged}");
+
+        // Section names are case-insensitive in INI files.
+        let odd = "[.shellclassinfo]\r\nIconFile=old.ico\r\n";
+        let merged = merge_shell_class_info(odd, "new.ico");
+        assert_eq!(merged.matches("[.").count(), 1, "{merged}");
+        assert!(merged.contains("IconFile=new.ico"), "{merged}");
+        assert!(!merged.contains("old.ico"), "{merged}");
+
+        // Re-running is idempotent — no key or section pile-up.
+        let once = merge_shell_class_info("", "a.ico");
+        assert_eq!(merge_shell_class_info(&once, "a.ico"), once);
+    }
 
     #[test]
     fn reveal_skips_in_place_sibling_only() {

@@ -181,6 +181,11 @@ pub(super) enum Block {
 pub(super) struct MdLayout {
     ready: bool,
     key: (u64, i32, bool),
+    /// The PARSED document. Cached with everything else — it used to be re-parsed on every
+    /// single paint, which meant the whole pulldown-cmark walk ran again for each 15 ms tick of
+    /// the ToC slide animation and each wheel notch, on documents up to the 5 MB text cap. `Rc`
+    /// so the render loop can hold it while still mutating `heights` on the same struct.
+    blocks: std::rc::Rc<Vec<Block>>,
     heights: Vec<i32>, // per block index; -1 = unmeasured
     /// The RENDERED text of the whole document — the coordinate space every selection offset
     /// lives in (see [`super::selection`]). Complete regardless of what's painted/culled, so
@@ -410,15 +415,18 @@ pub(super) unsafe fn render(
     // animation shrinks the pane a few px per 15ms tick, but full_w stays capped at MAX_COL_W, so
     // the cache survives the slide instead of fully rebuilding every animation frame.
     let key = (gen, full_w, remote_ok);
-    let blocks = parse_blocks(md, remote_ok);
-    if !layout.ready || layout.key != key || layout.heights.len() != blocks.len() {
-        layout.heights = vec![-1; blocks.len()];
-        let (doc, bases) = build_doc(&blocks);
+    if !layout.ready || layout.key != key || layout.heights.len() != layout.blocks.len() {
+        layout.blocks = std::rc::Rc::new(parse_blocks(md, remote_ok));
+        layout.heights = vec![-1; layout.blocks.len()];
+        let (doc, bases) = build_doc(&layout.blocks);
         layout.doc = doc;
         layout.bases = bases;
         layout.key = key;
         layout.ready = true;
     }
+    // Cheap handle, not a copy — lets the loop below read the blocks while still writing
+    // measured heights back into `layout`.
+    let blocks = std::rc::Rc::clone(&layout.blocks);
     let bench_t = std::env::var_os("ST2K_MD_BENCH")
         .is_some()
         .then(std::time::Instant::now);
@@ -1281,7 +1289,8 @@ unsafe fn run_block(
                 }
             };
         }
-        for (ci, ch) in r.text.char_indices() {
+        let mut chars = r.text.char_indices().peekable();
+        while let Some((ci, ch)) = chars.next() {
             match ch {
                 '\n' => {
                     flush_word!(ci);
@@ -1301,6 +1310,15 @@ unsafe fn run_block(
                     let mut b = [0u16; 2];
                     for u in ch.encode_utf16(&mut b) {
                         word.push(*u);
+                    }
+                    // Scripts that don't put spaces between words get their break
+                    // opportunities here instead. Without this a Chinese/Japanese paragraph is
+                    // ONE token, and the greedy line-breaker below places an over-wide token
+                    // anyway — so the whole paragraph ran off the pane edge and was clipped.
+                    if let Some(&(ni, next)) = chars.peek() {
+                        if can_break_between(ch, next) {
+                            flush_word!(ni);
+                        }
                     }
                 }
             }
@@ -1611,6 +1629,128 @@ pub(super) unsafe fn font_for(hwnd: HWND, s: FontSpec) -> HFONT {
     font(hwnd, s.px, s.bold, s.italic, s.mono)
 }
 
+/// Is there a legal line-break opportunity between `a` and `b`?
+///
+/// Only ever returns true when at least one side is from a script that doesn't delimit words
+/// with spaces — Latin text keeps plain whitespace wrapping, unchanged. This is a deliberately
+/// small subset of UAX #14: enough to stop CJK/Thai from overflowing the pane, without pulling
+/// in a line-breaking table.
+fn can_break_between(a: char, b: char) -> bool {
+    if a.is_whitespace() || b.is_whitespace() {
+        return false; // the whitespace arms already break here
+    }
+    // A mark has to stay welded to the base character it decorates — most importantly the Thai
+    // vowels/tone marks and the Japanese dakuten, which are separate codepoints.
+    if is_combining(b) {
+        return false;
+    }
+    if !is_spaceless_script(a) && !is_spaceless_script(b) {
+        return false;
+    }
+    // Kinsoku: closers/terminators may not START a line, openers may not END one.
+    !starts_line_never(b) && !ends_line_never(a)
+}
+
+/// Characters from scripts written without spaces between words: CJK ideographs and their
+/// punctuation, kana, hangul, fullwidth forms, and Thai.
+///
+/// Thai genuinely needs dictionary-based segmentation, which we don't have — so breaks land at
+/// arbitrary character boundaries. That is wrong at the word level and still far better than the
+/// alternative, which was the entire paragraph running off-screen.
+fn is_spaceless_script(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11FF     // Hangul Jamo
+        | 0x3000..=0x303F   // CJK symbols and punctuation
+        | 0x3040..=0x30FF   // Hiragana + Katakana
+        | 0x3400..=0x4DBF   // CJK Extension A
+        | 0x4E00..=0x9FFF   // CJK Unified Ideographs
+        | 0xA000..=0xA4CF   // Yi
+        | 0xAC00..=0xD7AF   // Hangul syllables
+        | 0xF900..=0xFAFF   // CJK compatibility ideographs
+        | 0xFF00..=0xFF60   // Fullwidth forms
+        | 0xFFE0..=0xFFE6
+        | 0x0E00..=0x0E7F   // Thai
+        | 0x2_0000..=0x3_FFFF // CJK Extension B and beyond
+    )
+}
+
+/// Combining marks that must never be separated from their base character.
+fn is_combining(c: char) -> bool {
+    matches!(c as u32,
+        0x0300..=0x036F                          // combining diacriticals
+        | 0x0E31 | 0x0E34..=0x0E3A | 0x0E47..=0x0E4E // Thai vowels + tone marks
+        | 0x3099..=0x309A                        // dakuten / handakuten
+        | 0xFE00..=0xFE0F                        // variation selectors
+    )
+}
+
+/// Closing/trailing punctuation that may not be pushed to the start of a line.
+fn starts_line_never(c: char) -> bool {
+    matches!(
+        c,
+        '、' | '。'
+            | '，'
+            | '．'
+            | '！'
+            | '？'
+            | '；'
+            | '：'
+            | '）'
+            | '】'
+            | '》'
+            | '」'
+            | '』'
+            | '〕'
+            | '〉'
+            | '｝'
+            | '〗'
+            | '・'
+            | 'ー'
+            | '々'
+            | '〜'
+            | '％'
+            | '"'
+            | '\''
+            | '…'
+            | '‥'
+            | ')'
+            | ']'
+            | '}'
+            | ','
+            | '.'
+            | '!'
+            | '?'
+            | ';'
+            | ':'
+            // small kana conventionally stay with the preceding syllable
+            | 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'っ' | 'ゃ' | 'ゅ' | 'ょ'
+            | 'ァ' | 'ィ' | 'ゥ' | 'ェ' | 'ォ' | 'ッ' | 'ャ' | 'ュ' | 'ョ'
+    )
+}
+
+/// Opening punctuation that may not be left dangling at the end of a line.
+fn ends_line_never(c: char) -> bool {
+    matches!(
+        c,
+        '（' | '【'
+            | '《'
+            | '「'
+            | '『'
+            | '〔'
+            | '〈'
+            | '｛'
+            | '〖'
+            | '"'
+            | '\''
+            | '('
+            | '['
+            | '{'
+            | '＄'
+            | '￥'
+            | '＃'
+    )
+}
+
 /// Create a font: `px` @96dpi (DPI-scaled), Segoe UI (or Consolas if `mono`), bold/italic.
 unsafe fn font(hwnd: HWND, px: i32, bold: bool, italic: bool, mono: bool) -> HFONT {
     let h = crate::win::dpi_scale(hwnd, px);
@@ -1776,5 +1916,62 @@ mod tests {
         let r = linkify("https://example.com。あと");
         assert_eq!(r[0].1, Some("https://example.com".into()));
         assert!(r[1].0.starts_with('。'));
+    }
+}
+
+#[cfg(test)]
+mod linebreak_tests {
+    use super::*;
+
+    #[test]
+    fn latin_text_keeps_whitespace_only_wrapping() {
+        // No break opportunity inside a Latin word — otherwise every English paragraph would
+        // start wrapping mid-word.
+        assert!(!can_break_between('h', 'e'));
+        assert!(!can_break_between('e', 'l'));
+        assert!(!can_break_between('.', 'c')); // "foo.com"
+    }
+
+    #[test]
+    fn cjk_breaks_between_ideographs() {
+        assert!(can_break_between('世', '界'));
+        assert!(can_break_between('こ', 'れ'));
+        assert!(can_break_between('한', '국'));
+        // Latin↔CJK boundaries are break opportunities too.
+        assert!(can_break_between('a', '世'));
+        assert!(can_break_between('界', 'a'));
+    }
+
+    #[test]
+    fn kinsoku_punctuation_is_respected() {
+        // Closers may not be pushed to the start of the next line.
+        assert!(!can_break_between('世', '。'));
+        assert!(!can_break_between('世', '、'));
+        assert!(!can_break_between('世', '」'));
+        // Small kana stays put.
+        assert!(!can_break_between('あ', 'っ'));
+        // Openers may not be left dangling at the end of a line.
+        assert!(!can_break_between('「', '世'));
+        assert!(!can_break_between('（', '世'));
+        // But a break AFTER a closer is fine.
+        assert!(can_break_between('。', '世'));
+    }
+
+    #[test]
+    fn combining_marks_stay_with_their_base() {
+        // Thai vowel/tone marks are separate codepoints; orphaning one renders wrong.
+        assert!(!can_break_between('ก', '\u{0E34}'));
+        assert!(!can_break_between('ก', '\u{0E49}'));
+        // Japanese dakuten likewise.
+        assert!(!can_break_between('\u{304B}', '\u{3099}'));
+        // Thai without a mark following is a legal (if dictionary-less) break.
+        assert!(can_break_between('ก', 'ข'));
+    }
+
+    #[test]
+    fn whitespace_is_left_to_the_whitespace_arms() {
+        assert!(!can_break_between('世', ' '));
+        assert!(!can_break_between(' ', '世'));
+        assert!(!can_break_between('世', '\n'));
     }
 }

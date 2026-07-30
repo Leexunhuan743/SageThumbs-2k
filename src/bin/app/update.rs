@@ -466,17 +466,47 @@ pub(crate) fn download_and_install(parent: HWND) -> Result<String, String> {
 }
 
 /// Shown by the installer-spawned `--updated <ver>` relaunch after a silent self-update:
-/// a NON-BLOCKING tray balloon ("You're now on <ver>"), NOT a modal dialog — so the update
-/// stays genuinely silent (nothing to click, it auto-dismisses). The throwaway-window +
-/// temp-icon + balloon dance lives once in [`crate::win::notify_toast`] (the instant
-/// capture's failure note shares it).
-pub(crate) fn show_updated_toast(ver: &str) {
+/// a NON-BLOCKING tray balloon, NOT a modal dialog — so the update stays genuinely silent
+/// (nothing to click, it auto-dismisses). The throwaway-window + temp-icon + balloon dance
+/// lives once in [`crate::win::notify_toast`] (the instant capture's failure note shares it).
+///
+/// `installed` is the version the INSTALLER was built as (it passes its own compile-time
+/// `AppVer`); `CARGO_PKG_VERSION` is what this running image ACTUALLY is. They normally
+/// match. They don't when Windows couldn't replace a file that was still in use and Inno
+/// deferred it to a reboot — `/NORESTART` means we never reboot, so `{app}\SageThumbs2K.exe`
+/// is still the OLD binary when this relaunch fires. Claiming "you're now on <installed>"
+/// there is simply false, and it's exactly what makes a stuck update look like a mystery
+/// ("it said it updated and it's still on the old version"), so report what's true instead.
+pub(crate) fn show_updated_toast(installed: &str) {
+    let (title, body) = updated_toast_text(installed, env!("CARGO_PKG_VERSION"));
     unsafe {
-        crate::win::notify_toast(
+        crate::win::notify_toast(title, &body, std::time::Duration::from_secs(6));
+    }
+}
+
+/// Pure message choice for [`show_updated_toast`] — split out so the "don't claim a version
+/// we aren't running" rule is unit-tested without a tray icon. An unparseable `installed`
+/// (never seen from our own installer) falls back to the success wording rather than
+/// alarming the user about a restart that isn't needed.
+fn updated_toast_text(installed: &str, running: &str) -> (&'static str, String) {
+    let mismatch = matches!(
+        (parse_ver(installed), parse_ver(running)),
+        (Some(i), Some(r)) if i != r
+    );
+    if mismatch {
+        (
+            "SageThumbs 2K update needs a restart",
+            format!(
+                "Version {installed} was downloaded, but Windows couldn't replace files that \
+                 were still in use. Restart Windows to finish - you're still on {running} \
+                 until then."
+            ),
+        )
+    } else {
+        (
             "SageThumbs 2K updated",
-            &format!("You're now on version {ver}."),
-            std::time::Duration::from_secs(6),
-        );
+            format!("You're now on version {running}."),
+        )
     }
 }
 
@@ -499,6 +529,34 @@ mod tests {
         assert!(parse_ver("0.5.0") > parse_ver("0.4.9"));
         assert!(parse_ver("1.0.0") > parse_ver("0.9.9"));
         assert!(parse_ver("0.4.5") <= parse_ver("0.4.5")); // equal = up to date
+    }
+
+    #[test]
+    fn updated_toast_never_claims_a_version_we_arent_running() {
+        // Normal silent update: installer version == this image's version.
+        let (title, body) = super::updated_toast_text("1.3.8", "1.3.8");
+        assert_eq!(title, "SageThumbs 2K updated");
+        assert!(body.contains("now on version 1.3.8"), "{body}");
+
+        // Deferred-to-reboot replace: the installer was 1.3.8 but we're still the old EXE.
+        // The toast must NOT say "you're now on 1.3.8" — that's the mystery-update report.
+        let (title, body) = super::updated_toast_text("1.3.8", "1.3.7");
+        assert_eq!(title, "SageThumbs 2K update needs a restart");
+        assert!(!body.contains("now on version"), "{body}");
+        assert!(body.contains("Restart Windows"), "{body}");
+        assert!(body.contains("still on 1.3.7"), "{body}");
+
+        // A "v"-prefixed tag is the same version, not a mismatch.
+        assert_eq!(
+            super::updated_toast_text("v1.3.8", "1.3.8").0,
+            "SageThumbs 2K updated"
+        );
+
+        // Unparseable installer version → don't cry "restart" at the user.
+        assert_eq!(
+            super::updated_toast_text("", "1.3.8").0,
+            "SageThumbs 2K updated"
+        );
     }
 
     #[test]

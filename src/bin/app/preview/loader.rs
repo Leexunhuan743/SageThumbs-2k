@@ -119,7 +119,8 @@ pub(super) unsafe fn load(hwnd: HWND, path: &str) {
             match super::video::create(hwnd, hwnd, &cr, st.hinst, path, is_audio(path)) {
                 Some(p) => {
                     *st.video.borrow_mut() = Some(p);
-                    SetTimer(Some(hwnd), SCRUB_TIMER_ID, 250, None); // repaint the scrub position
+                    // Repaint the scrub position.
+                    SetTimer(Some(hwnd), SCRUB_TIMER_ID, 250, None);
                     // Audio has no picture, so decode its embedded cover art for the backdrop.
                     // The engine is already playing; this lands later and only repaints (see
                     // `on_render`, which routes a decode arriving while the kind is still Video
@@ -198,9 +199,14 @@ pub(super) unsafe fn load_sync(hwnd: HWND, path: Option<&str>, opts: &super::Sho
             place(hwnd, cw, ch, Some((-32000, -32000)));
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             st.shown.set(true);
-            if let Some(p) =
-                super::video::create(hwnd, hwnd, &video_rect(hwnd), st.hinst, path, is_audio(path))
-            {
+            if let Some(p) = super::video::create(
+                hwnd,
+                hwnd,
+                &video_rect(hwnd),
+                st.hinst,
+                path,
+                is_audio(path),
+            ) {
                 *st.video.borrow_mut() = Some(p);
                 // Headless `--play --shot` of a track: decode its art synchronously so the capture
                 // shows the same backdrop the live viewer paints (the async path never lands in a

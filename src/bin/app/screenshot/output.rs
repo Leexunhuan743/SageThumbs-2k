@@ -83,16 +83,99 @@ pub(super) fn save_png_to_path(
     img.save(path).is_ok()
 }
 
-/// Save the capture to a unique temp PNG and return its path — used by the Pin
-/// button, which spawns a separate `--pin` process to load + float it.
+/// Save the capture to a unique temp PNG and return its path — the handoff to a helper
+/// process (`--upload`, `--ocr`), which owns the file and deletes it once it has read it.
+/// If the helper never starts, the caller (`overlay::compose_and_spawn`) deletes it instead.
 pub(super) fn save_temp_png(top_down_bgra: &[u8], w: i32, h: i32) -> Option<String> {
     let img = to_rgba(top_down_bgra, w, h)?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    let mut p = std::env::temp_dir();
-    p.push(format!("st2k_pin_{}_{}.png", std::process::id(), nanos));
+    let dir = std::env::temp_dir();
+    sweep_stale_captures(&dir);
+    let mut p = dir.clone();
+    p.push(format!("st2k_shot_{}_{}.png", std::process::id(), nanos));
     img.save(&p).ok()?;
     p.to_str().map(|s| s.to_string())
+}
+
+/// Age past which a leftover `st2k_shot_*.png` is certainly orphaned. The handoff is
+/// read-and-delete within a second or two, so anything from yesterday belongs to a run that died
+/// between spawning the helper and the helper reading the file.
+const CAPTURE_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Delete stale capture hand-off PNGs from `dir`. These are pictures of the user's screen, so
+/// they shouldn't sit in `%TEMP%` indefinitely when the read-and-delete handshake is interrupted
+/// (helper killed at startup, machine powered off mid-capture). Best-effort and cheap: it runs
+/// only when a new capture is being written, and never touches a file younger than the TTL, so a
+/// hand-off in flight — including a concurrent one from another instance — is always safe.
+fn sweep_stale_captures(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten().take(4096) {
+        let name = e.file_name();
+        let Some(n) = name.to_str() else { continue };
+        if !(n.starts_with("st2k_shot_") && n.ends_with(".png")) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > CAPTURE_TTL);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The sweep must only ever take files that are BOTH ours and old. Getting this wrong deletes
+    /// a capture out from under a hand-off that's still in flight — i.e. the user's screenshot
+    /// vanishes — or eats an unrelated file in `%TEMP%`.
+    #[test]
+    fn capture_sweep_takes_only_stale_captures() {
+        let dir = std::env::temp_dir().join(format!("st2k_sweep_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        use std::io::Write;
+        let write = |name: &str, age: Option<std::time::Duration>| {
+            let p = dir.join(name);
+            let mut f = std::fs::File::create(&p).expect("create");
+            f.write_all(b"x").expect("write");
+            if let Some(a) = age {
+                f.set_modified(std::time::SystemTime::now() - a)
+                    .expect("mtime");
+            }
+            p
+        };
+
+        let fresh = write("st2k_shot_1234_5678.png", None);
+        let stale = write("st2k_shot_4321_8765.png", Some(CAPTURE_TTL * 2));
+        // Old, but not ours — and ours-looking, but not a .png.
+        let other = write("someone_elses.png", Some(CAPTURE_TTL * 2));
+        let notpng = write("st2k_shot_9_9.tmp", Some(CAPTURE_TTL * 2));
+
+        sweep_stale_captures(&dir);
+
+        assert!(
+            fresh.exists(),
+            "deleted a capture that could still be in flight"
+        );
+        assert!(
+            !stale.exists(),
+            "left a stale capture of the user's screen behind"
+        );
+        assert!(other.exists(), "deleted a file that isn't ours");
+        assert!(notpng.exists(), "deleted a non-capture file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

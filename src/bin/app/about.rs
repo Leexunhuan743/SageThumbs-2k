@@ -44,6 +44,9 @@ const ID_STATUS_PILL: i32 = 1202;
 const ID_SUBTITLE: i32 = 1203;
 const ID_LICENSE: i32 = 1204;
 const ID_COPYRIGHT: i32 = 1205;
+/// The "Send feedback" pill — same owner-drawn stadium as the version/status pills,
+/// centered on its own row in the band between them and the footer.
+const ID_FEEDBACK_PILL: i32 = 1206;
 
 /// Posted from the update-check worker thread back to the About window: the check
 /// finished. `WPARAM` = outcome (0 up-to-date, 1 update available, 2 failed);
@@ -97,6 +100,13 @@ struct About {
     /// The GitHub mark, pre-composited on the pill fill so the blit is seamless. Freed
     /// in `WM_NCDESTROY`.
     gh_icon: Option<HBITMAP>,
+    /// The product logo and the LunarWerx wordmark handed to STATIC controls via
+    /// `STM_SETIMAGE`. A STATIC does NOT free an image set that way, and `set_static_bitmap`
+    /// only deletes whatever the control held BEFORE (nothing, on a fresh control) — so
+    /// without keeping these they leaked one HBITMAP each per About open/close, exactly the
+    /// bug `gh_icon` was already tracked to avoid. Freed in `WM_NCDESTROY`.
+    logo_icon: Option<HBITMAP>,
+    lw_icon: Option<HBITMAP>,
 }
 
 /// Open the About box, owned by `parent`.
@@ -159,6 +169,60 @@ pub(crate) unsafe fn show_about(parent: HWND) {
         }
         let _ = ShowWindow(hwnd, SW_SHOW);
     }
+}
+
+/// Headless capture of the About box (`--shot <out.png> --window about`) — built
+/// off-screen and `PrintWindow`ed, so the pills (including "Send feedback") are
+/// verifiable without opening a window or driving the desktop.
+///
+/// `build_about` lays out against ABSOLUTE design coords assuming the client is
+/// exactly `CW`×`CH`, but `create_shot_window`'s `design_w/h` size the whole WINDOW
+/// — so the frame is added back here rather than guessed at the call.
+pub(crate) unsafe fn run_shot_about(out: &str) -> bool {
+    let hinst: HINSTANCE = match GetModuleHandleW(None) {
+        Ok(h) => h.into(),
+        Err(_) => return false,
+    };
+    let Some(hwnd) = crate::win::create_shot_window(
+        hinst,
+        is_dark(),
+        w!("SageThumbs2KAbout"),
+        Some(about_wndproc),
+        "About SageThumbs 2K",
+        CW,
+        CH,
+    ) else {
+        return false;
+    };
+    // Grow the frame so the CLIENT is the design size the controls were placed against.
+    let dpi = GetDpiForWindow(hwnd).max(96) as i32;
+    let mut rc = RECT {
+        left: 0,
+        top: 0,
+        right: dpi_scale_dpi(CW, dpi),
+        bottom: dpi_scale_dpi(CH, dpi),
+    };
+    let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
+    let exstyle = WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32);
+    let _ = AdjustWindowRectExForDpi(&mut rc, style, BOOL(0).into(), exstyle, dpi as u32);
+    let _ = SetWindowPos(
+        hwnd,
+        None,
+        0,
+        0,
+        rc.right - rc.left,
+        rc.bottom - rc.top,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+    // Pump past MIN_SPIN_FRAMES (≈2 s) so the status pill settles on a real result
+    // instead of catching the deliberate "Checking…" spinner mid-animation.
+    crate::win::pump_msgs(140);
+    crate::win::force_repaint(hwnd);
+    crate::win::pump_msgs(8);
+    crate::win::force_repaint(hwnd);
+    let ok = crate::screenshot::capture_hwnd_to_png(hwnd, std::path::Path::new(out));
+    let _ = DestroyWindow(hwnd);
+    ok
 }
 
 // ---- Colour helpers -----------------------------------------------------
@@ -258,6 +322,9 @@ unsafe fn build_about(hwnd: HWND, hinst: HINSTANCE) {
     );
     if let Some(hbmp) = load_art(LOGO_PNG, "logo.png", 72, 72) {
         set_static_bitmap(logo, hbmp);
+        if !st.is_null() {
+            (*st).logo_icon = Some(hbmp); // the STATIC won't free it — we do, in WM_NCDESTROY
+        }
     }
 
     // Product title — big + bold — then the muted subtitle.
@@ -333,6 +400,23 @@ unsafe fn build_about(hwnd: HWND, hinst: HINSTANCE) {
         hinst,
     );
 
+    // "Send feedback", centered on its own row under the status pills. Sized to its
+    // label (same 14px end padding as the others) so the stadium never looks stretched.
+    let fb = t("fb_pill");
+    let fb_w = 14 + text_width(fb) + 14;
+    ctl(
+        hwnd,
+        STATIC,
+        "",
+        pill,
+        (CW - fb_w) / 2,
+        212,
+        fb_w,
+        30,
+        ID_FEEDBACK_PILL,
+        hinst,
+    );
+
     // Bottom-left: license + copyright (muted via WM_CTLCOLORSTATIC).
     ctl(
         hwnd,
@@ -379,6 +463,9 @@ unsafe fn build_about(hwnd: HWND, hinst: HINSTANCE) {
     );
     if let Some(hbmp) = lw_logo_hbitmap(lw_w as u32, lw_h as u32) {
         set_static_bitmap(lw, hbmp);
+        if !st.is_null() {
+            (*st).lw_icon = Some(hbmp); // ditto — freed in WM_NCDESTROY
+        }
     }
 }
 
@@ -656,6 +743,22 @@ unsafe fn draw_status_pill(hwnd: HWND, d: &DRAWITEMSTRUCT) {
     draw_text(hdc, &text, gx + dotd + gap, &rc, DARK_TEXT());
 }
 
+/// The "Send feedback" pill: the same stadium as its neighbours, with the label
+/// centered. No icon or dot — those two carry state (a version, a check result);
+/// this one is a plain action, so centered text is what reads as "click me".
+unsafe fn draw_feedback_pill(hwnd: HWND, d: &DRAWITEMSTRUCT) {
+    let hdc = d.hDC;
+    let rc = d.rcItem;
+    fill_rc(hdc, &rc, DARK_BG());
+    pill_frame(hwnd, hdc, &rc);
+
+    let label = t("fb_pill");
+    SelectObject(hdc, HGDIOBJ(gui_font_for(hwnd).0));
+    let tw = measure(hdc, label);
+    let gx = rc.left + ((rc.right - rc.left) - tw) / 2;
+    draw_text(hdc, label, gx, &rc, DARK_TEXT());
+}
+
 unsafe fn ctlcolor_text(hdc: HDC, color: COLORREF) -> LRESULT {
     SetTextColor(hdc, color);
     SetBkColor(hdc, DARK_BG());
@@ -691,6 +794,8 @@ extern "system" fn about_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                     spin_frame: 0,
                     pending: None,
                     gh_icon: None,
+                    logo_icon: None,
+                    lw_icon: None,
                 });
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
                 build_about(hwnd, hinst);
@@ -702,6 +807,7 @@ extern "system" fn about_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                 match d.CtlID as i32 {
                     ID_VER_PILL => draw_ver_pill(hwnd, d),
                     ID_STATUS_PILL => draw_status_pill(hwnd, d),
+                    ID_FEEDBACK_PILL => draw_feedback_pill(hwnd, d),
                     _ => {}
                 }
                 LRESULT(1)
@@ -760,18 +866,24 @@ extern "system" fn about_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                     ID_LW_LOGO if notify == STN_CLICKED => open_url(URL_PARENT),
                     ID_VER_PILL if notify == STN_CLICKED => open_url(URL_GITHUB),
                     ID_STATUS_PILL if notify == STN_CLICKED => on_status_click(hwnd),
+                    // Modal to About, so the box the user was reading stays put behind it.
+                    ID_FEEDBACK_PILL if notify == STN_CLICKED => {
+                        crate::feedback::show_feedback(hwnd)
+                    }
                     _ => {}
                 }
                 LRESULT(0)
             }
             WM_SETCURSOR => {
-                // Hand cursor over the three clickables; default elsewhere.
+                // Hand cursor over the four clickables; default elsewhere.
                 let over = HWND(wparam.0 as *mut c_void);
-                let clickable = [ID_LW_LOGO, ID_VER_PILL, ID_STATUS_PILL].iter().any(|&id| {
-                    GetDlgItem(Some(hwnd), id)
-                        .map(|h| h == over)
-                        .unwrap_or(false)
-                });
+                let clickable = [ID_LW_LOGO, ID_VER_PILL, ID_STATUS_PILL, ID_FEEDBACK_PILL]
+                    .iter()
+                    .any(|&id| {
+                        GetDlgItem(Some(hwnd), id)
+                            .map(|h| h == over)
+                            .unwrap_or(false)
+                    });
                 if clickable {
                     if let Ok(hand) = LoadCursorW(None, IDC_HAND) {
                         SetCursor(Some(hand));
@@ -794,7 +906,7 @@ extern "system" fn about_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                     let _ = KillTimer(Some(hwnd), SPIN_TIMER_ID);
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                     let st = Box::from_raw(p);
-                    if let Some(icon) = st.gh_icon {
+                    for icon in [st.gh_icon, st.logo_icon, st.lw_icon].into_iter().flatten() {
                         let _ = DeleteObject(HGDIOBJ(icon.0));
                     }
                 }

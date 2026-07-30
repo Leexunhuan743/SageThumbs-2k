@@ -54,6 +54,12 @@ pub(super) unsafe fn create(
     let base = std::env::var("LOCALAPPDATA").ok()?;
     let root = std::path::Path::new(&base).join("SageThumbs2K");
     let profile_dir = if mode == Mode::Live {
+        // Clear out any ephemeral profile a previous run failed to remove before making ours.
+        // `Drop` calls `remove_dir_all` right after `controller.Close()`, but Close returns when
+        // the CONTROLLER is torn down, not when the msedgewebview2 host process has exited and
+        // released its handles — so the removal can lose that race, and nothing retried it. These
+        // hold a live page's cookies and cache; they shouldn't accumulate under LOCALAPPDATA.
+        sweep_stale_profiles(&root);
         let d = root.join(format!("wv2-ephemeral-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&d);
         Some(d)
@@ -157,6 +163,50 @@ pub(super) unsafe fn create(
         controller,
         profile_dir,
     })
+}
+
+/// Remove `wv2-ephemeral-<pid>` folders left behind by earlier runs.
+///
+/// The pid in the name is the check: a folder is only removed when NO live process holds that id,
+/// so a second viewer running right now (or this process's own folder) is never touched. Pid reuse
+/// can make us skip one — the next sweep gets it. Entirely best-effort: a folder whose files are
+/// still locked simply stays for next time.
+fn sweep_stale_profiles(root: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in entries.flatten().take(256) {
+        let name = e.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix("wv2-ephemeral-"))
+            .and_then(|p| p.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == std::process::id() || pid_is_alive(pid) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(e.path());
+    }
+}
+
+/// Is a process with this id currently running? Used only to decide whether a leftover profile
+/// folder is safe to delete, so "can't tell" is treated as "alive" (leave it alone).
+fn pid_is_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false; // no such process (or gone) — the folder is fair game
+        };
+        let mut code = 0u32;
+        let alive = GetExitCodeProcess(h, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32;
+        let _ = CloseHandle(h);
+        alive
+    }
 }
 
 impl WebViewHost {

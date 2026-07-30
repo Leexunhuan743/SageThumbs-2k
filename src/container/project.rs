@@ -100,8 +100,12 @@ fn try_paths<R: Read + Seek>(zip: &mut ZipArchive<R>, paths: &[&str]) -> Option<
 fn read_suffix<R: Read + Seek>(zip: &mut ZipArchive<R>, suffix_lc: &str) -> Option<Vec<u8>> {
     // Locate the entry via the RAW reader — a zstd member errors out of the normal
     // `by_index`, so it'd otherwise be invisible.
+    // Capped like every other central-directory walk in `container/` — a crafted zip can declare
+    // millions of near-empty entries, and each iteration here allocates a lowercased name. This
+    // runs in-process for the classic-menu preview, where the caller's budget only bounds how long
+    // it WAITS: the worker keeps burning CPU in the shell after the caller has given up.
     let mut hit = None;
-    for i in 0..zip.len() {
+    for i in 0..zip.len().min(super::MAX_LIST_ENTRIES) {
         let Ok(f) = zip.by_index_raw(i) else { continue };
         if f.name().to_ascii_lowercase().ends_with(suffix_lc) {
             hit = Some((i, f.name().to_string()));

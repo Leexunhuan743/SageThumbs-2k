@@ -2,6 +2,54 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
+## 1.4.0
+
+### Added
+
+- **Send feedback without leaving the app.** A new **Send feedback** box lets you fire off a
+  suggestion, a bug report, or "please support this file format" straight to the developer,
+  with no GitHub account needed. Pick what it's about, type your message, and send. Leaving
+  an email address is entirely optional; skip it and the message still arrives, you just
+  won't get a reply. If you'd rather do it in the open there's a link to the GitHub issue
+  tracker right in the box, and if the send fails your text is put on your clipboard so
+  nothing is lost. Reach it from the **Send feedback** button in the About box.
+
+- **Read the text off your screen.** The screenshot editor has a new **Copy text (OCR)**
+  button, or press **Ctrl+T**: drag out a region, click it, and the words inside land on your
+  clipboard *and* open in a small editable window, so you can fix anything the scan misread
+  before you paste. Useful for text you can't select any other way: an error dialog, a video
+  frame, a screenshared document, a photo of a receipt. It uses the text recognition already
+  built into Windows, so it adds nothing to the download. If there are no readable words in
+  the region it tells you, instead of quietly copying nothing.
+- **A one-key version of it.** Settings ▸ Screenshots ▸ Custom action gained **Copy text on
+  screen (OCR)**. Bind it to a hotkey and there is no editor at all: press the key, drag over
+  the text, and it is on your clipboard the instant you let go. Don't want to set up a hotkey?
+  The same thing is one click away in the tray icon's menu.
+- **OCR now reads small on-screen text.** Windows' recognizer quietly gives up on the small type
+  most windows actually use, returning nothing at all or running words together. Captures are now
+  enlarged before they're read, which is exactly what it needed: text that came back empty or as
+  `theothersession's` now transcribes cleanly. Big captures are left alone, since their text is
+  already large enough.
+- **And a button for it in Quick preview.** Press Space on a picture and the toolbar now has a
+  **Copy text (OCR)** button: click it and the words in that file are on your clipboard. It reads
+  every format SageThumbs can open, not just the ones Windows understands by itself, so a
+  Photoshop file, a camera RAW or a scanned document all work. On a multi-page PDF it reads the
+  page you're actually looking at.
+
+### Fixed
+
+- **Chinese, Japanese and Korean text files are readable again.** Quick preview assumed every
+  text file was UTF-8, so anything saved in GBK/GB18030, Shift-JIS, Big5 or EUC-KR came up as a
+  solid wall of `` replacement characters. Those encodings cover a huge share of real-world
+  `.txt`, `.csv` and `.srt` files in those languages. The preview now works out the encoding and
+  shows the actual text. Files saved as UTF-16 without a byte-order mark are picked up too.
+- **Chinese, Japanese and Thai text now wraps instead of running off the edge.** Those languages
+  don't put spaces between words, and Quick preview only knew how to break lines at spaces, so a
+  whole paragraph was treated as one enormous word, ran off the right-hand side of the panel and
+  got cut off. Text now wraps to the panel like it should, and follows the usual typesetting
+  rules: a full stop or closing bracket won't be pushed to the start of a line, and an opening
+  bracket won't be left stranded at the end of one.
+
 ## 1.3.8
 
 ### Fixed

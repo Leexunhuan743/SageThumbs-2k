@@ -31,12 +31,14 @@ mod cred_store;
 mod dark;
 mod explorer_selection;
 mod eyedropper;
+mod feedback;
 mod files_to_folder;
 mod gdip;
 mod hotkey;
 mod http;
 mod image_info;
 mod oauth;
+mod ocr_result;
 mod preview;
 mod screenshot;
 mod settings_dlg;
@@ -233,6 +235,17 @@ fn main() {
                 match window {
                     "convert" => crate::convert::run_shot_convert(out),
                     "eyedropper" => crate::eyedropper::run_shot_eyedropper(out),
+                    "feedback" => crate::feedback::run_shot_feedback(out),
+                    "about" => crate::about::run_shot_about(out),
+                    // The OCR result window, over canned text (no recognizer run) — or the
+                    // real text of `--file <img>` when you want to see an actual scan.
+                    "ocr" => {
+                        let file = args
+                            .iter()
+                            .position(|a| a == "--file")
+                            .and_then(|p| args.get(p + 1));
+                        crate::ocr_result::run_shot_ocr(out, file.map(String::as_str))
+                    }
                     "preview" => {
                         // `--file <path>` input (synthetic gradient if absent), plus optional
                         // headless state forcing: `--hot N` (button N hovered), `--pinned`,
@@ -291,6 +304,29 @@ fn main() {
             }
             return;
         }
+        // Screen OCR: `--ocr <png>` (spawned by the capture overlay's OCR button /
+        // Ctrl+T) reads the text out of the throwaway capture, copies it, and shows it.
+        if let Some(pos) = args.iter().position(|a| a == "--ocr") {
+            if let Some(path) = args.get(pos + 1) {
+                ocr_result::run_ocr(path);
+            }
+            return;
+        }
+        // Screen OCR on a file the user owns: `--ocr-keep <path> [--page N]` (the Quick
+        // preview's OCR toolbar button). Unlike `--ocr` it does NOT delete its input. `--page`
+        // is the 0-based PDF page the viewer is showing. Checked before `--ocr` (exact match,
+        // so they don't overlap).
+        if let Some(pos) = args.iter().position(|a| a == "--ocr-keep") {
+            if let Some(path) = args.get(pos + 1) {
+                let page = args
+                    .iter()
+                    .position(|a| a == "--page")
+                    .and_then(|p| args.get(p + 1))
+                    .and_then(|s| s.parse::<u32>().ok());
+                ocr_result::run_ocr_keep(path, page);
+            }
+            return;
+        }
         // Quick preview: `--preview [path]` launches the single-instance QuickLook-style
         // viewer. With no daemon hook yet (Phase 2), it's driven by the path arg + WM_COPYDATA
         // commands. A second launch forwards its path to the running viewer and exits.
@@ -307,6 +343,14 @@ fn main() {
         // action. Checked before `--screenshot` (exact match, so they don't overlap).
         if args.iter().any(|a| a == "--screenshot-instant") {
             crate::screenshot::capture_instant();
+            return;
+        }
+        // Screen OCR mode: `--screenshot-ocr` opens the same overlay, but the first
+        // finished region drag reads its text and closes — no editor. The "Copy text on
+        // screen (OCR)" custom-hotkey action. Checked before `--screenshot` (exact match,
+        // so they don't overlap).
+        if args.iter().any(|a| a == "--screenshot-ocr") {
+            crate::screenshot::run_capture_ocr(hinst);
             return;
         }
         // Screenshot mode: `--screenshot` opens the Flameshot-style capture +

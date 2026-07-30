@@ -722,7 +722,7 @@ pub fn decode_menu_preview(bytes: &[u8]) -> Result<DynamicImage> {
     // in the in-explorer menu (unlike video / PDF / ImageMagick, which stay excluded):
     // resvg is pure-Rust and in-process (no subprocess to freeze the shell), fast for the
     // typical icon/logo/illustration SVG, and bounded by [`SVG_TIMEOUT`] — and the caller's
-    // 2 s menu budget ([`contextmenu::MENU_PREVIEW_BUDGET`], on a detached worker) caps the
+    // 125 ms menu budget ([`contextmenu::MENU_PREVIEW_BUDGET`], on a detached worker) caps the
     // user-visible wait regardless, degrading a pathological SVG to a caption-only tile.
     // resvg is already the SVG tier for the (isolated) thumbnail + preview handlers, so this
     // adds no dependency and no new decode code — it just stops the menu skipping it.

@@ -41,19 +41,25 @@ pub(crate) fn sanitize_component(s: &str) -> String {
     }
 }
 
-/// `combined.<ext>` (deduped) next to the first selected file.
-pub(crate) fn combined_path(first: &str, ext: &str) -> PathBuf {
+/// `combined.<ext>` (deduped) next to the first selected file, ATOMICALLY reserved.
+///
+/// Goes through [`super::encode::reserve`] rather than a `while cand.exists()` loop: two Combine
+/// runs fired at the same folder in quick succession both compute the identical free name, and
+/// the second `write_atomic` rename then lands on top of the first's finished file. `reserve`
+/// claims the name with `create_new`, so the second run walks on to `combined (2).<ext>`. Hold
+/// the returned slot until the write completes — dropping it early releases the reservation.
+pub(crate) fn combined_path(first: &str, ext: &str) -> super::encode::OutSlot {
     let dir = Path::new(first)
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let mut cand = dir.join(format!("combined.{ext}"));
-    let mut n = 2u32;
-    while cand.exists() {
-        cand = dir.join(format!("combined ({n}).{ext}"));
-        n += 1;
-    }
-    cand
+    super::encode::reserve(|n| {
+        if n == 0 {
+            dir.join(format!("combined.{ext}"))
+        } else {
+            dir.join(format!("combined ({}).{ext}", n + 1))
+        }
+    })
 }
 
 /// A path's **file name** as a NUL-terminated UTF-16 buffer — the pre-encoded

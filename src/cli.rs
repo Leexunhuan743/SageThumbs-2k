@@ -220,13 +220,21 @@ pub fn strip_meta(input: &str) -> Result<String, String> {
 
 /// OCR an image to plain text on stdout.
 pub fn ocr(input: &str) -> Result<String, String> {
-    // Same shared input cap as `thumbnail` — OCR additionally copies the bytes onto
-    // a worker thread, so an uncapped huge file would be ~2x its size in memory.
+    // Same shared input cap as `thumbnail`. (The buffer is MOVED onto the OCR worker
+    // thread, so it isn't held twice.)
     let bytes = decode::read_capped(input).map_err(|e| e.to_string())?;
     // Propagate the REAL error — "no text", "no language pack", and "decode failed" are
     // three different, actionable situations (especially for an MCP/AI caller parsing this).
-    ocr::recognize_bytes(&bytes)
-        .map_err(|e| format!("OCR failed: {e} (no text found, or no OCR language pack installed)"))
+    ocr::recognize_bytes(bytes).map_err(|e| {
+        // "Too large for the recognizer" is a different, actionable answer from "no text /
+        // no language pack" — an MCP or AI caller parsing this should be told to downscale,
+        // not to go install something.
+        if e.code() == ocr::OCR_IMAGE_TOO_LARGE {
+            format!("OCR failed: {e} (the image is larger than the recognizer's maximum dimension)")
+        } else {
+            format!("OCR failed: {e} (no text found, or no OCR language pack installed)")
+        }
+    })
 }
 
 /// Combine images into one PDF (one page each).

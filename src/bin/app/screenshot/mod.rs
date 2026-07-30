@@ -25,8 +25,8 @@ pub(crate) use daemon::run_daemon;
 pub(crate) use enable::{
     heal_if_wanted, is_daemon_running, is_enabled, quit, reload_hotkey, set_enabled,
 };
-pub(crate) use overlay::{capture_instant, run_capture, run_capture_automation};
-pub(crate) use upload::{open_hosts_config, run_upload, run_upload_keep};
+pub(crate) use overlay::{capture_instant, run_capture, run_capture_automation, run_capture_ocr};
+pub(crate) use upload::{open_hosts_config, run_upload, run_upload_keep, with_busy_pill};
 pub(crate) use window_shot::{capture_hwnd_to_png, downscale_to_width, encode_gif};
 
 /// The folder Ctrl+S auto-saves to when the "fixed save folder" option is on: the
@@ -51,15 +51,22 @@ use sagethumbs2k_core::CREATE_NO_WINDOW;
 
 /// Spawn another instance of ourselves with `args`, fully detached (null stdio, no
 /// console). Used everywhere the feature launches a sibling process (capture,
-/// daemon, pin, upload) so each truly outlives its spawner.
-pub(super) fn spawn_self(args: &[&str]) {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
-    }
+/// daemon, pin, upload, OCR) so each truly outlives its spawner.
+///
+/// Returns whether the child actually started. Callers that handed the child a temp file
+/// to own (the capture PNG the `--upload` / `--ocr` helpers delete after reading)
+/// MUST check this: if nobody started, nobody is going to clean it up, and a picture of the
+/// user's screen would sit in `%TEMP%` forever.
+pub(super) fn spawn_self(args: &[&str]) -> bool {
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new(exe)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .is_ok()
 }

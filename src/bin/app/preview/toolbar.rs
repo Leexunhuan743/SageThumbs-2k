@@ -47,6 +47,7 @@ pub(super) fn btn_tip(b: Btn) -> &'static str {
         Btn::PdfNext => "preview_tip_next",
         Btn::Pin => "preview_tip_pin",
         Btn::Copy => "preview_tip_copy",
+        Btn::Ocr => "preview_tip_ocr",
         Btn::Info => "preview_tip_info",
         Btn::Upload => "preview_tip_upload",
         Btn::OpenWith => "preview_tip_openwith",
@@ -145,4 +146,31 @@ pub(super) unsafe fn hit_button(hwnd: HWND, x: i32, y: i32) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every caption button must have a REAL translated tooltip. `i18n::t` returns a
+    /// `⟨?⟩` sentinel when a key is missing from both the active locale and `en`, so this
+    /// catches the easy half of adding a button: wiring the enum + paint + click and then
+    /// forgetting the string. Distinctness catches the copy-paste variant (two buttons
+    /// pointing at one key), which reads as a duplicated tooltip on hover.
+    #[test]
+    fn every_toolbar_button_has_its_own_real_tooltip() {
+        let mut seen: Vec<&str> = Vec::new();
+        for &b in BTNS.iter() {
+            let tip = btn_tip(b);
+            assert!(
+                !tip.is_empty() && !tip.starts_with('\u{27e8}'),
+                "a preview toolbar button has no translated tooltip (missing locale key)"
+            );
+            assert!(
+                !seen.contains(&tip),
+                "two preview toolbar buttons share the tooltip {tip:?}"
+            );
+            seen.push(tip);
+        }
+    }
 }

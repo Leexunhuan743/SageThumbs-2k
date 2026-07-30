@@ -7,8 +7,8 @@
 
       pwsh scripts\verify.ps1 -Fast                       # check + lib/app unit tests   (~20 s)
       pwsh scripts\verify.ps1                             # + debug build + ALL tests    (~1 min)
-      pwsh scripts\verify.ps1 -Lint                       # + clippy -D warnings, cargo-deny,
-                                                          #   cargo-machete (mirrors CI locally)
+      pwsh scripts\verify.ps1 -Lint                       # + rustfmt, clippy -D warnings,
+                                                          #   cargo-deny, cargo-machete (mirrors CI)
       pwsh scripts\verify.ps1 -Samples "archive-*"        # + render matching corpus samples,
                                                           #   asserting _expected-fail.txt
       pwsh scripts\verify.ps1 -Release                    # + the one §6.0 release pair  (~3 min)
@@ -39,8 +39,8 @@ param(
     # Elevated dev install (scripts\install.ps1) + installed==built hash check.
     [switch]$Install,
     # Static analysis, mirroring CI's gates locally (run before any push):
-    # clippy -D warnings (all targets), cargo-deny (advisories/licenses per
-    # deny.toml), cargo-machete (unused deps). ~1 min warm.
+    # rustfmt --check, clippy -D warnings (all targets), cargo-deny (advisories/
+    # licenses per deny.toml), cargo-machete (unused deps). ~1 min warm.
     [switch]$Lint
 )
 
@@ -68,6 +68,11 @@ Stage 'cargo check' { cargo check --quiet 2>&1 | Where-Object { $_ -match 'error
 
 # ---- static analysis (mirrors CI's clippy/deny gates; catch it BEFORE the push) ----
 if ($Lint) {
+    # Formatting. Cheapest gate there is and it keeps diffs about the CHANGE, not about
+    # whitespace — `cargo fmt --all` fixes anything this reports.
+    Stage 'cargo fmt --check' {
+        cargo fmt --all --check 2>&1 | Select-Object -First 40 | Write-Host
+    }
     # CI gates clippy on --release; debug clippy catches the same lints faster and
     # shares the ladder's debug cache. -D warnings: the tree is kept warning-clean,
     # intentional exceptions carry a local #[allow] with a reason.
@@ -117,13 +122,29 @@ if ($Samples) {
             cargo build --quiet --bin st2k 2>&1 | Write-Host
         }
         $expectFail = @{}
+        $sizeGated  = @{}
         $manifest = Join-Path $corpus '_expected-fail.txt'
         if (Test-Path $manifest) {
             Get-Content $manifest | ForEach-Object {
                 $line = $_.Trim()
-                if ($line -and -not $line.StartsWith('#')) { $expectFail[$line] = $true }
+                if (-not $line -or $line.StartsWith('#')) { return }
+                # `size:<name>` = "must not render ONLY because it exceeds the MaxSize setting".
+                # That expectation is machine state, not code, so it's asserted conditionally.
+                if ($line.StartsWith('size:')) {
+                    $line = $line.Substring(5).Trim()
+                    $sizeGated[$line] = $true
+                }
+                $expectFail[$line] = $true
             }
         }
+        # The effective "skip files bigger than this" limit (settings.rs DEFAULT_MAX_FILE_MB = 100,
+        # overridable per user in HKCU). A size-gated negative sample only proves anything while
+        # the machine's limit is actually below the sample — otherwise rendering it is CORRECT,
+        # and asserting a failure would just cry wolf on whoever raised the setting.
+        $maxMb = 100
+        $reg = Get-ItemProperty 'HKCU:\Software\SageThumbs2K' -ErrorAction SilentlyContinue
+        if ($null -ne $reg -and $null -ne $reg.MaxSize) { $maxMb = [int]$reg.MaxSize }
+        $maxBytes = if ($maxMb -le 0) { [long]::MaxValue } else { [long]$maxMb * 1MB }
         $files = Get-ChildItem $corpus -Filter $Samples -File |
                  Where-Object { $_.Name -notlike '_*' -and $_.Name -ne 'contact.png' }
         if (-not $files) { Write-Host "[verify] no corpus files match '$Samples'" -ForegroundColor Red; exit 1 }
@@ -132,6 +153,10 @@ if ($Samples) {
         $st2k = Join-Path $target 'debug\st2k.exe'
         $bad = 0
         foreach ($f in $files) {
+            if ($sizeGated.ContainsKey($f.Name) -and $f.Length -le $maxBytes) {
+                Write-Host ("  SKIP      {0}  [MaxSize is {1} MB — sample is under the limit, so it SHOULD render]" -f $f.Name, $maxMb) -ForegroundColor DarkGray
+                continue
+            }
             $png = Join-Path $out ($f.BaseName + '-' + $f.Extension.TrimStart('.') + '.png')
             & $st2k thumbnail $f.FullName $png 256 *> $null
             $rendered = ($LASTEXITCODE -eq 0) -and (Test-Path $png)

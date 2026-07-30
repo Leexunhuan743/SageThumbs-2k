@@ -51,8 +51,19 @@ fn find_soi(b: &[u8], window: usize) -> Option<usize> {
 /// Width/height from the JPEG starting at the slice head, read off the first SOF
 /// marker (`FFC0`/`FFC1`/`FFC2`). Bounds-checked.
 fn jpeg_dims(j: &[u8]) -> Option<(u16, u16)> {
+    // Cap the walk like `container::jpeg_span_len` does. This runs BEFORE the MAX_COVER check, so
+    // `j` is the rest of the whole file — a preview JPEG with no SOF (crafted or truncated) would
+    // otherwise byte-crawl to the end of a file up to the 256 MiB read cap, in-process, on the
+    // classic-menu preview's shared budget. A real doc-preview SOF is in the first few hundred
+    // bytes; nothing legitimate needs thousands of segments.
+    const MAX_SEGMENTS: usize = 4096;
     let mut p = 2usize; // past SOI
+    let mut steps = 0usize;
     while p + 9 < j.len() {
+        steps += 1;
+        if steps > MAX_SEGMENTS {
+            return None;
+        }
         if j[p] != 0xFF {
             p += 1;
             continue;

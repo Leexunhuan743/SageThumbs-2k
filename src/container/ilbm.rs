@@ -123,10 +123,13 @@ pub fn extract(bytes: &[u8]) -> Option<DynamicImage> {
         return None;
     }
 
-    // Get the raw (uncompressed) planar/chunky bytes.
-    let raw = match bmhd.compression {
-        0 => body.to_vec(),
-        1 => byterun1_decode(body, expected)?,
+    // Get the raw (uncompressed) planar/chunky bytes. `Cow` so the uncompressed case BORROWS the
+    // body instead of copying it — every use below is read-only, and the copy was a full extra
+    // allocation of up to the whole input (256 MiB read cap) on a path that also runs in-process
+    // for the classic-menu preview.
+    let raw: std::borrow::Cow<[u8]> = match bmhd.compression {
+        0 => std::borrow::Cow::Borrowed(body),
+        1 => std::borrow::Cow::Owned(byterun1_decode(body, expected)?),
         _ => return None, // compression 2 (vertical RLE) etc. — unsupported
     };
     if raw.len() < expected {

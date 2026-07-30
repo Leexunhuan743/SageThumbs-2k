@@ -114,34 +114,47 @@ pub fn decode_gif_frames_sized(bytes: &[u8], w: u32, h: u32) -> Option<(Vec<isiz
     // each frame becomes a w×h premultiplied DIB. Take frames lazily and stop at a
     // cap rather than `collect_frames()` (which decodes them all up front).
     const MAX_FRAMES: usize = 256;
+    /// Ceiling on the COMBINED decoded size of the frames held at once. The per-frame canvas
+    /// check above bounds ONE frame; 256 of them is a different number entirely, and a
+    /// near-solid-colour GIF compresses so well that a few KB buys all of them. Resizing each
+    /// frame as it arrives (below) keeps only the small w×h copy, so the retained set is bounded
+    /// by the DIBs; this bounds the transient decode side too.
+    const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+
     let decoder = GifDecoder::new(Cursor::new(bytes)).ok()?;
     let mut frame_iter = decoder.into_frames();
-    let mut frames = Vec::new();
-    while frames.len() < MAX_FRAMES {
-        match frame_iter.next() {
-            Some(Ok(f)) => frames.push(f),
-            _ => break, // end of stream or a decode error → stop here
+    // Resize each frame to w×h AS IT ARRIVES rather than retaining every full-canvas frame and
+    // resizing afterwards: peak memory becomes MAX_FRAMES × w × h × 4 (a banner's worth) instead
+    // of MAX_FRAMES × the GIF's declared canvas. Owned handles so an early `?` (a failed DIB)
+    // drops every HBITMAP already created instead of leaking it — ownership is surrendered to the
+    // caller only once every frame succeeds.
+    let mut handles: Vec<OwnedHbitmap> = Vec::new();
+    let mut delay_ms = 100u32;
+    let mut decoded_bytes = 0u64;
+    while handles.len() < MAX_FRAMES {
+        let Some(Ok(frame)) = frame_iter.next() else {
+            break; // end of stream or a decode error → stop here
+        };
+        if handles.is_empty() {
+            let (n, d) = frame.delay().numer_denom_ms();
+            delay_ms = n.checked_div(d).map_or(100, |q| q.clamp(20, 1000));
         }
-    }
-    if frames.len() < 2 {
-        return None; // single frame — not animated
-    }
-    let (n, d) = frames[0].delay().numer_denom_ms();
-    let delay_ms = n.checked_div(d).map_or(100, |q| q.clamp(20, 1000));
-
-    // Collect owned handles so an early `?` (a failed DIB) drops every HBITMAP
-    // already created this loop instead of leaking it. Ownership is surrendered
-    // to the caller only once all frames succeed.
-    let mut handles: Vec<OwnedHbitmap> = Vec::with_capacity(frames.len());
-    for frame in &frames {
-        let img = image::DynamicImage::ImageRgba8(frame.buffer().clone());
-        let rgba = img
+        let buf = frame.buffer();
+        decoded_bytes =
+            decoded_bytes.saturating_add(u64::from(buf.width()) * u64::from(buf.height()) * 4);
+        if decoded_bytes > MAX_TOTAL_BYTES {
+            break; // keep what we have rather than failing the banner outright
+        }
+        let rgba = image::DynamicImage::ImageRgba8(buf.clone())
             .resize_exact(w, h, image::imageops::FilterType::Triangle)
             .to_rgba8();
         let hbmp =
             unsafe { crate::dib::create_premultiplied_dib(w as i32, h as i32, rgba.as_raw()) }
                 .ok()?;
         handles.push(OwnedHbitmap(hbmp.0 as isize));
+    }
+    if handles.len() < 2 {
+        return None; // single frame — not animated (the owned handles drop here)
     }
     let raw: Vec<isize> = handles.into_iter().map(OwnedHbitmap::into_raw).collect();
     Some((raw, delay_ms))

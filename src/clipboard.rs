@@ -73,10 +73,112 @@ pub unsafe fn set_clipboard(format: u32, bytes: &[u8]) -> bool {
     true
 }
 
+/// Any mix of CRLF / LF / lone CR → **CRLF**, the line ending Windows clipboard text and plain
+/// Win32 `EDIT` controls both expect (a bare LF pastes as a box glyph, or loses the break
+/// outright, in older apps and in every non-rich edit box).
+///
+/// One pass, one allocation — it copies the runs *between* line breaks wholesale rather than
+/// per-char, and borrows without allocating at all when there is no break to fix. That matters
+/// because the Quick preview's Ctrl+C hands whole documents through here, which can be megabytes.
+/// Idempotent, so it is safe to apply on top of text that is already CRLF.
+pub fn to_crlf(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(['\r', '\n']) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let b = text.as_bytes();
+    // `\r` and `\n` are ASCII, so they never appear inside a multi-byte UTF-8 sequence: every
+    // index we slice at is a char boundary.
+    let mut out = String::with_capacity(text.len() + text.len() / 16 + 16);
+    let (mut start, mut i) = (0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'\r' | b'\n' => {
+                out.push_str(&text[start..i]);
+                out.push_str("\r\n");
+                // Consume a CRLF pair as ONE break (otherwise it would become "\r\n\r\n").
+                i += if b[i] == b'\r' && b.get(i + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&text[start..]);
+    std::borrow::Cow::Owned(out)
+}
+
 /// UTF-16 (LE) + NUL bytes for `text`, ready to hand to `set_clipboard(CF_UNICODETEXT, …)`.
+///
+/// Line endings are normalized to CRLF first via [`to_crlf`]. This is the single payload builder
+/// every text copy in the product goes through (OCR, preview selections, Image info, upload
+/// links, hex colours), so normalizing here fixes the whole class once — callers must NOT
+/// pre-normalize, that just allocates a second copy of the same string.
 pub fn utf16_nul_bytes(text: &str) -> Vec<u8> {
-    text.encode_utf16()
+    to_crlf(text)
+        .encode_utf16()
         .chain(std::iter::once(0))
         .flat_map(u16::to_le_bytes)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn round_trip(text: &str) -> String {
+        let bytes = utf16_nul_bytes(text);
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(units.last(), Some(&0), "payload must be NUL-terminated");
+        String::from_utf16_lossy(&units[..units.len() - 1])
+    }
+
+    /// Multi-line clipboard text must arrive as CRLF whichever way it was produced, and
+    /// re-normalizing must not double the breaks (both matter now that OCR returns one line
+    /// per recognized line, and its two copy paths feed this from raw text and from an EDIT
+    /// control's already-CRLF contents).
+    #[test]
+    fn clipboard_text_normalizes_to_crlf_and_is_idempotent() {
+        assert_eq!(round_trip("one\ntwo"), "one\r\ntwo");
+        assert_eq!(round_trip("one\r\ntwo"), "one\r\ntwo");
+        assert_eq!(round_trip("one\r\ntwo\nthree"), "one\r\ntwo\r\nthree");
+        assert_eq!(round_trip("a\n\nb"), "a\r\n\r\nb");
+        // No line break: byte-for-byte the old behaviour (the hex-colour / URL case).
+        assert_eq!(round_trip("#FF8800"), "#FF8800");
+    }
+
+    /// A lone CR is a line break too. Classic-Mac text is rare, but an OCR line or a metadata
+    /// field carrying one used to slip through un-normalized and paste as a single run-on line
+    /// (or a box glyph) — the exact failure the CRLF pass exists to stop.
+    #[test]
+    fn lone_cr_counts_as_a_line_break() {
+        assert_eq!(round_trip("one\rtwo"), "one\r\ntwo");
+        assert_eq!(round_trip("a\r\rb"), "a\r\n\r\nb");
+        assert_eq!(round_trip("a\r\nb\rc\nd"), "a\r\nb\r\nc\r\nd");
+    }
+
+    /// Text with nothing to fix must be BORROWED, not copied — the Quick preview's Ctrl+C
+    /// hands whole documents through here.
+    #[test]
+    fn to_crlf_borrows_when_there_is_nothing_to_normalize() {
+        assert!(matches!(
+            to_crlf("no breaks here"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert!(matches!(to_crlf(""), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(to_crlf("has\nbreak"), std::borrow::Cow::Owned(_)));
+    }
+
+    /// Line breaks are ASCII, so slicing around them must never split a multi-byte char.
+    #[test]
+    fn to_crlf_preserves_non_ascii_text() {
+        assert_eq!(to_crlf("日本語\nテキスト"), "日本語\r\nテキスト");
+        assert_eq!(to_crlf("émoji 🎉\rnext"), "émoji 🎉\r\nnext");
+        assert_eq!(to_crlf("日本語"), "日本語");
+    }
 }

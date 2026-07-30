@@ -633,11 +633,14 @@ pub(super) fn btn_glyph(btn: Btn, pinned: bool) -> u16 {
         Btn::Pin if pinned => 0xE840, // Pinned (filled)
         Btn::Pin => 0xE718,           // Pin
         Btn::Copy => 0xE8C8,          // Copy
-        Btn::Info => 0xE946,          // Info
-        Btn::Upload => 0xE898,        // Upload (up-arrow to line)
-        Btn::Open => 0xE8A7,          // OpenInNewWindow
-        Btn::OpenWith => 0xE7AC,      // OpenWith
-        Btn::Close => 0xE711,         // Cancel (X)
+        // Never reached: `draw_button` short-circuits Ocr to the vector mark above. Kept so
+        // this match stays exhaustive (and harmless if someone routes it back through a font).
+        Btn::Ocr => 0xE8D2,      // Font ("A")
+        Btn::Info => 0xE946,     // Info
+        Btn::Upload => 0xE898,   // Upload (up-arrow to line)
+        Btn::Open => 0xE8A7,     // OpenInNewWindow
+        Btn::OpenWith => 0xE7AC, // OpenWith
+        Btn::Close => 0xE711,    // Cancel (X)
     }
 }
 
@@ -676,6 +679,12 @@ pub(super) unsafe fn draw_button(
     } else {
         crate::dark::DARK_TEXT().0
     };
+    // OCR has no icon-font glyph — it's the shared vector mark, so it matches the same
+    // button in the screenshot editor's action bar exactly.
+    if matches!(btn, Btn::Ocr) {
+        crate::gdip::ocr_glyph(hdc, *r, COLORREF(color));
+        return;
+    }
     let old = SelectObject(hdc, icon.into());
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(color));

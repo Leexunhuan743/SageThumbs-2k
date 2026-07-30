@@ -106,6 +106,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --release --locked --all-targets -- -D warnings
 
+      # Formatting is the cheapest gate we have (no build, seconds) and it keeps
+      # review diffs about the change rather than about whitespace. `cargo fmt --all`
+      # fixes anything this reports; `scripts\verify.ps1 -Lint` runs it locally first.
+      - name: Rustfmt
+        run: cargo fmt --all --check
+
   # Cargo.toml publishes 1.93 as the minimum supported Rust version. The main job
   # intentionally follows current stable, so exercise the lower bound separately
   # instead of letting source/API drift make the declared MSRV fictional.

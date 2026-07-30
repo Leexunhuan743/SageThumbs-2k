@@ -33,7 +33,8 @@ use core::ffi::c_void;
 use windows::core::PCWSTR;
 use windows::Win32::Networking::WinInet::{
     HttpOpenRequestW, HttpSendRequestW, InternetCloseHandle, InternetConnectW, InternetOpenW,
-    INTERNET_FLAG_SECURE, INTERNET_SERVICE_HTTP,
+    InternetSetOptionW, INTERNET_FLAG_SECURE, INTERNET_OPTION_CONNECT_TIMEOUT,
+    INTERNET_OPTION_RECEIVE_TIMEOUT, INTERNET_OPTION_SEND_TIMEOUT, INTERNET_SERVICE_HTTP,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -277,7 +278,10 @@ fn file_caption() -> &'static str {
 /// then, so without it the user stares at NOTHING for the seconds (and up to three host
 /// retries) an upload takes, and reasonably assumes it silently failed. This thread pumps
 /// messages so the pill actually paints; the pill is non-activating and owns no input.
-unsafe fn with_busy_pill<T: Send + 'static>(
+///
+/// `pub(crate)` because the OCR helper (`crate::ocr_result`) has the identical problem:
+/// it is a fresh process with no window of its own while the WinRT engine spins up.
+pub(crate) unsafe fn with_busy_pill<T: Send + 'static>(
     text: &str,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> T {
@@ -630,6 +634,23 @@ unsafe fn post(host: &str, path: &str, headers: &str, body: &[u8]) -> Option<Vec
         let _ = InternetCloseHandle(conn);
         let _ = InternetCloseHandle(session);
         return None;
+    }
+    // Explicit timeouts. Without them a stalled host runs out WinInet's generous defaults while
+    // the "Uploading…" pill sits there with nothing to cancel it — and `upload_any` can't fall
+    // through to the NEXT configured host until this one gives up. 20 s is well past a slow but
+    // working upload and well short of "did it freeze?".
+    for opt in [
+        INTERNET_OPTION_CONNECT_TIMEOUT,
+        INTERNET_OPTION_SEND_TIMEOUT,
+        INTERNET_OPTION_RECEIVE_TIMEOUT,
+    ] {
+        let ms: u32 = 20_000;
+        let _ = InternetSetOptionW(
+            Some(req),
+            opt,
+            Some(&ms as *const u32 as *const c_void),
+            size_of::<u32>() as u32,
+        );
     }
     let hdr_w = wide(headers);
     let sent = HttpSendRequestW(

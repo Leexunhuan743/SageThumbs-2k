@@ -54,6 +54,7 @@ use windows::Win32::Graphics::Gdi::{
     DT_END_ELLIPSIS, DT_SINGLELINE, HBITMAP, HDC, HFONT, HGDIOBJ, TRANSPARENT,
 };
 use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::ReleaseStgMedium;
 use windows::Win32::System::Registry::HKEY;
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_SELECTED, ODT_MENU};
@@ -62,7 +63,6 @@ use windows::Win32::UI::Shell::{
     DragQueryFileW, IContextMenu2_Impl, IContextMenu3, IContextMenu3_Impl, IContextMenu_Impl,
     IShellExtInit, IShellExtInit_Impl, ShellExecuteW, CMINVOKECOMMANDINFO, HDROP,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, GetSystemMetrics, InsertMenuW, SetMenuItemInfoW,
     SystemParametersInfoW, HMENU, MENUITEMINFOW, MF_BITMAP, MF_BYPOSITION, MF_OWNERDRAW, MF_POPUP,
@@ -1327,13 +1327,17 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                 // Command ids consumed: the preview slot (offset = leaf count) when a
                 // preview was added, else the leaves the submenu used (0 when skipped).
                 // Claiming the leaf range is harmless when only the preview is present.
-                // Every leaf is drawn (the reorder only changes display order, not the
-                // 0..leaves_n id range), so the id span consumed is leaves_n (+1 for the
-                // preview slot just past the last leaf, when present).
+                //
+                // Report `budget`, NOT `leaves_n`: `budget = leaves_n.min(avail)` is what
+                // `build_menu_into` was actually allowed to append, and `QueryContextMenu` must
+                // never return an offset past the range the shell granted — overshooting pushes
+                // the NEXT extension in the chain's `idCmdFirst` past `idCmdLast`. The `+ 1` is
+                // safe because a preview id is only handed out when `avail > leaves_n`, which
+                // also forces `budget == leaves_n`.
                 let consumed = if self.preview_cmd.get().is_some() {
-                    leaves_n as u32 + 1
+                    budget + 1
                 } else {
-                    leaves_n as u32
+                    budget
                 };
                 HRESULT(consumed as i32)
             }

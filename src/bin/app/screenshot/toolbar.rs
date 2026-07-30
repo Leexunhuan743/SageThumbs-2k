@@ -26,6 +26,8 @@ pub(super) enum Button {
     Undo,
     Redo,
     Copy,
+    /// Read the text out of the region (OCR) instead of copying the pixels.
+    Ocr,
     Save,
     Upload,
     Close,
@@ -41,7 +43,7 @@ const SEPW: i32 = 11; // separator gap width
 
 /// The ordered toolbar items, grouped by `Sep` dividers: draw tools · text/number ·
 /// region effects · colour · move + actions. Every button is a square icon.
-fn items() -> [(Button, i32); 23] {
+fn items() -> [(Button, i32); 24] {
     [
         (Button::Tool(Tool::Rect), CELL),
         (Button::Tool(Tool::Ellipse), CELL),
@@ -63,6 +65,7 @@ fn items() -> [(Button, i32); 23] {
         (Button::Undo, CELL),
         (Button::Redo, CELL),
         (Button::Copy, CELL),
+        (Button::Ocr, CELL),
         (Button::Save, CELL),
         (Button::Upload, CELL),
         (Button::Close, CELL),
@@ -158,6 +161,7 @@ pub(super) fn button_tip(btn: Button) -> &'static str {
         Button::Undo => "Undo (Ctrl+Z)",
         Button::Redo => "Redo (Ctrl+Y / Ctrl+Shift+Z)",
         Button::Copy => "Copy to the clipboard (Ctrl+C / Enter)",
+        Button::Ocr => "Copy text (OCR) (Ctrl+T) — read the words in the region",
         Button::Save => "Save a PNG (Ctrl+S)",
         Button::Upload => "Upload & copy the link",
         Button::Close => "Close (Esc)",
@@ -884,6 +888,7 @@ pub(super) unsafe fn draw(
                     gdip::drop_brush(b);
                 });
             }
+            Button::Ocr => draw_ocr_glyph(hdc, *r),
             _ => {
                 if let Some(ch) = button_glyph(*btn) {
                     let old = SelectObject(hdc, HGDIOBJ(icon.0));
@@ -943,6 +948,15 @@ fn button_glyph(btn: Button) -> Option<u16> {
         Button::Close => 0xE711,  // Cancel (X)
         _ => return None,
     })
+}
+
+/// The OCR button's icon: a scan frame (four corner brackets) around two text lines —
+/// the conventional "read the text in this area" mark. Drawn as a vector rather than a
+/// font glyph because Segoe Fluent has no unambiguous OCR codepoint, and a wrong one
+/// would render as a tofu box. Sized like the other vector glyphs (design px around the
+/// cell centre, deliberately unscaled so it matches them at every DPI).
+unsafe fn draw_ocr_glyph(hdc: HDC, r: RECT) {
+    gdip::ocr_glyph(hdc, r, rgb(232, 232, 232));
 }
 
 /// AA vector glyphs for the geometric tools (no font glyph exists for plain shapes).
@@ -1021,5 +1035,98 @@ unsafe fn draw_vector_glyph(hdc: HDC, r: RECT, tool: Tool) {
             gdip::drop_pen(p);
         }),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sel() -> RECT {
+        RECT {
+            left: 300,
+            top: 200,
+            right: 700,
+            bottom: 500,
+        }
+    }
+
+    /// Every non-separator item must be reachable by a click. A button that lays out but
+    /// can't be hit is invisible to the user even though it paints, so this pins the
+    /// layout/hit-test pair for the whole bar (the OCR button included).
+    #[test]
+    fn every_button_is_hittable_and_no_two_overlap() {
+        let buttons = layout(sel(), 1920, 1080, 96);
+        assert_eq!(buttons.len(), items().len());
+        for (btn, r) in &buttons {
+            let (cx, cy) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+            if matches!(btn, Button::Sep) {
+                assert!(hit(&buttons, cx, cy).is_none(), "a divider is clickable");
+                continue;
+            }
+            assert!(
+                hit(&buttons, cx, cy) == Some(*btn),
+                "a laid-out button isn't hit-testable at its own centre"
+            );
+        }
+        for pair in buttons.windows(2) {
+            assert!(
+                pair[0].1.right <= pair[1].1.left,
+                "toolbar cells overlap — a click would land on the wrong action"
+            );
+        }
+    }
+
+    /// The OCR button ships in the action group next to Copy (copy pixels / copy words),
+    /// and every button carries a tooltip — `button_tip` returning "" would show an empty
+    /// bubble on hover.
+    #[test]
+    fn ocr_button_sits_next_to_copy_and_is_described() {
+        let order: Vec<Button> = items().iter().map(|(b, _)| *b).collect();
+        let copy = order
+            .iter()
+            .position(|b| *b == Button::Copy)
+            .expect("Copy button");
+        let ocr = order
+            .iter()
+            .position(|b| *b == Button::Ocr)
+            .expect("OCR button");
+        assert_eq!(
+            ocr,
+            copy + 1,
+            "OCR must stay immediately after Copy in the action group"
+        );
+        for (btn, _) in items() {
+            if matches!(btn, Button::Sep) {
+                continue;
+            }
+            assert!(!button_tip(btn).is_empty());
+        }
+        assert!(button_tip(Button::Ocr).contains("Ctrl+T"));
+    }
+
+    /// The bar has to fit on-screen even on a small display, or the rightmost actions
+    /// (Save / Upload / Close, and now OCR) hang off the edge unreachable.
+    #[test]
+    fn bar_stays_inside_a_small_virtual_screen() {
+        let (vw, vh) = (1024, 768);
+        let buttons = layout(
+            RECT {
+                left: 900,
+                top: 700,
+                right: 1000,
+                bottom: 760,
+            },
+            vw,
+            vh,
+            96,
+        );
+        let bar = bar_rect(&buttons, 96);
+        assert!(
+            bar.left >= 0 && bar.top >= 0,
+            "bar clipped off the top-left"
+        );
+        assert!(bar.right <= vw, "bar runs off the right edge");
+        assert!(bar.bottom <= vh, "bar runs off the bottom edge");
     }
 }

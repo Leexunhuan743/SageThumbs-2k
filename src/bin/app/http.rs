@@ -60,6 +60,20 @@ pub(crate) fn split_https(url: &str) -> Option<(String, String)> {
     Some((host.to_string(), path))
 }
 
+/// Percent-encode one query/form value, preserving the RFC 3986 *unreserved* set
+/// (`A–Z a–z 0–9 - . _ ~`). Everything else — `:` `/` `&` `=` space, and all
+/// non-ASCII — is escaped, so a value can't smuggle a second field into an
+/// `x-www-form-urlencoded` body. Keeping the unreserved set intact also leaves
+/// literals like `127.0.0.1` canonical rather than `127%2E0%2E0%2E1`.
+pub(crate) fn form_enc(s: &str) -> String {
+    const UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    percent_encoding::utf8_percent_encode(s, UNRESERVED).to_string()
+}
+
 /// Perform one HTTPS request. `method` is `"GET"` / `"POST"` / `"DELETE"`. `headers` is
 /// a `\r\n`-separated header block (no trailing CRLF), possibly empty. `body` is the
 /// request body (empty for GET/DELETE). Returns the status + body, or `None` on any

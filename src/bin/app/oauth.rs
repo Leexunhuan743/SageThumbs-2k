@@ -83,12 +83,7 @@ fn pkce() -> Option<(String, String)> {
 /// encoding `:` `/` space and the rest. Safe for both the authorize query and the
 /// `x-www-form-urlencoded` token body (our values contain no spaces).
 fn enc(s: &str) -> String {
-    const UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
-    percent_encoding::utf8_percent_encode(s, UNRESERVED).to_string()
+    http::form_enc(s)
 }
 
 // ---- The interactive login -----------------------------------------------

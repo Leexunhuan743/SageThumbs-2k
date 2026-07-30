@@ -418,6 +418,18 @@ fn sample_location(
     } else {
         g32(chunk_body, 4 + cidx * 4)? as u64
     };
+    // Walk the samples ahead of `target` inside its chunk to accumulate their sizes. This is the
+    // one unbounded loop left in the index walk, and it is fully attacker-controlled: a single
+    // ~8-byte `stts` entry with count = 0xFFFFFFFF pushes `target` into the billions, and with a
+    // uniform `stsz` (O(1) `size_of`, no backing array to make the file big) a few-hundred-byte
+    // file buys billions of iterations. That is a compute-bound multi-second-to-minutes hang in the
+    // thumbnail host, which is exactly the hang class this module exists to avoid. No real chunk
+    // holds anywhere near this many samples, so a cap costs nothing and turns the attack into a
+    // "can't read it" fallback.
+    const MAX_SAMPLE_WALK: u64 = 100_000;
+    if target.saturating_sub(first_sample_of_chunk) > MAX_SAMPLE_WALK {
+        return None;
+    }
     let mut s = first_sample_of_chunk;
     while s < target {
         offset = offset.checked_add(sizes.size_of(s)?)?;

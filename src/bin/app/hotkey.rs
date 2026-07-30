@@ -26,6 +26,7 @@ pub(crate) const ACTIONS: &[(u32, &str)] = &[
     (7, "Open SageThumbs 2K Settings"),
     (8, "Upload image(s) (copy link)"),
     (9, "Copy text (OCR)"),
+    (10, "Copy text on screen (OCR)"),
 ];
 
 /// What a bound action does + what input it needs.
@@ -33,6 +34,8 @@ enum Kind {
     /// Screen-wide / no file target — runs in-process in this helper.
     Eyedropper,
     Screenshot,
+    /// The capture overlay in OCR mode: drag a region, its text goes to the clipboard.
+    ScreenOcr,
     OpenSettings,
     /// Operates on the selected IMAGE files (Explorer selection, else an images-only picker).
     ImageVerb(VerbAction),
@@ -54,6 +57,9 @@ fn kind_for(id: u32) -> Option<Kind> {
         // OCR is headless-safe like StripMetadata: recognized text goes straight to the
         // clipboard, no window — a natural hotkey target.
         9 => Kind::ImageVerb(VerbAction::Ocr),
+        // Same recognizer as 9, but the target is the SCREEN, not a selected file — so it
+        // needs the capture overlay (in its no-editor OCR mode), not a file resolver.
+        10 => Kind::ScreenOcr,
         _ => return None,
     })
 }
@@ -66,7 +72,12 @@ pub(crate) unsafe fn run_hotkey_action(hinst: HINSTANCE) {
     match kind {
         Kind::Eyedropper => crate::eyedropper::run_eyedropper(hinst),
         Kind::Screenshot => crate::screenshot::run_capture(hinst),
-        Kind::OpenSettings => crate::screenshot::spawn_self(&[]),
+        Kind::ScreenOcr => crate::screenshot::run_capture_ocr(hinst),
+        // Nothing to clean up if the Settings window fails to launch (no temp file was handed
+        // over), so the spawn result is genuinely discardable here.
+        Kind::OpenSettings => {
+            let _ = crate::screenshot::spawn_self(&[]);
+        }
         Kind::ImageVerb(action) => run_on_selection(action, true),
         Kind::AnyFileVerb(action) => run_on_selection(action, false),
     }
@@ -84,4 +95,51 @@ unsafe fn run_on_selection(action: VerbAction, images_only: bool) {
     let report = run_action(action, &paths);
     report.surface(None);
     report.reveal(&paths);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every dropdown row must actually DO something. Adding to [`ACTIONS`] without adding the
+    /// matching [`kind_for`] arm leaves the user an option that silently no-ops, and nothing
+    /// else catches it: the `run_hotkey_action` match stays exhaustive either way, so it builds
+    /// clean. (Exactly the gap this test was written after hitting.)
+    #[test]
+    fn every_listed_action_has_a_behaviour() {
+        for (id, label) in ACTIONS {
+            assert!(
+                kind_for(*id).is_some(),
+                "action {id} ({label}) is offered in Settings but kind_for() ignores it"
+            );
+            assert!(!label.is_empty(), "action {id} has no label");
+        }
+    }
+
+    /// The ids are persisted in HKCU, so they are APPEND-ONLY: renumbering silently repoints
+    /// every existing user's bound hotkey at a different action. This pins both halves — no
+    /// duplicates, and the list stays 1..=N in order, so a new entry can only go on the end.
+    #[test]
+    fn action_ids_are_unique_and_append_only() {
+        let ids: Vec<u32> = ACTIONS.iter().map(|(id, _)| *id).collect();
+        let expected: Vec<u32> = (1..=ids.len() as u32).collect();
+        assert_eq!(
+            ids, expected,
+            "action ids must stay 1..=N in order (append only)"
+        );
+        assert!(kind_for(0).is_none());
+        assert!(kind_for(ids.len() as u32 + 1).is_none());
+    }
+
+    /// The two OCR actions are different features: 9 reads a selected FILE, 10 reads the
+    /// SCREEN via the capture overlay. Wiring 10 to a file verb would pop a file picker
+    /// instead of the region overlay.
+    #[test]
+    fn screen_ocr_uses_the_capture_overlay_not_a_file_verb() {
+        assert!(matches!(kind_for(10), Some(Kind::ScreenOcr)));
+        assert!(matches!(
+            kind_for(9),
+            Some(Kind::ImageVerb(VerbAction::Ocr))
+        ));
+    }
 }
