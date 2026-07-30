@@ -10,8 +10,8 @@ use std::time::Duration;
 use windows::core::{Error, Result, HSTRING};
 use windows::Globalization::Language;
 use windows::Graphics::Imaging::{
-    BitmapAlphaMode, BitmapDecoder, BitmapInterpolationMode, BitmapPixelFormat,
-    BitmapTransform, ColorManagementMode, ExifOrientationMode,
+    BitmapAlphaMode, BitmapDecoder, BitmapInterpolationMode, BitmapPixelFormat, BitmapTransform,
+    ColorManagementMode, ExifOrientationMode,
 };
 use windows::Media::Ocr::OcrEngine;
 use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
@@ -93,7 +93,9 @@ fn upscale_factor(w: u32, h: u32, max: u32) -> u32 {
     }
     let short = w.min(h);
     // Ceiling-divide so a 300px capture aiming at 900 asks for 3x, not 2x.
-    let wanted = OCR_TARGET_MIN_DIM.div_ceil(short.max(1)).clamp(1, OCR_MAX_UPSCALE);
+    let wanted = OCR_TARGET_MIN_DIM
+        .div_ceil(short.max(1))
+        .clamp(1, OCR_MAX_UPSCALE);
     // Largest factor that keeps BOTH sides inside the engine's limit.
     let fits = (max / w.max(1)).min(max / h.max(1));
     wanted.min(fits).max(1)
@@ -206,7 +208,6 @@ unsafe fn copy_text_to_clipboard(text: &str) -> Result<()> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,23 +219,42 @@ mod tests {
     /// string on 8-10 pt text (measured — see the call site) and screen OCR is mostly UI text.
     #[test]
     fn small_captures_get_enlarged() {
-        assert!(upscale_factor(820, 130, MAX) > 1, "a small region must scale up");
-        assert!(upscale_factor(300, 30, MAX) > 1, "a thin text strip must scale up");
+        assert!(
+            upscale_factor(820, 130, MAX) > 1,
+            "a small region must scale up"
+        );
+        assert!(
+            upscale_factor(300, 30, MAX) > 1,
+            "a thin text strip must scale up"
+        );
     }
 
     /// An already-large capture is left alone: its glyphs are big, and growing it wastes a
     /// multi-hundred-MB allocation (and can push it past the engine's limit).
     #[test]
     fn large_captures_are_untouched() {
-        assert_eq!(upscale_factor(3840, 2160, MAX), 1, "a 4K capture must stay 1x");
-        assert_eq!(upscale_factor(1200, 900, MAX), 1, "already at the target short side");
+        assert_eq!(
+            upscale_factor(3840, 2160, MAX),
+            1,
+            "a 4K capture must stay 1x"
+        );
+        assert_eq!(
+            upscale_factor(1200, 900, MAX),
+            1,
+            "already at the target short side"
+        );
     }
 
     /// The factor must never push either side past the engine's own maximum — that's the
     /// difference between recognizing at 2x and failing outright with IMAGESIZEOUTOFRANGE.
     #[test]
     fn never_exceeds_the_engine_limit() {
-        for (w, h, max) in [(1900, 40, 4096), (900, 100, 1000), (5000, 20, 10_000), (7, 3, 20)] {
+        for (w, h, max) in [
+            (1900, 40, 4096),
+            (900, 100, 1000),
+            (5000, 20, 10_000),
+            (7, 3, 20),
+        ] {
             let f = upscale_factor(w, h, max);
             assert!(f >= 1, "factor must never be zero ({w}x{h}, max {max})");
             assert!(

@@ -71,7 +71,14 @@ if ($Lint) {
     # Formatting. Cheapest gate there is and it keeps diffs about the CHANGE, not about
     # whitespace — `cargo fmt --all` fixes anything this reports.
     Stage 'cargo fmt --check' {
-        cargo fmt --all --check 2>&1 | Select-Object -First 40 | Write-Host
+        # CAPTURE FIRST, then trim. Piping cargo straight into `Select-Object -First N` stops the
+        # pipeline as soon as N objects arrive, which kills cargo early and loses its exit code —
+        # so this gate reported GREEN precisely when the diff was longer than the cap, i.e. when
+        # it mattered. That shipped a formatting break past the local gate and into CI (1.4.0).
+        $out = cargo fmt --all --check 2>&1
+        $code = $LASTEXITCODE
+        $out | Select-Object -First 40 | Write-Host
+        $global:LASTEXITCODE = $code
     }
     # CI gates clippy on --release; debug clippy catches the same lints faster and
     # shares the ladder's debug cache. -D warnings: the tree is kept warning-clean,
@@ -83,9 +90,14 @@ if ($Lint) {
     # Advisories + licenses + bans against deny.toml — same check the `deny` CI job
     # runs, minus the round-trip to GitHub.
     Stage 'cargo deny' {
-        cargo deny check --hide-inclusion-graph 2>&1 |
-            Where-Object { $_ -match 'error|warning\[|advisories|licenses|bans|sources' } |
+        # Same capture-then-trim discipline as the fmt stage above: a trailing
+        # `Select-Object -First N` in the pipeline would swallow cargo-deny's exit code on a
+        # long report, turning a real advisory into a silent pass.
+        $out = cargo deny check --hide-inclusion-graph 2>&1
+        $code = $LASTEXITCODE
+        $out | Where-Object { $_ -match 'error|warning\[|advisories|licenses|bans|sources' } |
             Select-Object -First 12 | Write-Host
+        $global:LASTEXITCODE = $code
     }
     # Unused dependencies (a dep that compiles in but nothing references).
     Stage 'cargo machete' {
