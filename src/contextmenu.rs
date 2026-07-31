@@ -516,6 +516,11 @@ unsafe fn insert_preview_bitmap(hmenu: HMENU, pos: u32, cmd: u32, bmp: HBITMAP) 
 
 /// Recursively append the verb tree into `parent`, assigning command ids in
 /// depth-first leaf order from `idcmdfirst`, stopping after `budget` leaves.
+/// `all_jpeg`: true when every selected path is a JPEG-family source — the
+/// "Convert into ▸ LEP" leaf is only meaningful then (lossless recompression
+/// is JPEG-only; on anything else the verb would just refuse), so the leaf is
+/// SKIPPED from the drawn menu but still advances the leaf counter, keeping
+/// command ids aligned with the full tree (same pattern as `vis` hides).
 unsafe fn build_menu_into(
     parent: HMENU,
     items: &[verbs::MenuItem],
@@ -523,6 +528,7 @@ unsafe fn build_menu_into(
     next_leaf: &mut u32,
     budget: u32,
     vis: &settings::MenuVisibility,
+    all_jpeg: bool,
 ) {
     for it in items {
         // Per-item visibility: a hidden top-level item is skipped from the drawn
@@ -535,10 +541,17 @@ unsafe fn build_menu_into(
             *next_leaf += verbs::count_leaves(it);
             continue;
         }
+        // The Lepton quick-verb is JPEG-only: hide it (keeping the id) when the
+        // selection contains any non-JPEG source.
+        if matches!(it, verbs::MenuItem::Verb(_, verbs::VerbAction::ConvertLepton)) && !all_jpeg
+        {
+            *next_leaf += 1;
+            continue;
+        }
         match it {
             verbs::MenuItem::Group(title, children) => {
                 let Ok(sub) = CreatePopupMenu() else { continue };
-                build_menu_into(sub, children, idcmdfirst, next_leaf, budget, vis);
+                build_menu_into(sub, children, idcmdfirst, next_leaf, budget, vis, all_jpeg);
                 let _ = AppendMenuW(
                     parent,
                     MF_POPUP | MF_STRING,
@@ -1224,7 +1237,19 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                                     continue;
                                 };
                                 let mut n = start;
-                                build_menu_into(qsub, children, idcmdfirst, &mut n, budget, &vis);
+                                // The Lepton quick-verb is JPEG-only: every
+                                // selected path must be a JPEG-family source
+                                // for the leaf to appear.
+                                let all_jpeg = verbs::selection_is_all_jpeg(&paths);
+                                build_menu_into(
+                                    qsub,
+                                    children,
+                                    idcmdfirst,
+                                    &mut n,
+                                    budget,
+                                    &vis,
+                                    all_jpeg,
+                                );
                                 let _ = InsertMenuW(
                                     hmenu,
                                     pos,
@@ -1288,6 +1313,12 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                     };
                     for (item, start_leaf) in top {
                         let mut leaf = start_leaf;
+                        // JPEG-only Lepton leaf: hide it unless the selection is
+                        // all JPEG-family sources (only reachable in the image
+                        // branch — condensed/audio sets have no Convert group).
+                        let all_jpeg = !condensed
+                            && !audio_only
+                            && verbs::selection_is_all_jpeg(&paths);
                         build_menu_into(
                             hsub,
                             std::slice::from_ref(item),
@@ -1295,6 +1326,7 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                             &mut leaf,
                             budget,
                             &vis,
+                            all_jpeg,
                         );
                     }
                     let _ = InsertMenuW(

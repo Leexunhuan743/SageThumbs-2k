@@ -59,7 +59,8 @@ pub use fileops::{combine_to_cbz, files_to_folder, sort_by_dimensions, tags_to_f
 #[allow(unused_imports)]
 pub use actions::{
     copy_rgba_to_clipboard, copy_to_clipboard, is_audio, is_image, prepare_wallpaper,
-    prepare_wallpaper_in, run_action, run_action_detached, set_wallpaper, ActionReport,
+    prepare_wallpaper_in, run_action, run_action_detached, selection_is_all_jpeg, set_wallpaper,
+    ActionReport,
 };
 
 // Crate-internal helpers surfaced ONLY for the in-crate `tests` module below

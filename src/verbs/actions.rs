@@ -86,8 +86,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::encode::{
-    edit_output_ext, predict_unique_suffix, read_capped, reserve_unique_suffix, resize_file,
-    shrink_for_email, transform_file, with_tmp_suffix, Resize, Target,
+    edit_output_ext, jpeg_source_ext, predict_unique_suffix, read_capped, reserve_unique_suffix,
+    resize_file, shrink_for_email, transform_file, with_tmp_suffix, Resize, Target,
 };
 use super::fileops::{
     combine_to_cbz, combined_path, files_to_folder, reserve_dest, sanitize_component,
@@ -385,6 +385,23 @@ pub fn is_image(path: &str) -> bool {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| crate::formats::is_known(e) && !crate::formats::is_archive(e))
+}
+
+/// Is EVERY selected path a JPEG-family source (jpg/jpeg/jpe/jfif, case-
+/// insensitive)? Gates the "Convert into ▸ LEP" leaf on the classic menu: the
+/// lossless recompression only makes sense on JPEG bytes, so the leaf is hidden
+/// on a mixed/non-JPEG selection instead of showing and then refusing. Empty
+/// selections are NOT "all JPEG" (defensive; menus never build on empty picks).
+pub fn selection_is_all_jpeg(paths: &[String]) -> bool {
+    !paths.is_empty()
+        && paths.iter().all(|p| {
+            std::path::Path::new(p)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .as_deref()
+                .is_some_and(jpeg_source_ext)
+        })
 }
 
 /// Does `path` have an audio extension (one we read tags from)? Gates the
@@ -1509,7 +1526,7 @@ fn merge_shell_class_info(prior: &str, ico_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_shell_class_info, reveal_is_noise, routed_edit_output_ext};
+    use super::{merge_shell_class_info, reveal_is_noise, routed_edit_output_ext, selection_is_all_jpeg};
 
     /// Setting a folder icon must not eat the rest of desktop.ini. Explorer keeps localized
     /// folder names and tooltips in the same file, and the old code replaced the whole thing.
@@ -1624,5 +1641,20 @@ mod tests {
             routed_edit_output_ext(std::path::Path::new("photo.JPEG")),
             "jpeg"
         );
+    }
+
+    /// The "Convert into ▸ LEP" leaf shows only on an all-JPEG selection: the
+    /// lossless recompression needs JPEG bytes, so a mixed selection must not
+    /// offer the verb (it would only refuse). Case-insensitive like every other
+    /// extension gate.
+    #[test]
+    fn selection_is_all_jpeg_gates_the_lepton_leaf() {
+        let j = |s: &str| s.to_string();
+        assert!(selection_is_all_jpeg(&[j("a.jpg"), j("b.jpeg"), j("c.JPG")]));
+        assert!(!selection_is_all_jpeg(&[j("a.jpg"), j("b.png")]));
+        assert!(!selection_is_all_jpeg(&[j("a.lep")])); // lep is not a JPEG SOURCE
+        assert!(!selection_is_all_jpeg(&[j("a.mpo")])); // multi-picture, excluded
+        assert!(!selection_is_all_jpeg(&[]));
+        assert!(!selection_is_all_jpeg(&[j("noext")]));
     }
 }
