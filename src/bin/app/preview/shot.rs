@@ -58,6 +58,21 @@ pub(super) unsafe fn run_shot(
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+    if let Some((w, h)) = opts.size {
+        // Drive the REAL resize path (SetWindowPos → WM_SIZE → invalidate → repaint), so a
+        // shot proves the content actually re-flows at the new width rather than just that
+        // it laid out correctly once.
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            w.max(120),
+            h.max(120),
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        crate::win::pump_msgs(8);
+    }
     if let Some(scroll) = opts.scroll {
         // Scroll the text/Markdown pane before capture (an overshoot just shows the bottom —
         // the wheel handler's clamp doesn't run here, but paint clips like any big scroll).

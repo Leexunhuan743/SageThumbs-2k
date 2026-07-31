@@ -501,6 +501,24 @@ pub(super) unsafe fn spawn_decode(hwnd: HWND, path: String, gen: u64) {
     std::thread::spawn(move || {
         // Reconstruct the HWND inside the worker (HWND isn't `Send`; the raw pointer is).
         let hwnd = HWND(hwnd_raw as *mut c_void);
+        // Formats that stream + downscale off the file handle (OpenEXR) skip the read
+        // entirely — a 12K render pass is past every in-memory cap. Never animated, so
+        // this can post the single-frame result straight away.
+        if let Some(decoded) = streamed_decode(&path) {
+            let payload: Box<(u64, Option<DecodedRgba>)> = Box::new((gen, Some(decoded)));
+            let raw = Box::into_raw(payload);
+            if PostMessageW(
+                Some(hwnd),
+                WM_APP_RENDER,
+                WPARAM(gen as usize),
+                LPARAM(raw as isize),
+            )
+            .is_err()
+            {
+                drop(Box::from_raw(raw));
+            }
+            return;
+        }
         // One bounded/path-aware read for BOTH the animation probe and static fallback.
         // This also gives the standalone viewer the core's PSD/PSB/Blender head-preview and
         // oversized streamed-cover fast paths instead of blindly buffering the whole file.
@@ -654,8 +672,29 @@ pub(super) unsafe fn spawn_decode_pdf(hwnd: HWND, path: String, page: u32, gen: 
 
 /// Read the file and run the budgeted decoder, converting the result to tight RGBA8.
 fn read_and_decode(path: &str) -> Option<DecodedRgba> {
+    // Formats that stream + downscale off the file handle (OpenEXR) never go
+    // through the bounded whole-file read — a 12K render pass is past every cap.
+    if let Some(img) = streamed_decode(path) {
+        return Some(img);
+    }
     let bytes = sagethumbs2k_core::decode::read_preview_capped(path).ok()?;
     decode_loaded(bytes)
+}
+
+/// The by-path streaming decode (see `decode::decode_preview_streamed`), converted
+/// to tight RGBA8. `None` when the path isn't one of those formats.
+fn streamed_decode(path: &str) -> Option<DecodedRgba> {
+    let img = sagethumbs2k_core::decode::decode_preview_streamed(
+        path,
+        sagethumbs2k_core::decode::EXR_PATH_EDGE,
+    )?;
+    let rgba = img.to_rgba8();
+    let (w, h) = (rgba.width() as i32, rgba.height() as i32);
+    Some(DecodedRgba {
+        w,
+        h,
+        rgba: rgba.into_raw(),
+    })
 }
 
 /// Decode bytes already acquired by the path-aware reader. Keeping this separate lets the

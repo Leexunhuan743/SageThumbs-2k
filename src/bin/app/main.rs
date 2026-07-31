@@ -272,6 +272,10 @@ fn main() {
                             wait_ms: val("--wait-ms").and_then(|s| s.parse().ok()),
                             source: args.iter().any(|a| a == "--source"),
                             toggle_source: args.iter().any(|a| a == "--toggle-source"),
+                            size: val("--size").and_then(|s| {
+                                let (w, h) = s.split_once(['x', 'X'])?;
+                                Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+                            }),
                         };
                         crate::preview::run_shot_preview(hinst, dark, out, &opts)
                     }

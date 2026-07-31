@@ -68,10 +68,24 @@ pub fn thumbnail(input: &str, output: &str, max_dim: u32) -> Result<String, Stri
     // so a scripted/agent/MCP call can't load a multi-GB file wholesale — the same
     // ceiling Explorer thumbnailing and the path verbs apply. Head-preview
     // containers (.blend / PSD-PSB) past the cap still render from a bounded prefix.
-    let bytes = decode::read_preview_capped(input).map_err(|e| e.to_string())?;
     // Preview fidelity (embedded/container previews OK) — that's what a
-    // thumbnail is; `convert` is the full-fidelity verb.
-    let img = decode::decode_preview(&bytes).map_err(|_| format!("cannot decode {input}"))?;
+    // thumbnail is; `convert` is the full-fidelity verb. By PATH, so the streaming
+    // rescues apply: an OpenEXR is scaled straight off the file handle instead of
+    // being refused for exceeding the shared input budget (which a 12K render pass
+    // always does). Every other format takes the same bounded whole-file read as
+    // before, including its size-limit error text.
+    let edge = if max_dim > 0 {
+        max_dim
+    } else {
+        decode::EXR_PATH_EDGE
+    };
+    let img = match decode::decode_preview_streamed(input, edge) {
+        Some(img) => img,
+        None => {
+            let bytes = decode::read_preview_capped(input).map_err(|e| e.to_string())?;
+            decode::decode_preview(&bytes).map_err(|_| format!("cannot decode {input}"))?
+        }
+    };
     let out = if max_dim > 0 {
         img.thumbnail(max_dim, max_dim)
     } else {

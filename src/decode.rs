@@ -150,6 +150,76 @@ pub fn read_capped(path: &str) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
+/// The scaled-EXR edge used by the by-path front ends (`st2k thumbnail`, the Quick
+/// preview viewer). Both consume the result at screen scale, and 2048 keeps a 12K
+/// render pass crisp in a maximized viewer while still bounding the work.
+pub const EXR_PATH_EDGE: u32 = 2048;
+
+/// Does this head start with the OpenEXR magic? The stream cascade uses it to
+/// route an EXR into [`exr_scaled_from_reader`] before anything buffers it.
+pub fn is_exr_magic(head: &[u8]) -> bool {
+    exrscale::is_exr_magic(head)
+}
+
+/// Is this file an OpenEXR? Cheap magic peek used to route a path/stream into the
+/// streaming scaled decoder BEFORE anything tries to buffer it.
+fn file_is_exr(path: &str) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok()
+        && exrscale::is_exr_magic(&magic)
+}
+
+/// Decode an OpenEXR from a seekable source to a display-ready 8-bit sRGB image at
+/// most `target_edge` px on its long side, WITHOUT buffering the file or ever
+/// materializing the full-resolution float image (see [`exrscale`]). Returns `Err`
+/// for anything outside that decoder's supported subset, which is the caller's cue
+/// to fall through to the ordinary tiers.
+pub fn exr_scaled_from_reader<R: Read + std::io::Seek>(
+    src: R,
+    target_edge: u32,
+) -> Result<DynamicImage> {
+    let float = exrscale::decode_scaled(src, target_edge)?;
+    Ok(tone_map_float(&float))
+}
+
+/// The by-path decodes that STREAM off the file handle instead of buffering it,
+/// scaled to `target_edge` as they read. `None` means "not one of these" (or the
+/// streaming decoder declined the file), and the caller should take the ordinary
+/// [`read_preview_capped`] + [`decode_preview`] route unchanged.
+///
+/// Today the only such rescue is OpenEXR, whose 12K+ render passes routinely blow
+/// past both the user's MaxSize and [`limits::MAX_INPUT_BYTES`] and so never
+/// reached a decoder at all.
+pub fn decode_preview_streamed(path: &str, target_edge: u32) -> Option<DynamicImage> {
+    if !file_is_exr(path) {
+        return None;
+    }
+    match std::fs::File::open(path)
+        .map_err(|_| Error::from(E_FAIL))
+        .and_then(|f| exr_scaled_from_reader(f, target_edge))
+    {
+        Ok(img) => Some(img),
+        Err(e) => {
+            crate::safety::log_debug(&format!("scaled EXR decode failed: {e}"));
+            None
+        }
+    }
+}
+
+/// Preview-fidelity decode BY PATH: [`decode_preview_streamed`] first, then the
+/// ordinary bounded read + tiered decode. Behaviour for every format the streaming
+/// tier doesn't claim is byte-for-byte what it was.
+pub fn decode_preview_path(path: &str, target_edge: u32) -> Result<DynamicImage> {
+    if let Some(img) = decode_preview_streamed(path, target_edge) {
+        return Ok(img);
+    }
+    let bytes = read_preview_capped(path).map_err(|_| Error::from(E_FAIL))?;
+    decode_preview(&bytes)
+}
+
 /// Bounded head prefix that's ample for every [`crate::container::has_head_preview`]
 /// format: a Blender `TEST` thumbnail block sits ~100 bytes in, and a Photoshop
 /// image-resources section (baked preview, resource 1036) is at most a few MB past
@@ -657,6 +727,7 @@ fn looks_like_tga(b: &[u8]) -> bool {
         && h > 0
 }
 
+mod exrscale;
 mod magick;
 pub(crate) use magick::looks_like_metafile;
 #[cfg(test)]
@@ -1729,4 +1800,4 @@ fn has_exif_container(b: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

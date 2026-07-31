@@ -273,6 +273,10 @@ pub(crate) struct ShotOpts {
     /// real click path (`do_action` → `toggle_source` → reload) rather than presetting the mode
     /// like `--source` does. Combine with `--source` to verify toggling back to rendered.
     pub toggle_source: bool,
+    /// RESIZE the window to `W`x`H` after loading (`--size WxH`), exactly as dragging the frame
+    /// does (a real `SetWindowPos` → `WM_SIZE`), then capture. This is how "does the content
+    /// re-flow when the window gets wider" is verified headlessly instead of on the desktop.
+    pub size: Option<(i32, i32)>,
 }
 
 /// The app's `--shot --window preview` mode: build the viewer OFF-SCREEN per `opts`, render it to

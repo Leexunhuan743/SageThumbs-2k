@@ -2,6 +2,21 @@
 
 All notable user-facing changes to **SageThumbs 2K**. Newest first.
 
+## 1.4.1
+
+### Fixed
+
+- **Huge OpenEXR files now get thumbnails.** A 12K VFX render pass, the kind that lands
+  hundreds of megabytes on disk with PIZ compression, used to show nothing at all: it was
+  simply too big to load, so no thumbnail, no preview pane, no Quick preview. EXRs are now
+  read straight off the file and shrunk as they're read, so size stops mattering; a 445 MB
+  12288x6480 frame that produced nothing before now thumbnails in a few seconds. Ordinary
+  EXRs got much faster too (about 6x on a 12K file) and use a fraction of the memory.
+- **Widening the Quick preview window re-wraps the text.** Markdown and other rendered
+  documents were laid out in a fixed-width column, so dragging the window wider only added
+  empty space at the sides and every line broke in the same place. The text column now
+  follows the window, so making it wider really does fit more words per line.
+
 ## 1.4.0
 
 ### Added

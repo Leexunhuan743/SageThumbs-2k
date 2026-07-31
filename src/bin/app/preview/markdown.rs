@@ -174,13 +174,17 @@ pub(super) enum Block {
 /// document's rendered text and where each run landed in it. Lets a repeat paint while scrolling
 /// SKIP re-measuring the off-screen paragraphs and rebuilding the text instead of re-laying-out the
 /// whole document every frame — the difference between smooth and stuttering on a big Markdown
-/// file. Keyed by (decode gen, pane width, remote-images flag); rebuilt when any changes. Only the
-/// text blocks' heights are cached; code/tables/images are cheap-to-measure or async, so they
-/// always re-run.
+/// file. Two keys, because the halves have different lifetimes: the parse is keyed by (decode gen,
+/// remote-images flag) and survives any resize, while the measured heights are keyed by the wrap
+/// width alone. Only the text blocks' heights are cached; code/tables/images are cheap-to-measure
+/// or async, so they always re-run.
 #[derive(Default)]
 pub(super) struct MdLayout {
     ready: bool,
-    key: (u64, i32, bool),
+    /// What the PARSE below was built from: `(decode generation, remote-images allowed)`.
+    parse_key: (u64, bool),
+    /// The wrap width `heights` was measured at — `None` forces a re-measure.
+    width_key: Option<i32>,
     /// The PARSED document. Cached with everything else — it used to be re-parsed on every
     /// single paint, which meant the whole pulldown-cmark walk ran again for each 15 ms tick of
     /// the ToC slide animation and each wheel notch, on documents up to the 5 MB text cap. `Rc`
@@ -354,10 +358,15 @@ fn doc_append(doc: &mut String, block: &Block) -> DocBase {
     }
 }
 
-// GitHub-ish metrics (CSS px @96dpi, DPI-scaled at draw): 16px body, 980px-45px*2 ≈ 880 content
-// column, 6x13 table cell padding, 4px quote bar. Headings 2em/1.5em/1.25em/1em/0.875em/0.85em.
+// GitHub-ish metrics (CSS px @96dpi, DPI-scaled at draw): 16px body, 6x13 table cell padding,
+// 4px quote bar. Headings 2em/1.5em/1.25em/1em/0.875em/0.85em.
+//
+// GitHub's fixed ~880px content column is deliberately NOT copied. This is a window the user
+// SIZES: with a hard cap, dragging the frame wider only grew the empty gutters while every
+// paragraph stayed wrapped at the same place — which reads as "resizing does nothing" (and the
+// default 1000px window was already past the cap, so it did nothing from the very first drag).
+// The column now tracks the pane, so widening genuinely un-wraps the text.
 const BODY_PX: i32 = 16;
-const MAX_COL_W: i32 = 880;
 fn heading_px(level: u8) -> i32 {
     match level {
         1 => 32,
@@ -400,29 +409,35 @@ pub(super) unsafe fn render(
 
     let sc = |v: i32| crate::win::dpi_scale(hwnd, v);
     let margin = sc(18);
-    // GitHub-style content column: capped width, centered in the pane.
-    let avail = (rc.right - rc.left - 2 * margin).max(1);
-    let full_w = avail.min(sc(MAX_COL_W));
-    let x0 = rc.left + margin + (avail - full_w) / 2;
+    // Content column = the whole pane minus margins, so a wider window really does
+    // re-wrap the text wider (see the note on the metrics above).
+    let full_w = (rc.right - rc.left - 2 * margin).max(1);
+    let x0 = rc.left + margin;
     let top = rc.top + margin;
     let mut y = top - scroll;
     let mut first = true;
 
-    // Layout cache: reuse the measured text-block heights unless the document, the pane width, or
-    // the remote-images flag changed. On a repeat paint (scrolling) this lets us skip re-measuring
-    // every off-screen paragraph — the expensive part — instead of re-laying-out the whole file.
-    // Key on the CLAMPED wrap width (full_w), not the raw pane width: the ToC-sidebar slide
-    // animation shrinks the pane a few px per 15ms tick, but full_w stays capped at MAX_COL_W, so
-    // the cache survives the slide instead of fully rebuilding every animation frame.
-    let key = (gen, full_w, remote_ok);
-    if !layout.ready || layout.key != key || layout.heights.len() != layout.blocks.len() {
+    // Layout cache, keyed in TWO parts because the two halves have different lifetimes:
+    //   * the PARSE (blocks + selection document + offsets) depends only on the document and the
+    //     remote-images flag — a resize can never change it;
+    //   * the measured block HEIGHTS depend on the wrap width, so they die on every width change.
+    // Splitting them is what makes a width-tracking column affordable: dragging the frame (or a
+    // 15 ms tick of the ToC slide, which now genuinely changes the wrap width) re-measures only
+    // the blocks the culling loop actually reaches, instead of re-running the whole pulldown-cmark
+    // walk over a document up to the 5 MB text cap on every frame.
+    let parse_key = (gen, remote_ok);
+    if !layout.ready || layout.parse_key != parse_key {
         layout.blocks = std::rc::Rc::new(parse_blocks(md, remote_ok));
-        layout.heights = vec![-1; layout.blocks.len()];
         let (doc, bases) = build_doc(&layout.blocks);
         layout.doc = doc;
         layout.bases = bases;
-        layout.key = key;
+        layout.parse_key = parse_key;
+        layout.width_key = None;
         layout.ready = true;
+    }
+    if layout.width_key != Some(full_w) || layout.heights.len() != layout.blocks.len() {
+        layout.heights = vec![-1; layout.blocks.len()];
+        layout.width_key = Some(full_w);
     }
     // Cheap handle, not a copy — lets the loop below read the blocks while still writing
     // measured heights back into `layout`.

@@ -873,6 +873,53 @@ fn zero_alpha_exr_thumbnails_end_to_end() {
     assert!(out.rgba.chunks_exact(4).any(|px| px[3] != 0));
 }
 
+/// A positional-ramp EXR: red encodes the column, green the row.
+pub(crate) fn ramp_exr_bytes(w: u32, h: u32) -> Vec<u8> {
+    let buf =
+        image::Rgba32FImage::from_fn(w, h, |x, y| image::Rgba([x as f32, y as f32, 0.25, 1.0]));
+    let mut out = Vec::new();
+    DynamicImage::ImageRgba32F(buf)
+        .write_to(
+            &mut std::io::Cursor::new(&mut out),
+            image::ImageFormat::OpenExr,
+        )
+        .expect("write ramp exr");
+    out
+}
+
+#[test]
+fn exr_paths_decode_scaled_off_the_file_handle() {
+    let dir = std::env::temp_dir();
+    let exr = dir.join(format!("st2k_exr_path_{}.exr", std::process::id()));
+    std::fs::write(&exr, ramp_exr_bytes(600, 400)).expect("write temp exr");
+    let path = exr.to_string_lossy().into_owned();
+
+    // step = floor(600 / 64) = 9 -> ceil(600/9) x ceil(400/9) = 67x45.
+    let img = decode_preview_streamed(&path, 64).expect("EXR must take the streaming path");
+    assert_eq!((img.width(), img.height()), (67, 45));
+    // Tone-mapped to 8-bit sRGB, like the `image` tier's float output.
+    assert!(matches!(img, DynamicImage::ImageRgba8(_)));
+    // `decode_preview_path` agrees with it.
+    let same = decode_preview_path(&path, 64).expect("path decode");
+    assert_eq!((same.width(), same.height()), (67, 45));
+    let _ = std::fs::remove_file(&exr);
+
+    // A non-EXR is left entirely to the ordinary bounded read + tiered decode.
+    let png = dir.join(format!("st2k_exr_path_{}.png", std::process::id()));
+    image::RgbaImage::new(9, 7)
+        .save(&png)
+        .expect("write temp png");
+    let png_path = png.to_string_lossy().into_owned();
+    assert!(decode_preview_streamed(&png_path, 64).is_none());
+    assert_eq!(
+        decode_preview_path(&png_path, 64)
+            .map(|i| (i.width(), i.height()))
+            .ok(),
+        Some((9, 7))
+    );
+    let _ = std::fs::remove_file(&png);
+}
+
 #[test]
 fn metafile_min_density_bumps_small_emf_only() {
     // Minimal EMF header: iType=1 (EMR_HEADER), rclBounds(16), rclFrame(16, .01mm), " EMF".

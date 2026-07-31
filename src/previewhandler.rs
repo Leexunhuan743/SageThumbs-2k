@@ -244,7 +244,10 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
                 if let Some(name) = unsafe { stream_name(stream) } {
                     safety::log_debug(&format!("DoPreview: file {name}"));
                 }
-                unsafe { streamsrc::stream_source(stream, cfg.max_file_bytes, "DoPreview") }
+                // 1024 px matches the PDF/contact-sheet rasterize target below —
+                // crisp at any pane size, and it is what the streaming EXR tier
+                // scales to as it reads.
+                unsafe { streamsrc::stream_source(stream, cfg.max_file_bytes, 1024, "DoPreview") }
             };
 
             // A cascade miss (oversized past every rescue, artless audio, undecodable

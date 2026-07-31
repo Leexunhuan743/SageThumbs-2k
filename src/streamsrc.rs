@@ -55,14 +55,21 @@ pub enum StreamSource {
 ///    read ONLY the art (not the whole file). Sidesteps the size cap AND avoids
 ///    buffering; artless audio stops here (raw audio bytes are not a decodable
 ///    image, a full read + decode would just burn time and fail).
-/// 3. OVERSIZED (past the cap) — streamed container cover (CBZ central
+/// 3. OPENEXR — decoded straight off the stream at the target edge, never
+///    buffered (a 12K render pass is hundreds of MB of input and gigabytes of
+///    float pixels; both caps refuse it, so it used to get the stock icon).
+/// 4. OVERSIZED (past the cap) — streamed container cover (CBZ central
 ///    directory + one entry; Clip Studio `.clip` tail database) or the
 ///    head-preview prefix rescue (.blend/PSD-PSB baked previews sit in the
 ///    first bytes); otherwise skip.
-/// 4. Everything else: bounded whole-file read.
+/// 5. Everything else: bounded whole-file read.
+///
+/// `target_edge` is the caller's requested output edge; only the streaming EXR
+/// tier consumes it (a smaller target lets it skip more of the file).
 pub unsafe fn stream_source(
     stream: &IStream,
     max_file_bytes: u64,
+    target_edge: u32,
     who: &str,
 ) -> Result<StreamSource> {
     if peek_is_video(stream) {
@@ -143,6 +150,34 @@ pub unsafe fn stream_source(
             return Err(Error::from(E_FAIL));
         }
         AudioArt::NotAudio => {}
+    }
+
+    // OPENEXR — decode scaled straight off the (seekable) stream. A 12K VFX render
+    // pass is hundreds of MB on disk, so the bounded whole-file read below refuses
+    // it outright and the file gets the stock icon; and even well under the cap,
+    // the `image` tier's full-resolution float decode costs orders of magnitude
+    // more memory and time than the tile we were asked for. Files the scaled
+    // decoder declines (deep, chroma-subsampled, non-RGB channel names) fall
+    // through to the unchanged cascade below.
+    if peek_is_exr(stream) {
+        let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+        let source = IStreamReader {
+            stream: stream.clone(),
+        };
+        match decode::exr_scaled_from_reader(source, target_edge) {
+            Ok(img) => {
+                safety::log_debug(&format!(
+                    "{who}: scaled EXR {}x{}",
+                    img.width(),
+                    img.height()
+                ));
+                return Ok(StreamSource::Frame(img));
+            }
+            Err(e) => {
+                safety::log_debug(&format!("{who}: scaled EXR decode failed ({e})"));
+                let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+            }
+        }
     }
 
     // GENERIC archive (a registered .zip/.rar/.7z — NOT the cbz/epub/office/… zips,
@@ -306,6 +341,17 @@ unsafe fn peek_is_video(stream: &IStream) -> bool {
     let _ = stream.Seek(0, STREAM_SEEK_SET, None);
     let got = (got as usize).min(head.len());
     hr.is_ok() && crate::video::is_video_magic(&head[..got])
+}
+
+/// Is the stream head the OpenEXR magic? Rewinds either way so the scaled decode
+/// (or, on a miss, the rest of the cascade) starts clean.
+unsafe fn peek_is_exr(stream: &IStream) -> bool {
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    let mut head = [0u8; 4];
+    let mut got: u32 = 0;
+    let hr = stream.Read(head.as_mut_ptr() as *mut c_void, 4, Some(&mut got));
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    hr.is_ok() && got == 4 && decode::is_exr_magic(&head)
 }
 
 /// Is the stream head the Ogg container magic (`OggS`)? Ogg carries both video (.ogv) and
@@ -1055,7 +1101,7 @@ mod tests {
     /// MaxSize) and return the byte payload it hands the decode tiers.
     fn source_bytes(bytes: &[u8]) -> Vec<u8> {
         let stream = unsafe { SHCreateMemStream(Some(bytes)) }.expect("SHCreateMemStream");
-        match unsafe { stream_source(&stream, 100 << 20, "test") } {
+        match unsafe { stream_source(&stream, 100 << 20, 256, "test") } {
             Ok(StreamSource::Bytes(b)) => b,
             other => panic!(
                 "expected StreamSource::Bytes, got {}",
@@ -1153,14 +1199,14 @@ mod tests {
         raw[jpeg_start..jpeg_start + jpeg.len()].copy_from_slice(&jpeg);
 
         let stream = unsafe { SHCreateMemStream(Some(&raw)) }.expect("SHCreateMemStream");
-        match unsafe { stream_source(&stream, u64::MAX, "test") } {
+        match unsafe { stream_source(&stream, u64::MAX, 256, "test") } {
             Ok(StreamSource::Bytes(bytes)) => assert_eq!(bytes, jpeg),
             _ => panic!("unnamed RAW stream should use its embedded preview"),
         }
 
         let stream = unsafe { SHCreateMemStream(Some(&raw)) }.expect("SHCreateMemStream");
         assert!(
-            unsafe { stream_source(&stream, 1024 * 1024, "test") }.is_err(),
+            unsafe { stream_source(&stream, 1024 * 1024, 256, "test") }.is_err(),
             "RAW fast path must not bypass the configured MaxSize"
         );
         drop(stream);
@@ -1168,7 +1214,7 @@ mod tests {
         raw[jpeg_start..jpeg_start + jpeg.len()].fill(0);
         *raw.last_mut().unwrap() = 0xA5;
         let stream = unsafe { SHCreateMemStream(Some(&raw)) }.expect("SHCreateMemStream");
-        match unsafe { stream_source(&stream, u64::MAX, "test") } {
+        match unsafe { stream_source(&stream, u64::MAX, 256, "test") } {
             Ok(StreamSource::Bytes(bytes)) => {
                 assert_eq!(bytes.len(), raw.len());
                 assert_eq!(bytes.last(), Some(&0xA5));
@@ -1203,7 +1249,7 @@ mod tests {
             )
             .expect("SHCreateStreamOnFileEx")
         };
-        match unsafe { stream_source(&stream, u64::MAX, "test") } {
+        match unsafe { stream_source(&stream, u64::MAX, 256, "test") } {
             Ok(StreamSource::Bytes(bytes)) => {
                 assert!(bytes.len() >= decode::MIN_RAW_PREVIEW);
                 assert!(
@@ -1223,6 +1269,39 @@ mod tests {
         drop(stream);
         if com {
             unsafe { CoUninitialize() };
+        }
+    }
+
+    /// The whole point of the EXR tier: a render pass past the size cap must still
+    /// produce a picture. `max_file_bytes = 1` puts this file hopelessly over the
+    /// limit, so every other branch of the cascade would return the stock icon.
+    #[test]
+    fn oversized_exr_is_scaled_off_the_stream_instead_of_refused() {
+        let exr = crate::decode::tests::ramp_exr_bytes(600, 400);
+        let stream = unsafe { SHCreateMemStream(Some(&exr)) }.expect("SHCreateMemStream");
+        match unsafe { stream_source(&stream, 1, 64, "test") } {
+            // step = floor(600 / 64) = 9 -> ceil(600/9) x ceil(400/9) = 67x45.
+            Ok(StreamSource::Frame(img)) => {
+                assert_eq!((img.width(), img.height()), (67, 45));
+            }
+            other => panic!(
+                "oversized EXR must yield a scaled frame, got {}",
+                match other {
+                    Ok(StreamSource::Bytes(_)) => "Bytes".to_string(),
+                    Ok(StreamSource::Covers(_)) => "Covers".to_string(),
+                    Ok(StreamSource::Frame(_)) => unreachable!(),
+                    Err(e) => format!("Err({e})"),
+                }
+            ),
+        }
+        drop(stream);
+
+        // The requested edge really drives the decode (a smaller tile reads less).
+        let stream = unsafe { SHCreateMemStream(Some(&exr)) }.expect("SHCreateMemStream");
+        match unsafe { stream_source(&stream, u64::MAX, 256, "test") } {
+            // step = floor(600 / 256) = 2 -> 300x200.
+            Ok(StreamSource::Frame(img)) => assert_eq!((img.width(), img.height()), (300, 200)),
+            _ => panic!("EXR should scale to the requested edge"),
         }
     }
 
@@ -1314,7 +1393,7 @@ mod tests {
         // read then fails the decode tiers exactly as it did before this path.
         let (dwg, _) = crate::container::dwg_testutil::synthetic_dwg(false, 1 << 20);
         let stream = unsafe { SHCreateMemStream(Some(&dwg)) }.expect("SHCreateMemStream");
-        match unsafe { stream_source(&stream, 100 << 20, "test") } {
+        match unsafe { stream_source(&stream, 100 << 20, 256, "test") } {
             Ok(StreamSource::Bytes(b)) => assert_eq!(b.len(), dwg.len()),
             Ok(_) => panic!("expected Bytes"),
             Err(_) => panic!("expected the whole-file read, not a failure"),
@@ -1331,7 +1410,7 @@ mod tests {
         let (dwg, head_len) = crate::container::dwg_testutil::synthetic_dwg(true, 4 << 20);
         let stream = unsafe { SHCreateMemStream(Some(&dwg)) }.expect("SHCreateMemStream");
         // A 1 MiB cap puts this 4 MB+ file firmly over the limit.
-        match unsafe { stream_source(&stream, 1 << 20, "test") } {
+        match unsafe { stream_source(&stream, 1 << 20, 256, "test") } {
             Ok(StreamSource::Bytes(b)) => {
                 assert_eq!(b.len(), head_len);
                 assert!(crate::container::extract_cover(&b).is_some());
@@ -1385,7 +1464,7 @@ mod tests {
             "fixture must exercise the name-less shell-stream path, got {stat_path:?}"
         );
         assert!(
-            unsafe { stream_source(&stream, 1, "test") }.is_err(),
+            unsafe { stream_source(&stream, 1, 256, "test") }.is_err(),
             "over-MaxSize name-less 7z must keep the stock icon"
         );
         drop(stream);

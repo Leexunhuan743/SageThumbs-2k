@@ -111,17 +111,19 @@ impl ThumbnailProvider_Impl {
             return Err(Error::from(E_FAIL));
         }
 
+        // Option: cap the generated edge at the user's max (default 256,
+        // clamped to the legacy [32, 512] range). decode never upscales.
+        // Resolved BEFORE the cascade: the streaming EXR tier scales as it reads,
+        // so it needs to know the tile size we actually want.
+        let cx = cx.min(cfg.max_thumb);
+
         // Acquire the source on THIS thread — the marshaled IStream is
         // apartment-bound. The shared cascade never buffers an unbounded file.
         let source = {
             let borrow = self.stream.borrow();
             let stream = borrow.as_ref().ok_or_else(|| Error::from(E_FAIL))?;
-            unsafe { streamsrc::stream_source(stream, cfg.max_file_bytes, "GetThumbnail") }?
+            unsafe { streamsrc::stream_source(stream, cfg.max_file_bytes, cx, "GetThumbnail") }?
         };
-
-        // Option: cap the generated edge at the user's max (default 256,
-        // clamped to the legacy [32, 512] range). decode never upscales.
-        let cx = cx.min(cfg.max_thumb);
 
         let img = match source {
             StreamSource::Frame(frame) => decode::thumbnail_from_image(frame, cx),
