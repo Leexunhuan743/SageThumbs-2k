@@ -46,8 +46,8 @@ use streaming::*;
 pub use compress::compress_to_size;
 pub use lepton::jpeg_source_ext;
 pub(crate) use lepton::{
-    LEPTON_NEEDS_JPEG_SOURCE, LEPTON_SOURCE_TOO_LARGE, encode_lepton_file,
-    encode_image_to_lepton, is_lossless_jpeg, jpeg_exceeds_lepton_budget,
+    encode_image_to_lepton, encode_lepton_file, is_lossless_jpeg, jpeg_exceeds_lepton_budget,
+    LEPTON_NEEDS_JPEG_SOURCE, LEPTON_SOURCE_TOO_LARGE,
 };
 pub(crate) use slots::{
     predict_unique_suffix, preserve_src_time, reserve, reserve_unique_suffix, unique_output,

@@ -1526,7 +1526,9 @@ fn merge_shell_class_info(prior: &str, ico_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_shell_class_info, reveal_is_noise, routed_edit_output_ext, selection_is_all_jpeg};
+    use super::{
+        merge_shell_class_info, reveal_is_noise, routed_edit_output_ext, selection_is_all_jpeg,
+    };
 
     /// Setting a folder icon must not eat the rest of desktop.ini. Explorer keeps localized
     /// folder names and tooltips in the same file, and the old code replaced the whole thing.
@@ -1650,7 +1652,11 @@ mod tests {
     #[test]
     fn selection_is_all_jpeg_gates_the_lepton_leaf() {
         let j = |s: &str| s.to_string();
-        assert!(selection_is_all_jpeg(&[j("a.jpg"), j("b.jpeg"), j("c.JPG")]));
+        assert!(selection_is_all_jpeg(&[
+            j("a.jpg"),
+            j("b.jpeg"),
+            j("c.JPG")
+        ]));
         assert!(!selection_is_all_jpeg(&[j("a.jpg"), j("b.png")]));
         assert!(!selection_is_all_jpeg(&[j("a.lep")])); // lep is not a JPEG SOURCE
         assert!(!selection_is_all_jpeg(&[j("a.mpo")])); // multi-picture, excluded

@@ -164,9 +164,7 @@ pub fn convert(
                 "convert failed: {input}: lepton output requires a JPEG source (jpg/jpeg/jpe/jfif)"
             )
         } else if e.code() == verbs::LEPTON_SOURCE_TOO_LARGE {
-            format!(
-                "convert failed: {input}: JPEG exceeds the 128 MiB lepton container budget"
-            )
+            format!("convert failed: {input}: JPEG exceeds the 128 MiB lepton container budget")
         } else {
             format!("convert failed: {input}")
         }
@@ -455,9 +453,7 @@ pub fn batch(
     let done = results.iter().filter(|r| matches!(r, Ok(true))).count();
     let skipped = results
         .iter()
-        .filter(|r| {
-            matches!(r, Err(c) if lepton_target && *c == verbs::LEPTON_NEEDS_JPEG_SOURCE.0)
-        })
+        .filter(|r| matches!(r, Err(c) if lepton_target && *c == verbs::LEPTON_NEEDS_JPEG_SOURCE.0))
         .count();
     let failed = total - done - skipped;
     // Total failure must FAIL the command (nonzero exit for scripts/CI/MCP callers) — a

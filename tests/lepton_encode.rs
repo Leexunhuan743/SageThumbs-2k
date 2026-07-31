@@ -8,7 +8,7 @@
 
 use std::process::Command;
 
-use sagethumbs2k_core::{Resize, VerbAction, run_action};
+use sagethumbs2k_core::{run_action, Resize, VerbAction};
 
 const JPEG: &[u8] = include_bytes!("fixtures/jpegtran/restart_420.jpg");
 
@@ -108,8 +108,10 @@ fn lossy_reecode_roundtrip_is_decodable() {
     // edit path does: decode → JPEG@90 → lepton. The result must decode.
     let img = image::load_from_memory(JPEG).expect("fixture decodes via image");
     let mut jpeg = Vec::new();
-    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90))
-        .unwrap();
+    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+        &mut jpeg, 90,
+    ))
+    .unwrap();
     let (lep, _) = lepton_jpeg::encode_lepton_verify(&jpeg, &encode_features(), &pool()).unwrap();
     let mut out = Vec::new();
     lepton_jpeg::decode_lepton(
@@ -150,7 +152,10 @@ fn cli_convert_jpg_to_lep_succeeds() {
         String::from_utf8_lossy(&status.stderr)
     );
     let bytes = std::fs::read(&out).expect("output exists");
-    assert!(bytes.starts_with(&[0xCF, 0x84]), "output is a lepton container");
+    assert!(
+        bytes.starts_with(&[0xCF, 0x84]),
+        "output is a lepton container"
+    );
     // And it decodes back to the exact source bytes (the CLI path used the
     // lossless branch).
     let mut decoded = Vec::new();
@@ -298,13 +303,17 @@ fn cli_convert_oversized_dimensions_fail_cleanly() {
     let dir = scratch("wide");
     let src = dir.join("wide.jpg");
     let img = image::DynamicImage::ImageRgb8(image::RgbImage::new(17000, 1));
-    img.save_with_format(&src, image::ImageFormat::Jpeg).unwrap();
+    img.save_with_format(&src, image::ImageFormat::Jpeg)
+        .unwrap();
     let out = dir.join("wide.lep");
     let status = Command::new(st2k())
         .args(["convert", src.to_str().unwrap(), out.to_str().unwrap()])
         .output()
         .expect("st2k runs");
-    assert!(!status.status.success(), "17000px-wide JPEG must fail cleanly");
+    assert!(
+        !status.status.success(),
+        "17000px-wide JPEG must fail cleanly"
+    );
     assert!(!out.exists(), "no partial output");
 }
 
@@ -321,9 +330,10 @@ fn edit_resize_of_lep_keeps_lep() {
     let (lep, _) = lepton_jpeg::encode_lepton_verify(JPEG, &encode_features(), &pool()).unwrap();
     std::fs::write(&src, &lep).unwrap();
 
-    let report = run_action(VerbAction::ResizeImg(Resize::Fit(64, 64)), &[
-        src.to_str().unwrap().to_string(),
-    ]);
+    let report = run_action(
+        VerbAction::ResizeImg(Resize::Fit(64, 64)),
+        &[src.to_str().unwrap().to_string()],
+    );
     let out = report.output.expect("resize produced a file");
     assert_eq!(
         out.extension().and_then(|e| e.to_str()),
@@ -331,7 +341,10 @@ fn edit_resize_of_lep_keeps_lep() {
         "resized output must keep .lep"
     );
     let bytes = std::fs::read(&out).expect("resized output exists");
-    assert!(bytes.starts_with(&[0xCF, 0x84]), "output is a lepton container");
+    assert!(
+        bytes.starts_with(&[0xCF, 0x84]),
+        "output is a lepton container"
+    );
     let mut decoded = Vec::new();
     lepton_jpeg::decode_lepton(
         &mut std::io::Cursor::new(&bytes),
@@ -399,7 +412,11 @@ fn in_process_convert_file_accepts_lep_source() {
     )
     .expect("re-encoded container decodes");
     let img = image::load_from_memory(&decoded).expect("decoded JPEG loads");
-    assert_eq!(img.width(), 48, "dimensions preserved through the lossy arm");
+    assert_eq!(
+        img.width(),
+        48,
+        "dimensions preserved through the lossy arm"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -487,11 +504,7 @@ fn parallel_cli_converts_all_succeed_through_the_gate() {
                 let src = dir.join(format!("p{i}.jpg"));
                 let out = dir.join(format!("p{i}.lep"));
                 Command::new(st2k())
-                    .args([
-                        "convert",
-                        src.to_str().unwrap(),
-                        out.to_str().unwrap(),
-                    ])
+                    .args(["convert", src.to_str().unwrap(), out.to_str().unwrap()])
                     .output()
                     .expect("st2k runs")
             })

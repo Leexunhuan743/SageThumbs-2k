@@ -365,7 +365,12 @@ unsafe fn build_convert_controls(hwnd: HWND, hinst: HINSTANCE) {
     // Lepton — pure-Rust encode, always available (after the magick block, so
     // its index is stable for `resolve_cv_target`).
     let w = wide(CV_LEPTON.0);
-    SendMessageW(fcombo, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
+    SendMessageW(
+        fcombo,
+        CB_ADDSTRING,
+        None,
+        Some(LPARAM(w.as_ptr() as isize)),
+    );
     SendMessageW(fcombo, CB_SETCURSEL, Some(WPARAM(0)), None); // JPG
     dark_theme_combo(fcombo);
     ctl(
@@ -565,8 +570,10 @@ unsafe fn update_settings_enabled(hwnd: HWND) {
 /// which accepts any decodable source. Every other target accepts anything
 /// decodable. Called at dialog build, on format change, and on resize change.
 unsafe fn update_ok_enabled(hwnd: HWND) {
-    let lepton_blocked = matches!(resolve_cv_target(combo_sel(hwnd, CID_FORMAT)), CvTarget::Lepton)
-        && !ALL_JPEG.load(Ordering::Relaxed)
+    let lepton_blocked = matches!(
+        resolve_cv_target(combo_sel(hwnd, CID_FORMAT)),
+        CvTarget::Lepton
+    ) && !ALL_JPEG.load(Ordering::Relaxed)
         && !checked(hwnd, CID_RESIZE_CHK);
     if let Ok(b) = GetDlgItem(Some(hwnd), IDOK) {
         let _ = EnableWindow(b, !lepton_blocked);

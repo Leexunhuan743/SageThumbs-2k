@@ -543,7 +543,10 @@ unsafe fn build_menu_into(
         }
         // The Lepton quick-verb is JPEG-only: hide it (keeping the id) when the
         // selection contains any non-JPEG source.
-        if matches!(it, verbs::MenuItem::Verb(_, verbs::VerbAction::ConvertLepton)) && !all_jpeg
+        if matches!(
+            it,
+            verbs::MenuItem::Verb(_, verbs::VerbAction::ConvertLepton)
+        ) && !all_jpeg
         {
             *next_leaf += 1;
             continue;
@@ -1242,13 +1245,7 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                                 // for the leaf to appear.
                                 let all_jpeg = verbs::selection_is_all_jpeg(&paths);
                                 build_menu_into(
-                                    qsub,
-                                    children,
-                                    idcmdfirst,
-                                    &mut n,
-                                    budget,
-                                    &vis,
-                                    all_jpeg,
+                                    qsub, children, idcmdfirst, &mut n, budget, &vis, all_jpeg,
                                 );
                                 let _ = InsertMenuW(
                                     hmenu,
@@ -1316,9 +1313,8 @@ impl IContextMenu_Impl for ContextMenu_Impl {
                         // JPEG-only Lepton leaf: hide it unless the selection is
                         // all JPEG-family sources (only reachable in the image
                         // branch — condensed/audio sets have no Convert group).
-                        let all_jpeg = !condensed
-                            && !audio_only
-                            && verbs::selection_is_all_jpeg(&paths);
+                        let all_jpeg =
+                            !condensed && !audio_only && verbs::selection_is_all_jpeg(&paths);
                         build_menu_into(
                             hsub,
                             std::slice::from_ref(item),

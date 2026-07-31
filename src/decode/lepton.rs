@@ -58,7 +58,13 @@ pub(super) fn decode_lepton(bytes: &[u8]) -> Result<DynamicImage> {
     // no-global-pool-in-the-shell rule — the same reason rayon is kept out of the DLL).
     let pool = SimpleThreadPool::new(LeptonThreadPriority::Normal);
     let mut jpeg = Vec::new();
-    lepton_decode(&mut std::io::Cursor::new(bytes), &mut jpeg, &features, &pool).map_err(|e| {
+    lepton_decode(
+        &mut std::io::Cursor::new(bytes),
+        &mut jpeg,
+        &features,
+        &pool,
+    )
+    .map_err(|e| {
         crate::safety::log_debug(&format!("lepton decode error: {e:?}"));
         Error::from(E_FAIL)
     })?;
@@ -151,8 +157,7 @@ pub(crate) fn probe_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
             // SOS / EOI before any SOF: no usable dimensions in this header.
             SOS | EOI => return None,
             _ => {
-                let seg_len =
-                    u16::from_be_bytes(raw.get(i + 2..i + 4)?.try_into().ok()?) as usize;
+                let seg_len = u16::from_be_bytes(raw.get(i + 2..i + 4)?.try_into().ok()?) as usize;
                 if seg_len < 2 {
                     return None;
                 }
@@ -256,10 +261,7 @@ mod tests {
         assert_eq!((img.width(), img.height()), (96, 64));
         // Bit-exact container ⇒ pixels identical to decoding the original JPEG.
         let reference = super::super::decode_with_image(&jpeg).unwrap();
-        assert_eq!(
-            img.to_rgb8().into_raw(),
-            reference.to_rgb8().into_raw()
-        );
+        assert_eq!(img.to_rgb8().into_raw(), reference.to_rgb8().into_raw());
     }
 
     #[test]
@@ -401,8 +403,8 @@ mod tests {
             hdr.extend_from_slice(&0i16.to_le_bytes()); // last_dc
         }
         hdr.extend_from_slice(&0u16.to_le_bytes()); // padding
-        // GRB: 64 bytes of garbage. 64 (file size) - 64 (garbage) - 92 (header
-        // read) - 2 (SOI) underflows on unpatched code.
+                                                    // GRB: 64 bytes of garbage. 64 (file size) - 64 (garbage) - 92 (header
+                                                    // read) - 2 (SOI) underflows on unpatched code.
         hdr.extend_from_slice(b"GRB");
         hdr.extend_from_slice(&64u32.to_le_bytes());
         hdr.extend_from_slice(&[0; 64]);
@@ -423,8 +425,7 @@ mod tests {
         // Same parseable raw header as above (SOF0 + DQT + SOS, 92 bytes).
         let mut raw = Vec::new();
         raw.extend_from_slice(&[
-            0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x40, 0x00, 0x40, 0x01, 0x01,
-            0x11, 0x00,
+            0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x40, 0x00, 0x40, 0x01, 0x01, 0x11, 0x00,
         ]);
         raw.extend_from_slice(&[0xFF, 0xDB, 0x00, 0x43, 0x00]);
         raw.extend_from_slice(&[1; 64]);
@@ -565,10 +566,7 @@ mod tests {
     fn regenerate_fixture() {
         let lep = lepton_bytes(&test_jpeg(640, 480));
         std::fs::write(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/lepton.lep"
-            ),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lepton.lep"),
             &lep,
         )
         .unwrap();
@@ -604,9 +602,17 @@ mod tests {
                         img.width(),
                         img.height()
                     );
-                    println!("{}: OK {}x{}", path.file_name().unwrap().to_string_lossy(), img.width(), img.height());
+                    println!(
+                        "{}: OK {}x{}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        img.width(),
+                        img.height()
+                    );
                 }
-                Err(_) => println!("{}: clean error (unsupported)", path.file_name().unwrap().to_string_lossy()),
+                Err(_) => println!(
+                    "{}: clean error (unsupported)",
+                    path.file_name().unwrap().to_string_lossy()
+                ),
             }
         }
     }
@@ -669,7 +675,10 @@ mod tests {
             }
             checked += 1;
         }
-        assert!(checked > 0, "no corpus jpg could be encoded — corpus empty?");
+        assert!(
+            checked > 0,
+            "no corpus jpg could be encoded — corpus empty?"
+        );
         println!(
             "roundtripped {checked} corpus jpgs; skipped {}: {skipped:?}",
             skipped.len()
@@ -684,17 +693,22 @@ mod tests {
     fn progressive_roundtrip() {
         let Some(dir) = cpp_corpus_dir() else { return };
         let mut tested = 0;
-        for name in ["iphoneprogressive", "iphoneprogressive2", "androidprogressive"] {
+        for name in [
+            "iphoneprogressive",
+            "iphoneprogressive2",
+            "androidprogressive",
+        ] {
             let path = dir.join(format!("{name}.jpg"));
-            let Ok(jpg) = std::fs::read(&path) else { continue };
+            let Ok(jpg) = std::fs::read(&path) else {
+                continue;
+            };
             // Genuine progressive marker SOF2 = FF C2 (candidate names lie).
             if !jpg.windows(2).any(|w| w == [0xFF, 0xC2]) {
                 continue;
             }
             let lep = lepton_bytes(&jpg);
-            let img = decode_lepton(&lep).unwrap_or_else(|e| {
-                panic!("{name}: progressive roundtrip decode failed: {e:?}")
-            });
+            let img = decode_lepton(&lep)
+                .unwrap_or_else(|e| panic!("{name}: progressive roundtrip decode failed: {e:?}"));
             let reference = super::super::decode_with_image(&jpg).unwrap();
             assert_eq!(
                 (img.width(), img.height()),
@@ -707,7 +721,11 @@ mod tests {
                 "{name}: pixels mismatch"
             );
             tested += 1;
-            println!("{name}.jpg: progressive roundtrip OK {}x{}", img.width(), img.height());
+            println!(
+                "{name}.jpg: progressive roundtrip OK {}x{}",
+                img.width(),
+                img.height()
+            );
         }
         assert!(tested >= 1, "no genuine progressive jpg found in corpus");
     }
@@ -730,8 +748,8 @@ mod tests {
         hdr.extend_from_slice(&33u32.to_le_bytes());
         hdr.extend_from_slice(&[
             0xFF, 0xE0, 0x00, 0x12, // APP0, len 18 (2 length bytes + 16 payload)
-            b'J', b'F', b'I', b'F', 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-            0x00, 0x00, 0x00, // 16-byte APP0 payload
+            b'J', b'F', b'I', b'F', 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, // 16-byte APP0 payload
             0xFF, 0xC0, 0x00, 0x0B, // SOF0, len 11
             0x08, // precision 8
             0x01, 0xE0, 0x02, 0x80, // height 480, width 640

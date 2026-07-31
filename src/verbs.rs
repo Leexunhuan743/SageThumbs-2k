@@ -48,8 +48,8 @@ pub use encode::{
 };
 // Crate-internal only (the CLI's error propagation checks them); not part of the
 // public verbs surface.
-pub(crate) use encode::{LEPTON_NEEDS_JPEG_SOURCE, LEPTON_SOURCE_TOO_LARGE};
 pub(crate) use encode::{flatten_onto_white, read_capped};
+pub(crate) use encode::{LEPTON_NEEDS_JPEG_SOURCE, LEPTON_SOURCE_TOO_LARGE};
 
 // Folder/sort verbs + the CBZ archiver.
 #[allow(unused_imports)]

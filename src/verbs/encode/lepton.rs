@@ -17,10 +17,10 @@
 use std::path::Path;
 
 use image::DynamicImage;
-use windows::core::{Error, HRESULT, Result};
+use windows::core::{Error, Result, HRESULT};
 use windows::Win32::Foundation::E_FAIL;
 
-use lepton_jpeg::{EnabledFeatures, LeptonThreadPriority, SimpleThreadPool, encode_lepton_verify};
+use lepton_jpeg::{encode_lepton_verify, EnabledFeatures, LeptonThreadPriority, SimpleThreadPool};
 
 use super::slots::write_atomic;
 
@@ -78,9 +78,7 @@ pub fn jpeg_source_ext(ext: &str) -> bool {
 /// Raw-bytes gate for the lossless path: within the container size budget and
 /// starting with the JPEG SOI marker.
 pub(crate) fn is_lossless_jpeg(bytes: &[u8]) -> bool {
-    !bytes.is_empty()
-        && bytes.len() <= MAX_JPEG_FILE_SIZE
-        && bytes.starts_with(&[0xFF, 0xD8])
+    !bytes.is_empty() && bytes.len() <= MAX_JPEG_FILE_SIZE && bytes.starts_with(&[0xFF, 0xD8])
 }
 
 /// A JPEG-family source that is TOO BIG for a lepton container (> 128 MiB): the
@@ -177,7 +175,9 @@ pub(crate) fn encode_lepton_file(jpeg: &[u8], out: &Path) -> Result<()> {
         crate::safety::log_debug(&format!("lepton encode error: {e:?}"));
         Error::from(E_FAIL)
     })?;
-    write_atomic(out, |tmp| std::fs::write(tmp, &lep).map_err(|_| Error::from(E_FAIL)))
+    write_atomic(out, |tmp| {
+        std::fs::write(tmp, &lep).map_err(|_| Error::from(E_FAIL))
+    })
 }
 
 /// Encode a DECODED image as `.lep` via an in-memory JPEG re-encode at `quality`
@@ -189,8 +189,7 @@ pub(crate) fn encode_image_to_lepton(img: &DynamicImage, quality: u8, tmp: &Path
     let img = super::flatten_onto_white(img);
     let mut jpeg = Vec::new();
     img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
-        &mut jpeg,
-        quality,
+        &mut jpeg, quality,
     ))
     .map_err(|_| Error::from(E_FAIL))?;
     let _permit = lepton_gate::acquire();
