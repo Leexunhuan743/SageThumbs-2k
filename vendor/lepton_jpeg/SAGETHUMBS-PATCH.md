@@ -34,8 +34,8 @@ doesn't cover the sum of its own segment sizes underflows there instead.
 All fixes are in `src/`; each is marked with a `SAGETHUMBS PATCH (0.5.8)`
 comment. Together they enforce the invariant that a corrupt or malicious
 `.lep` can produce a `LeptonError` — never a panic/abort inside the shell
-host (see `src/safety.rs` and the `panic = "abort"` rationale in
-`src/lib.rs`).
+host (see the repository-root `src/safety.rs` and the `panic = "abort"`
+rationale in the repository-root `src/lib.rs`).
 
 1. **`structs/lepton_header.rs` — early_eof size arithmetic** (`saturating_sub`
    on `jpeg_file_size - garbage - header - SOI` and the per-segment loop).
@@ -64,7 +64,10 @@ host (see `src/safety.rs` and the `panic = "abort"` rationale in
    FRS, and GRB length fields are hostile-controlled u32s; upstream
    `Vec::resize`d with no bound, so a ~40-byte file declaring ~4 GiB
    lengths OOM-aborted the process. All are now capped at
-   `max_jpeg_file_size` (`BadLeptonFile` beyond).
+   `max_jpeg_file_size` (`BadLeptonFile` beyond). The same cap covers the
+   CRS marker's `rst_count` loop bound (fix 10) — a deflate bomb (a few MiB
+   of compressed input, itself bounded only by `compressed_header_size`)
+   could otherwise decompress to GiB of restart-count entries and OOM.
 6. **`jpeg/jpeg_write.rs` — bounded `rst_cnt` index.** The CRS marker's
    restart-count list can hold fewer entries than the file has scans;
    indexing it with the unbounded scan counter panicked in ALL builds. A
@@ -91,9 +94,16 @@ host (see `src/safety.rs` and the `panic = "abort"` rationale in
    - `send` to a stale Sender (evicted worker) no longer unwraps; the task
      is re-queued onto a fresh worker.
    The process-global `DEFAULT_THREAD_POOL` is unaffected (never dropped;
-   its Weak never expires, workers are reused). Regression tests:
-   `pool_drop_releases_idle_list` (drop releases the idle list) and the
-   SageThumbs `decode::lepton` suite.
+   its Weak never expires, workers are reused). Regression tests in the
+   vendored crate: `pool_drop_releases_idle_list` (drop releases the idle
+   list) and `per_call_pool_workers_exit_on_drop` (workers actually
+   terminate ≤ 250 ms after the drop — asserted via a cfg(test)-only
+   liveness counter), plus the SageThumbs `decode::lepton` suite.
+10. **`structs/lepton_header.rs` — capped CRS `rst_count` loop.** (See the
+    note under fix 5.) `rst_count` is a hostile u32 loop bound; the loop
+    reads 4 bytes per entry from the zlib stream, so an unbounded count is
+    an OOM entry point even though `compressed_header_size` itself is
+    capped. Legit files carry one small entry per scan.
 
 ## Verification
 
@@ -116,5 +126,6 @@ host (see `src/safety.rs` and the `panic = "abort"` rationale in
 
 Remove this override after upstream ships the fixes (upstream `main` still
 carries the unchecked arithmetic, the ignored parse boolean, the unbounded
-header resizes, the thread-pool Arc leak, and the send-unwrap — and the
-LepViewer/LepThumb project vendors the same unfixed 0.5.8).
+header resizes, the uncapped CRS loop, the thread-pool Arc leak, and the
+send-unwrap — and the LepViewer/LepThumb project vendors the same unfixed
+0.5.8).
