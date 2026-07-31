@@ -156,12 +156,16 @@ pub fn convert(
     resize: verbs::Resize,
 ) -> Result<String, String> {
     verbs::convert_to(input, Path::new(output), quality, webp_quality, resize).map_err(|e| {
-        // The lepton JPEG-only failure carries its own HRESULT (same pattern as
+        // The lepton failures carry their own HRESULTs (same pattern as
         // `ocr::OCR_IMAGE_TOO_LARGE`); surface the actual reason instead of the
         // blanket "convert failed" every other error collapses to.
         if e.code() == verbs::LEPTON_NEEDS_JPEG_SOURCE {
             format!(
                 "convert failed: {input}: lepton output requires a JPEG source (jpg/jpeg/jpe/jfif)"
+            )
+        } else if e.code() == verbs::LEPTON_SOURCE_TOO_LARGE {
+            format!(
+                "convert failed: {input}: JPEG exceeds the 128 MiB lepton container budget"
             )
         } else {
             format!("convert failed: {input}")
@@ -432,26 +436,50 @@ pub fn batch(
     }
 
     // Fan out: each (input, pre-reserved output) is independent → no naming race.
-    let results = crate::parallel::map(&pairs, |_, (input, output)| -> bool {
+    // Convert failures carry the HRESULT so by-design refusals (lepton output
+    // needs a JPEG source) are reported as SKIPPED, distinct from real engine
+    // failures (plan §3.5: non-JPEG in a `--to lep` batch has skipped semantics).
+    let total = files.len();
+    let lepton_target = is_convert && ext == "lep";
+    let results = crate::parallel::map(&pairs, |_, (input, output)| -> Result<bool, i32> {
         if is_convert {
-            verbs::convert_to(input, output, quality, None, resize).is_ok()
+            verbs::convert_to(input, output, quality, None, resize)
+                .map(|_| true)
+                .map_err(|e| e.code().0)
         } else {
-            thumbnail(input, &output.to_string_lossy(), size).is_ok()
+            thumbnail(input, &output.to_string_lossy(), size)
+                .map(|_| true)
+                .map_err(|_| 0)
         }
     });
-    let done = results.iter().filter(|&&ok| ok).count();
-    let total = files.len();
+    let done = results.iter().filter(|r| matches!(r, Ok(true))).count();
+    let skipped = results
+        .iter()
+        .filter(|r| {
+            matches!(r, Err(c) if lepton_target && *c == verbs::LEPTON_NEEDS_JPEG_SOURCE.0)
+        })
+        .count();
+    let failed = total - done - skipped;
     // Total failure must FAIL the command (nonzero exit for scripts/CI/MCP callers) — a
     // "0/12 succeeded" with exit code 0 was indistinguishable from a good run without
     // parsing English stdout. Partial success stays Ok but now names the failure count.
-    if done == 0 {
+    if done == 0 && failed > 0 {
         return Err(format!("0/{total} succeeded"));
     }
-    if done < total {
-        return Ok(format!(
-            "{done}/{total} succeeded ({} failed)",
-            total - done
+    if done == 0 && skipped == total {
+        return Err(format!(
+            "0/{total} succeeded (all skipped: lepton output requires a JPEG source)"
         ));
+    }
+    if done < total {
+        let mut s = format!("{done}/{total} succeeded");
+        if skipped > 0 {
+            s.push_str(&format!(" ({skipped} skipped)"));
+        }
+        if failed > 0 {
+            s.push_str(&format!(" ({failed} failed)"));
+        }
+        return Ok(s);
     }
     Ok(format!("{done}/{total} succeeded"))
 }

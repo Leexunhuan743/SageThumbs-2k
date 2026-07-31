@@ -227,14 +227,25 @@ fn cli_convert_oversized_jpeg_fails_cleanly() {
         .expect("st2k runs");
     assert!(!status.status.success(), "oversized JPEG must fail");
     assert!(!out.exists(), "no output file");
+    // The refusal must be the SIZE error, not the "needs a JPEG source"
+    // misreport (plan §3.5: a >128 MiB JPEG is not a non-JPEG source).
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    assert!(
+        stderr.contains("exceeds the 128 MiB lepton container budget"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("requires a JPEG source"),
+        "stderr: {stderr}"
+    );
 }
 
 /// A truncated JPEG (valid magic, cut mid-stream) must never panic/abort.
 /// Lepton's encoder TOLERATES early-EOF scans (lossless partial
-/// recompression — the same tolerance TinyLep relies on), so a truncated
-/// source may legitimately SUCCEED; the contract is a clean outcome either
-/// way, and on success the container must be valid and decode back to the
-/// truncated bytes.
+/// recompression — the same tolerance TinyLep relies on), so for a truncated
+/// BASELINE source the success branch is the CONTRACT, not an option: the
+/// container must be valid and decode back to the truncated bytes. (The
+/// no-panic property itself is covered in-process by the 400-mutation fuzz.)
 #[test]
 fn cli_convert_truncated_jpeg_never_panics() {
     let dir = scratch("truncated");
@@ -246,21 +257,24 @@ fn cli_convert_truncated_jpeg_never_panics() {
         .args(["convert", src.to_str().unwrap(), out.to_str().unwrap()])
         .output()
         .expect("st2k runs");
-    if status.status.success() {
-        // Early-EOF acceptance: the container must be valid and roundtrip to
-        // the truncated source byte-for-byte.
-        let bytes = std::fs::read(&out).expect("output exists");
-        assert!(bytes.starts_with(&[0xCF, 0x84]));
-        let mut decoded = Vec::new();
-        lepton_jpeg::decode_lepton(
-            &mut std::io::Cursor::new(&bytes),
-            &mut decoded,
-            &decode_features(),
-            &pool(),
-        )
-        .expect("truncated-source container must still decode");
-        assert_eq!(decoded, truncated);
-    }
+    assert!(
+        status.status.success(),
+        "truncated baseline JPEG must be accepted (early-EOF is a feature): {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    // Early-EOF acceptance: the container must be valid and roundtrip to
+    // the truncated source byte-for-byte.
+    let bytes = std::fs::read(&out).expect("output exists");
+    assert!(bytes.starts_with(&[0xCF, 0x84]));
+    let mut decoded = Vec::new();
+    lepton_jpeg::decode_lepton(
+        &mut std::io::Cursor::new(&bytes),
+        &mut decoded,
+        &decode_features(),
+        &pool(),
+    )
+    .expect("truncated-source container must still decode");
+    assert_eq!(decoded, truncated);
 }
 
 /// A 0-byte "JPEG" must fail cleanly (no panic, no output file).
@@ -294,8 +308,11 @@ fn cli_convert_oversized_dimensions_fail_cleanly() {
     assert!(!out.exists(), "no partial output");
 }
 
-/// Resize of a `.lep` source keeps `.lep` (the routed verb path: `st2k convert
-/// in.lep out.lep --resize` → lossy decode→resize→JPEG→lepton). The output must
+/// Resize of a `.lep` source keeps `.lep` — the IN-PROCESS edit path here
+/// (in the test harness `st2k_exe()` resolves to None, so `resize_one` falls
+/// back to `resize_file`; the routed `st2k convert in.lep out.lep --resize`
+/// CLI twin is covered by `cli_convert_jpg_to_lep_succeeds` and lands in the
+/// same lossy decode→resize→JPEG→lepton arm of convert_to). The output must
 /// be a valid container that decodes to the resized pixels.
 #[test]
 fn edit_resize_of_lep_keeps_lep() {
@@ -334,26 +351,56 @@ fn edit_resize_of_lep_keeps_lep() {
 }
 
 /// The routed resize prediction (what the DLL reveals) must match the
-/// in-process extension rule for .lep — pinned here so the two can't drift.
+/// in-process extension rule for .lep — pinned on the PRODUCTION function
+/// (routed_edit_output_ext delegates to edit_output_ext, the single source
+/// of truth; this asserts the export chain, not a local mirror).
 #[test]
 fn routed_edit_extension_keeps_lep() {
-    // Behavior mirror of `edit_output_ext` (src/verbs/encode.rs): .lep keeps .lep.
     assert_eq!(
-        edit_output_ext_for_test("photo.lep"),
+        sagethumbs2k_core::edit_output_ext("lep"),
         "lep",
         "routed resize of a .lep source must predict a .lep sibling"
     );
+    assert_eq!(sagethumbs2k_core::edit_output_ext("lep"), "lep");
+    assert_eq!(sagethumbs2k_core::edit_output_ext("jpg"), "jpg");
+    assert_eq!(sagethumbs2k_core::edit_output_ext("xyz"), "png");
 }
 
-fn edit_output_ext_for_test(source: &str) -> String {
-    let ext = source.rsplit_once('.').map(|(_, e)| e).unwrap_or("png");
-    match ext.to_ascii_lowercase().as_str() {
-        // The magick-writable and natively-writable sets keep their extension
-        // (mirror of the crate's ext_needs_magick/native_output_format union,
-        // as exercised by the in-crate pinning test), plus lep.
-        "psd" | "dds" | "jp2" | "lep" => ext.to_string(),
-        _ => "png".to_string(),
-    }
+/// The menu's IN-PROCESS ConvertLepton fallback (`convert_file`) must accept a
+/// `.lep` source exactly like the routed `st2k convert` path (`convert_to`):
+/// lossy decode → JPEG re-encode → lepton, sibling output. Pins the
+/// routed/in-process parity — pre-fix, `convert_file` refused `.lep` with
+/// LEPTON_NEEDS_JPEG_SOURCE while the st2k-routed path succeeded, so the same
+/// right-click behaved differently by install type.
+#[test]
+fn in_process_convert_file_accepts_lep_source() {
+    let dir = scratch("convfile_lep");
+    let (lep, _) = lepton_jpeg::encode_lepton_verify(JPEG, &encode_features(), &pool()).unwrap();
+    let src = dir.join("photo.lep");
+    std::fs::write(&src, &lep).unwrap();
+    let out = sagethumbs2k_core::convert_file(
+        src.to_str().unwrap(),
+        sagethumbs2k_core::Target {
+            format: image::ImageFormat::Jpeg, // placeholder — lep keys off ext
+            ext: "lep",
+            webp_quality: None,
+        },
+    )
+    .expect("in-process convert_file must accept a .lep source (lossy arm)");
+    assert_eq!(out.extension().and_then(|e| e.to_str()), Some("lep"));
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(bytes.starts_with(&[0xCF, 0x84]));
+    let mut decoded = Vec::new();
+    lepton_jpeg::decode_lepton(
+        &mut std::io::Cursor::new(&bytes),
+        &mut decoded,
+        &decode_features(),
+        &pool(),
+    )
+    .expect("re-encoded container decodes");
+    let img = image::load_from_memory(&decoded).expect("decoded JPEG loads");
+    assert_eq!(img.width(), 48, "dimensions preserved through the lossy arm");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Hostile-JPEG encode fuzz: deterministic bit-flips and truncations of the
@@ -394,8 +441,12 @@ fn hostile_jpeg_encode_never_panics() {
     }
 }
 
-/// Concurrent encodes must all succeed — the encode gate serializes the heavy
-/// part but must never block or deadlock a parallel batch.
+/// Crate-level thread-safety smoke: four concurrent in-process encodes (each
+/// with its own SimpleThreadPool) must all succeed without deadlock. NOTE:
+/// this test calls `encode_lepton_verify` directly and does NOT go through
+/// `lepton_gate::acquire` (that lives in encode_lepton_file /
+/// encode_image_to_lepton) — the gate itself is exercised by
+/// `parallel_cli_converts_all_succeed_through_the_gate`.
 #[test]
 fn concurrent_encodes_all_succeed() {
     let handles: Vec<_> = (0..4)
@@ -415,11 +466,14 @@ fn concurrent_encodes_all_succeed() {
 
 /// The GATE itself, through the REAL production path: four parallel `st2k
 /// convert` processes each run convert_to → encode_lepton_file →
-/// lepton_gate::acquire (a cross-process named semaphore, 2 permits). With
-/// more contenders than permits, the extras must WAIT (not fail) and every
-/// file must land. This is the path the dialog's parallel workers and the
-/// menu's st2k children actually take — a deadlock or a wedged gate would
-/// hang or fail these processes.
+/// lepton_gate::acquire (a cross-process named semaphore, 2 permits). This is
+/// the path the dialog's parallel workers and the menu's st2k children
+/// actually take; it is an end-to-end LIVENESS smoke (red pre-feature, and it
+/// would hang on a truly deadlocked gate). Note the limit: `acquire` waits at
+/// most 5 s then proceeds UNCAPPED and returns None on any failure, so the
+/// test passes even with the gate removed or wedged — it cannot measure
+/// contention or memory; those are bounded by design (2 permits × ~2 GiB peak
+/// each) and reviewed, not pinned by this test.
 #[test]
 fn parallel_cli_converts_all_succeed_through_the_gate() {
     let dir = scratch("parallel_gate");

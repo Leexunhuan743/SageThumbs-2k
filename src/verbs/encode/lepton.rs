@@ -38,6 +38,13 @@ const MAX_JPEG_FILE_SIZE: usize = 128 * 1024 * 1024;
 /// other verb).
 pub(crate) const LEPTON_NEEDS_JPEG_SOURCE: HRESULT = HRESULT(0x8FFF_0001u32 as i32);
 
+/// Distinct HRESULT for "the JPEG source exceeds the 128 MiB lepton container
+/// budget" — a JPEG this big cannot be recompressed losslessly AND would be
+/// rejected by our own decoder as a container. Surfaced (instead of the blanket
+/// `E_FAIL`) so the CLI can say the file was refused for SIZE, not for being a
+/// non-JPEG source.
+pub(crate) const LEPTON_SOURCE_TOO_LARGE: HRESULT = HRESULT(0x8FFF_0002u32 as i32);
+
 /// The encode feature set: the decode tier's features (decode/lepton.rs) with the
 /// two STRICTER gates that only make sense for files we produce ourselves —
 /// `reject_dqts_with_zeros` and `accept_invalid_dht` flip to their strict
@@ -107,8 +114,11 @@ mod lepton_gate {
         fn ReleaseSemaphore(handle: *mut c_void, count: i32, prev: *mut i32) -> i32;
     }
 
-    /// Max concurrent encodes. 2 × ~1 GiB worst case ≈ 2 GiB — the same bound the
-    /// magick gate applies to its children.
+    /// Max concurrent encodes. A single max-size (16384²) encode can transiently
+    /// hold ~2 GiB — the dimension-driven coefficient buffers (~1.5 GiB at
+    /// 4:4:4) plus the in-call verify roundtrip re-allocation — so 2 concurrent
+    /// encodes can reach ~4 GiB worst case. The gate is a best-effort bound
+    /// (same pattern as the magick gate), not a hard limit.
     const MAX: i32 = 2;
     /// Bounded acquire deadline (ms), same rationale as the magick gate: a leaked
     /// permit (host process hard-killed mid-encode) must self-heal rather than

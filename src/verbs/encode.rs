@@ -46,8 +46,8 @@ use streaming::*;
 pub use compress::compress_to_size;
 pub use lepton::jpeg_source_ext;
 pub(crate) use lepton::{
-    LEPTON_NEEDS_JPEG_SOURCE, encode_lepton_file, encode_image_to_lepton, is_lossless_jpeg,
-    jpeg_exceeds_lepton_budget,
+    LEPTON_NEEDS_JPEG_SOURCE, LEPTON_SOURCE_TOO_LARGE, encode_lepton_file,
+    encode_image_to_lepton, is_lossless_jpeg, jpeg_exceeds_lepton_budget,
 };
 pub(crate) use slots::{
     predict_unique_suffix, preserve_src_time, reserve, reserve_unique_suffix, unique_output,
@@ -120,7 +120,7 @@ fn native_output_format(ext: &str) -> Option<ImageFormat> {
 /// paths cannot drift. `.lep` keeps `.lep`: the edit verbs re-encode it (lossy,
 /// like every `.jpg` edit that misses the lossless jpegtran path) via
 /// [`encode_image_to_lepton`].
-pub(crate) fn edit_output_ext(source_ext: &str) -> &str {
+pub fn edit_output_ext(source_ext: &str) -> &str {
     if ext_needs_magick(source_ext)
         || native_output_format(source_ext).is_some()
         || source_ext == "lep"
@@ -139,9 +139,11 @@ pub fn convert_file(path: &str, target: Target) -> Result<std::path::PathBuf> {
     let bytes = read_capped(path)?;
 
     // Lepton target (the quick "Convert into ▸ LEP" verb): a JPEG-family source
-    // recompresses LOSSLESSLY (bit-exact — EXIF/ICC survive); every other source
-    // is refused with the distinct "needs a JPEG source" error (the dialog and
-    // CLI surface the reason; the menu verb logs it).
+    // recompresses LOSSLESSLY (bit-exact — EXIF/ICC survive); a `.lep` source is
+    // re-encoded through pixels (LOSSY, like the convert_to/convert_file_opts
+    // arms — the in-process fallback must match the st2k-routed outcome); every
+    // other source is refused with the distinct "needs a JPEG source" error (the
+    // dialog and CLI surface the reason; the menu verb logs it).
     if target.ext == "lep" {
         let slot = unique_output(Path::new(path), "lep");
         let src_ext = Path::new(path)
@@ -153,10 +155,18 @@ pub fn convert_file(path: &str, target: Target) -> Result<std::path::PathBuf> {
             if is_lossless_jpeg(&bytes) {
                 encode_lepton_file(&bytes, slot.path())?;
             } else if jpeg_exceeds_lepton_budget(&bytes) {
-                return Err(Error::from(E_FAIL));
+                return Err(Error::from(LEPTON_SOURCE_TOO_LARGE));
             } else {
                 return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
             }
+        } else if bytes.starts_with(&[0xCF, 0x84]) {
+            // `.lep` source: decode → JPEG re-encode at the saved quality → lepton
+            // (same lossy arm convert_to takes for .lep sources; the pixels are
+            // already a decoded JPEG, not raw bytes).
+            let img = decode::decode_full(&bytes)?;
+            write_atomic(slot.path(), |tmp| {
+                encode_image_to_lepton(&img, crate::settings::jpeg_quality(), tmp)
+            })?;
         } else {
             return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
         }
@@ -503,7 +513,7 @@ pub fn convert_file_opts(path: &str, opts: ConvertOpts, out_dir: &Path) -> Resul
             if is_lossless_jpeg(&bytes) {
                 encode_lepton_file(&bytes, slot.path())?;
             } else if jpeg_exceeds_lepton_budget(&bytes) {
-                return Err(Error::from(E_FAIL));
+                return Err(Error::from(LEPTON_SOURCE_TOO_LARGE));
             } else {
                 return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
             }
@@ -579,10 +589,12 @@ pub fn convert_to(
             // JPEG can't recompress losslessly AND would be rejected by our
             // own decoder as a container — self-inconsistent output).
             if is_lossless_jpeg(&bytes) {
-                return encode_lepton_file(&bytes, out);
+                encode_lepton_file(&bytes, out)?;
+                preserve_src_time(Path::new(input), out);
+                return Ok(());
             }
             if jpeg_exceeds_lepton_budget(&bytes) {
-                return Err(Error::from(E_FAIL));
+                return Err(Error::from(LEPTON_SOURCE_TOO_LARGE));
             }
         }
         if bytes.starts_with(&[0xCF, 0x84]) || !matches!(resize, Resize::None) {

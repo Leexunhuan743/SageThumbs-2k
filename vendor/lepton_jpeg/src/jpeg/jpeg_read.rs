@@ -346,12 +346,13 @@ fn read_first_scan<R: BufRead + Seek>(
 
                 // SAGETHUMBS PATCH (0.5.8): the four `<< jf.cs_sal` coefficient
                 // shifts in this file (DC first stage here, DC refine, AC first
-                // stage, SA-later) overflowed i16 for |coef| >= 16 with cs_sal
-                // >= 1 — a debug-build panic reachable from a hostile
-                // progressive JPEG (release wrapped silently and the wrapped
-                // value then hit the clean CoefficientOutOfRange gate).
-                // wrapping_shl keeps the release semantics identical and
-                // removes the debug abort.
+                // stage, SA-later) are DEFENSIVE-ONLY — Rust `<<` never panics
+                // on shifted-out value bits, only on a shift amount >= bit
+                // width, and `cs_sal` is bounded to < 12 by the SOS validation
+                // before any scan decode. `wrapping_shl` is byte-identical to
+                // `<<` in every profile; the explicit form documents that
+                // coefficients intentionally wrap here and keeps the semantics
+                // self-evident if the bound ever changes.
                 current_block.set_transposed_from_zigzag(0, v.wrapping_shl(u32::from(jf.cs_sal)));
 
                 let old_mcu = state.get_mcu();
@@ -435,6 +436,8 @@ fn read_progressive_scan<R: BufRead + Seek>(
                     0,
                     current_block
                         .get_transposed_from_zigzag(0)
+                        // SAGETHUMBS PATCH (0.5.8): wrapping_shl — see the
+                        // marker above the DC first-stage shift.
                         .wrapping_add(value.wrapping_shl(u32::from(jf.cs_sal))),
                 );
 
@@ -490,6 +493,8 @@ fn read_progressive_scan<R: BufRead + Seek>(
                             .context()?;
 
                         for bpos in jf.cs_from..eob {
+                            // SAGETHUMBS PATCH (0.5.8): wrapping_shl — see the
+                            // marker above the DC first-stage shift.
                             current_block.set_transposed_from_zigzag(
                                 usize::from(bpos),
                                 block[usize::from(bpos)].wrapping_shl(u32::from(jf.cs_sal)),
@@ -549,6 +554,8 @@ fn read_progressive_scan<R: BufRead + Seek>(
 
                     // copy back to colldata
                     for bpos in jf.cs_from..jf.cs_to + 1 {
+                        // SAGETHUMBS PATCH (0.5.8): wrapping_shl — see the
+                        // marker above the DC first-stage shift.
                         current_block.set_transposed_from_zigzag(
                             usize::from(bpos),
                             current_block

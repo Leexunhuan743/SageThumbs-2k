@@ -43,12 +43,12 @@ pub use menu::{
 #[allow(unused_imports)]
 pub use encode::{
     compress_to_size, convert_file, convert_file_opts, convert_image_to_pdf_in, convert_to,
-    convert_to_magick, convert_to_magick_in, jpeg_source_ext, resize_file, shrink_for_email,
-    transform_file, ConvertOpts, Resize, Target,
+    convert_to_magick, convert_to_magick_in, edit_output_ext, jpeg_source_ext, resize_file,
+    shrink_for_email, transform_file, ConvertOpts, Resize, Target,
 };
-// Crate-internal only (the CLI's error propagation checks it); not part of the
+// Crate-internal only (the CLI's error propagation checks them); not part of the
 // public verbs surface.
-pub(crate) use encode::LEPTON_NEEDS_JPEG_SOURCE;
+pub(crate) use encode::{LEPTON_NEEDS_JPEG_SOURCE, LEPTON_SOURCE_TOO_LARGE};
 pub(crate) use encode::{flatten_onto_white, read_capped};
 
 // Folder/sort verbs + the CBZ archiver.

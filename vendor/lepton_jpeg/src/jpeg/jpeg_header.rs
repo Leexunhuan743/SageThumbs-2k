@@ -258,17 +258,19 @@ impl HuffCodes {
                 j += 1;
             }
 
-            // SAGETHUMBS PATCH (0.5.8): the length-end shift below overflowed
-            // u16 for ANY table with short codes — empty later lengths keep
-            // doubling `code`, so even a normal JPEG (counts[1]=2, counts[2]=3,
-            // counts[3]=1) reaches 61440 by the last round and panicked in
-            // debug builds (release wrapped silently, and the wrap was benign:
-            // an early-round wrap trips the `code >= (1u32 << len)` layout
-            // check below with a clean error, and the final round's value is
-            // never used). wrapping_shl keeps the release byte-semantics
-            // identical while removing the debug abort. (A hostile table that
-            // pushes code toward 0xffff before the last round is still caught
-            // by the `code == 65535` check inside the loop.)
+            // SAGETHUMBS PATCH (0.5.8): the length-end shift below wraps instead
+            // of overflowing. NOTE: this is DEFENSIVE-ONLY — Rust `<<` never
+            // panics on shifted-out value bits (only a shift amount >= bit width
+            // does; this shift amount is the literal 1), so `code << 1` was
+            // already identical to `wrapping_shl(1)` in every profile. The
+            // explicit form documents the intent (canonical-code doubling across
+            // empty length rounds, e.g. counts[1]=2/counts[2]=3/counts[3]=1
+            // reaches 61440 before the last round) and keeps the wrapping
+            // semantics self-evident if the shift amount ever changes.
+            // (A hostile table that pushes code toward 0xffff before the last
+            // round is still caught by the `code == 65535` check inside the
+            // loop, and an early wrap trips the `code >= (1u32 << len)` layout
+            // check below.)
             code = code.wrapping_shl(1);
         }
 

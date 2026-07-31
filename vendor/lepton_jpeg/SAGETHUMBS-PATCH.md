@@ -2,7 +2,9 @@
 
 This directory is the crates.io `lepton_jpeg` 0.5.8 package
 (`microsoft/lepton_jpeg_rust` at tag `0.5.8`) plus the upstream `LICENSE.txt`
-and `NOTICE.txt` (Apache-2.0), with one arithmetic-overflow fix.
+and `NOTICE.txt` (Apache-2.0), with 13 SageThumbs-2k hardening patches
+(decode-side arithmetic/gate fixes 1-10, encode-side fixes 11-13 — see the
+numbered list below).
 
 ## The bug
 
@@ -115,26 +117,30 @@ rationale in the repository-root `src/lib.rs`).
     flows through the existing `?`/`context()` chains. Discriminating
     regression: the in-module `flush_after_receiver_drop_returns_error_not_panic`
     unit test (pre-patch it panics and fails).
-12. **`jpeg/jpeg_header.rs` — Huffman length-end shift wraps instead of
-    overflowing.** Upstream's `code = code << 1` overflowed u16 for ANY
-    canonical table with short codes: empty later lengths keep doubling
+12. **`jpeg/jpeg_header.rs` — Huffman length-end shift wraps explicitly.
+    DEFENSIVE-ONLY:** Rust `<<` never panics on shifted-out value bits (only
+    a shift amount ≥ bit width does; this amount is the literal 1), so
+    upstream's `code = code << 1` was already byte-identical to
+    `wrapping_shl(1)` in every profile — no debug abort existed. The patch
+    makes the intended wrapping explicit: empty later lengths keep doubling
     `code`, so even a normal JPEG (e.g. counts[1]=2, counts[2]=3,
-    counts[3]=1) reaches 61440 by the last round and panicked in debug
-    builds (release wrapped silently and benignly — an early-round wrap
-    trips the `code >= (1u32 << len)` layout check with a clean error, and
-    the final round's value is never used). `wrapping_shl(1)` keeps the
-    release semantics byte-identical and removes the debug abort. (An
+    counts[3]=1) reaches 61440 by the last round, and an early wrap trips
+    the `code >= (1u32 << len)` layout check with a clean error. (An
     earlier audit draft proposed rejecting `code > 0x7fff` — that would
     have REJECTED every real JPEG with short codes, since empty rounds
     legitimately push the running code past 0x7fff; the wrap is the correct
-    fix.)
+    form.) No regression test discriminates this patch (there is no
+    pre-patch failure to reproduce).
 13. **`jpeg/jpeg_read.rs` — progressive successive-approximation shifts
-    wrap instead of overflowing.** The four `<< jf.cs_sal` coefficient
-    shifts (DC first stage, DC refine, AC first stage, SA-later) overflowed
-    i16 for |coef| >= 16 with cs_sal >= 1 (debug panic; release wrapped
-    silently and the wrapped value then hit the clean `CoefficientOutOfRange`
-    gate). `wrapping_shl` keeps the release semantics byte-identical and
-    removes the debug abort.
+    wrap explicitly. DEFENSIVE-ONLY:** the four `<< jf.cs_sal` coefficient
+    shifts (DC first stage, DC refine, AC first stage, SA-later) — Rust
+    `<<` never panics on shifted-out value bits, only on a shift amount ≥
+    bit width, and `cs_sal` is bounded to < 12 by the SOS validation before
+    any scan decode, so upstream was already byte-identical to
+    `wrapping_shl` in every profile (no debug abort existed). The explicit
+    form documents that coefficients intentionally wrap and keeps the
+    semantics self-evident if the bound ever changes. No regression test
+    discriminates this patch.
 
 Encode-side audits (Phase 1 of the Lepton-encode feature) covered the
 previously-unfuzzed JPEG entropy surface (`jpeg_read.rs` first/progressive
@@ -160,6 +166,16 @@ model priors).
 - `cargo test --manifest-path vendor/lepton_jpeg/Cargo.toml --lib
   simple_threadpool` (with `WORKSPACE_ROOT` set to a real directory for the
   crate's compile-time `env!`): the pool regression tests.
+- `cargo test --manifest-path vendor/lepton_jpeg/Cargo.toml --lib
+  flush_after_receiver_drop` (CI vendored-lepton job): the DISCRIMINATING
+  regression for patch 11 — drops the writer receiver, calls
+  `MultiplexWriter::flush` directly, asserts `Err(BrokenPipe)`
+  (pre-patch: panic).
+- `cargo test --manifest-path vendor/lepton_jpeg/Cargo.toml --test
+  encode_failures` (CI vendored-lepton job): encode-side smoke —
+  `output_io_error_propagates_not_panics` (fail-after-N writer; does NOT
+  discriminate, the main loop `?` returns first) and
+  `encode_succeeds_with_unlimited_writer` (fail_at = 512).
 - `decode::lepton::tests::lepton_mutations_never_panic`: 400 deterministic
   bit-flip/truncation mutations + an oversized-declared-size file must never
   panic, only Ok/Err.

@@ -560,11 +560,14 @@ unsafe fn update_settings_enabled(hwnd: HWND) {
 
 /// Convert is enabled only when the selected target can take the current
 /// selection: Lepton's LOSSLESS path needs JPEG-family sources, so a mixed
-/// selection disables it (with the warning line shown); every other target
-/// accepts anything decodable. Called at dialog build and on format change.
+/// selection disables it (with the warning line shown) — UNLESS a resize is
+/// requested, because the resize path decodes to pixels and re-encodes lossily,
+/// which accepts any decodable source. Every other target accepts anything
+/// decodable. Called at dialog build, on format change, and on resize change.
 unsafe fn update_ok_enabled(hwnd: HWND) {
     let lepton_blocked = matches!(resolve_cv_target(combo_sel(hwnd, CID_FORMAT)), CvTarget::Lepton)
-        && !ALL_JPEG.load(Ordering::Relaxed);
+        && !ALL_JPEG.load(Ordering::Relaxed)
+        && !checked(hwnd, CID_RESIZE_CHK);
     if let Ok(b) = GetDlgItem(Some(hwnd), IDOK) {
         let _ = EnableWindow(b, !lepton_blocked);
     }
@@ -784,6 +787,20 @@ static POPUP_KIND: AtomicI32 = AtomicI32::new(SK_JPEG);
 /// The settings panel a format index needs (JPEG/PDF → quality, WebP →
 /// lossless+quality, PNG → compression, AVIF/JXL → magick quality, others → none).
 fn settings_kind(idx: usize) -> i32 {
+    // The Lepton entry sits AFTER the magick block, so its index depends on
+    // magick availability — probe the same offset resolve_cv_target uses,
+    // otherwise on a compact (no-magick) install the Lepton index collides
+    // with CV_MAGICK_FORMATS[0] and misopens the AVIF/JPEG-XL quality popup.
+    let magick_n = if sagethumbs2k_core::magick_available() {
+        CV_MAGICK_FORMATS.len()
+    } else {
+        0
+    };
+    let lep_idx = CV_FORMATS.len() + magick_n;
+    if idx >= lep_idx {
+        // Lepton (or anything after it, which does not exist) — no quality knob.
+        return SK_NONE;
+    }
     if let Some((_, ext)) = CV_MAGICK_FORMATS.get(idx.wrapping_sub(CV_FORMATS.len())) {
         // Magick targets sit after the native ones. Only the lossy ones (AVIF/JXL) get a
         // quality slider; the rest (PSD/DDS/…) have no quality knob.
@@ -1073,8 +1090,16 @@ extern "system" fn convert_wndproc(
                         update_settings_enabled(hwnd);
                         update_ok_enabled(hwnd);
                     }
-                    CID_RESIZE_CHK => update_resize_enabled(hwnd),
-                    CID_RESIZE if notify == CBN_SELCHANGE => update_resize_enabled(hwnd),
+                    CID_RESIZE_CHK => {
+                        update_resize_enabled(hwnd);
+                        // The Lepton OK-gate depends on the resize checkbox
+                        // (resize makes the lep path accept any source).
+                        update_ok_enabled(hwnd);
+                    }
+                    CID_RESIZE if notify == CBN_SELCHANGE => {
+                        update_resize_enabled(hwnd);
+                        update_ok_enabled(hwnd);
+                    }
                     _ => {}
                 }
                 LRESULT(0)
