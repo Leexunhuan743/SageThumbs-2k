@@ -113,8 +113,13 @@ Source: "stage\LICENSE*"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoe
 ; Files ImageMagick and must constrain it too. The full bundle's duplicate copy
 ; exists for exact staged testing but is excluded from this second installer row.
 Source: "stage\policy.xml"; DestDir: "{app}"; Flags: ignoreversion; Components: core
-; Bundled ImageMagick (magick.exe + DLLs + modules\).
+; Bundled ImageMagick (magick.exe + DLLs + modules\). The Compact build
+; (build-release.ps1 -NoImageMagick) passes /DNoMagick so this source row is
+; compiled out — an empty stage\magick would otherwise fail ISCC's existence
+; check even though the component is never selected.
+#ifndef NoMagick
 Source: "stage\magick\*"; DestDir: "{app}"; Excludes: "policy.xml"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: magick
+#endif
 
 [Icons]
 Name: "{group}\SageThumbs 2K"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\app.ico"

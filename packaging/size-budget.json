@@ -6,10 +6,10 @@
   "installerGrowthAllowanceBytes": 131072,
   "maxInstallerBytes": 13249684,
   "referenceRustPayloadBytes": 22216192,
-  "rustPayloadGrowthAllowanceBytes": 262144,
-  "maxRustPayloadBytes": 22478336,
+  "rustPayloadGrowthAllowanceBytes": 1314816,
+  "maxRustPayloadBytes": 23531008,
   "referenceMagickPayloadBytes": 29827612,
   "magickPayloadGrowthAllowanceBytes": 262144,
   "maxMagickPayloadBytes": 30089756,
-  "rationale": "The measured 1.3.6-rc1 reference is the first baseline validated by the current output-signature and clean-machine dependency gates. Tagged 1.3.2-1.3.5 Full installers omitted load-bearing AVIF and JPEG XL writer files and are not valid no-regression baselines. Keep later releases within 128 KiB compressed and 256 KiB for each raw payload unless an explicit reviewed policy change records why."
+  "rationale": "The measured 1.3.6-rc1 reference is the first baseline validated by the current output-signature and clean-machine dependency gates. Tagged 1.3.2-1.3.5 Full installers omitted load-bearing AVIF and JPEG XL writer files and are not valid no-regression baselines. Keep later releases within 128 KiB compressed and 256 KiB for each raw payload unless an explicit reviewed policy change records why. 2026-07-31: reviewed policy change — rustPayloadGrowthAllowanceBytes raised 262,144 → 1,314,816 (max 22,478,336 → 23,531,008; +0.754 MiB measured growth, +256 KiB slack). Cause: the Lepton ENCODE feature (Convert into ▸ LEP, .lep edit paths) makes the previously LTO-dead-stripped encoder load-bearing; the vendored encode path adds the JPEG entropy decoder + writer to the shipped DLL/EXE. Verified against the 10-agent audit of feat/lepton-encode (commit 024aba6)."
 }

@@ -428,6 +428,7 @@ $fmtCount = ''
 $fmtLine = & "$targetRel\st2k.exe" formats 2>$null | Select-Object -First 1
 if ($fmtLine -match '^(\d+)\s') { $fmtCount = $Matches[1] }
 $isccArgs = @("/DAppVer=$ver"); if ($fmtCount) { $isccArgs += "/DFmtCount=$fmtCount" }
+if (-not $bundleMagick) { $isccArgs += "/DNoMagick" }
 $expectedSetupPath = "$root\dist\SageThumbs2K-Setup-$ver.exe"
 # A stale same-version artifact must not survive an odd ISCC "success" and then be
 # mistaken for the installer produced from this stage.
