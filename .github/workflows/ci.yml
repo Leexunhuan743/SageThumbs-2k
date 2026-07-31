@@ -191,6 +191,14 @@ jobs:
         env:
           WORKSPACE_ROOT: ${{ github.workspace }}
         run: cargo test --manifest-path vendor/lepton_jpeg/Cargo.toml --lib simple_threadpool
+      - name: Lepton encode-side output-failure regression (patch 11)
+        env:
+          WORKSPACE_ROOT: ${{ github.workspace }}
+        run: cargo test --manifest-path vendor/lepton_jpeg/Cargo.toml --test encode_failures
+      - name: Lepton multiplexer send-failure unit test (patch 11 discriminator)
+        env:
+          WORKSPACE_ROOT: ${{ github.workspace }}
+        run: cargo test --manifest-path vendor/lepton_jpeg/Cargo.toml --lib flush_after_receiver_drop
 
   # License + advisory + source/ban audit. The whole dependency graph is now
   # 100% permissive (RAR/CBR via the pure-Rust `rars` crate — no proprietary

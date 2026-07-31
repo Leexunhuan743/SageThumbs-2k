@@ -155,8 +155,18 @@ pub fn convert(
     webp_quality: Option<u8>,
     resize: verbs::Resize,
 ) -> Result<String, String> {
-    verbs::convert_to(input, Path::new(output), quality, webp_quality, resize)
-        .map_err(|_| format!("convert failed: {input}"))?;
+    verbs::convert_to(input, Path::new(output), quality, webp_quality, resize).map_err(|e| {
+        // The lepton JPEG-only failure carries its own HRESULT (same pattern as
+        // `ocr::OCR_IMAGE_TOO_LARGE`); surface the actual reason instead of the
+        // blanket "convert failed" every other error collapses to.
+        if e.code() == verbs::LEPTON_NEEDS_JPEG_SOURCE {
+            format!(
+                "convert failed: {input}: lepton output requires a JPEG source (jpg/jpeg/jpe/jfif)"
+            )
+        } else {
+            format!("convert failed: {input}")
+        }
+    })?;
     Ok(output.to_string())
 }
 

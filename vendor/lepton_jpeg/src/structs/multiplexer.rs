@@ -62,9 +62,22 @@ impl Write for MultiplexWriter {
             let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
             swap(&mut new_buffer, &mut self.buffer);
 
+            // SAGETHUMBS PATCH (0.5.8): propagate the send failure instead of
+            // aborting the host process. When the multiplex writer thread exits
+            // early after an I/O error (disk full, quota, broken pipe),
+            // multiplex_write drops the packet receivers while encode workers
+            // are still flushing, so this send() fails; upstream's .unwrap()
+            // would panic inside a pool worker and abort explorer/dllhost under
+            // panic=abort. The BrokenPipe error flows through the existing
+            // ?/context() chains back to the caller as a normal LeptonError.
             self.sender
                 .send(Message::WriteBlock(self.partition_id, new_buffer))
-                .unwrap();
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "lepton multiplex writer thread exited",
+                    )
+                })?;
         }
         Ok(())
     }
@@ -592,6 +605,31 @@ mod tests {
     use super::*;
     use crate::lepton_error::{ExitCode, LeptonError};
     use crate::{DEFAULT_THREAD_POOL, SingleThreadPool};
+
+    /// SAGETHUMBS regression for patch 11: `MultiplexWriter::flush` must
+    /// propagate a dead writer channel as an I/O error, not panic. When the
+    /// multiplex writer thread exits early on an I/O error (disk full),
+    /// `multiplex_write` drops the packet receivers while encode workers are
+    /// still flushing; the send then fails. Upstream `.unwrap()`-ed it, which
+    /// panics inside a pool worker and aborts explorer/dllhost under
+    /// panic=abort (catch_unwind is a no-op there). This unit test is the
+    /// DISCRIMINATING regression: it drives the exact failing send directly.
+    #[test]
+    fn flush_after_receiver_drop_returns_error_not_panic() {
+        let (tx, rx) = channel();
+        let mut writer = MultiplexWriter {
+            partition_id: 0,
+            sender: tx,
+            buffer: vec![0xAB; 4],
+        };
+        drop(rx);
+        let err = writer
+            .flush()
+            .expect_err("flush must fail once the receiver is gone");
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        // The buffered block must be drained even on the failure path.
+        assert!(writer.buffer.is_empty());
+    }
 
     /// simple end to end test that write the thread id and reads it back
     #[test]

@@ -42,6 +42,12 @@ name = "lepton_jpeg"
 crate-type = ["lib"]
 path = "src/lib.rs"
 
+# SAGETHUMBS: our encode-side regression suite (patch 11: output-failure
+# robustness). Self-contained — no {WORKSPACE_ROOT}/images corpus needed.
+[[test]]
+name = "encode_failures"
+path = "tests/encode_failures.rs"
+
 [dependencies.bytemuck]
 version = "1"
 

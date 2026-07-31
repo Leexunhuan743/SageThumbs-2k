@@ -566,38 +566,54 @@ pub fn run_action_detached(action: VerbAction, paths: Vec<String>, owner: Option
 }
 
 /// Dispatch a verb over the selected paths (best-effort). Returns an
+/// Shared body of the quick "Convert into ▸ …" verbs (`Convert(target)` and
+/// `ConvertLepton`): every selected file is converted on the batch pool (routed
+/// to the st2k helper per file for crash isolation when present, else
+/// in-process — `convert_one(None, …)` IS `convert_file`). Results come back IN
+/// ORDER, so the first success matches the old first-in-iteration reveal
+/// target. The global magick cap bounds memory across the fanned-out st2k
+/// children; the lepton encode gate does the same for `.lep` targets.
+fn run_convert_batch(exe_ref: Option<&Path>, paths: &[String], target: Target) -> ActionReport {
+    // Counts over ALL paths (no image filter), so the attempted count matches
+    // its denominator.
+    let outs: Vec<PathBuf> = crate::parallel::map(paths, |_, p| convert_one(exe_ref, p, target))
+        .into_iter()
+        .flatten()
+        .collect();
+    let n = outs.len();
+    let first = outs.into_iter().next();
+    let mut r = if n < paths.len() {
+        crate::safety::log(&format!(
+            "Convert to {}: only {}/{} succeeded",
+            target.ext,
+            n,
+            paths.len()
+        ));
+        ActionReport::applied(paths.len(), n).with_note("conversion failed for some files")
+    } else {
+        ActionReport::applied(paths.len(), n)
+    };
+    r.output = first;
+    r
+}
+
 /// [`ActionReport`] the Invoke callers surface to the user on failure.
 pub fn run_action(action: VerbAction, paths: &[String]) -> ActionReport {
     match action {
         VerbAction::Convert(target) => {
-            // Counts over ALL paths (no image filter), so the attempted count matches
-            // its denominator. Each file is converted on the batch pool (routed to the
-            // st2k helper per file for crash isolation when present, else in-process —
-            // `convert_one(None, …)` IS `convert_file`). Results come back IN ORDER, so
-            // the first success matches the old first-in-iteration reveal target. The
-            // global magick cap bounds memory across the fanned-out st2k children.
             let exe = st2k_exe();
-            let exe_ref = exe.as_deref();
-            let outs: Vec<PathBuf> =
-                crate::parallel::map(paths, |_, p| convert_one(exe_ref, p, target))
-                    .into_iter()
-                    .flatten()
-                    .collect();
-            let n = outs.len();
-            let first = outs.into_iter().next();
-            let mut r = if n < paths.len() {
-                crate::safety::log(&format!(
-                    "Convert to {}: only {}/{} succeeded",
-                    target.ext,
-                    n,
-                    paths.len()
-                ));
-                ActionReport::applied(paths.len(), n).with_note("conversion failed for some files")
-            } else {
-                ActionReport::applied(paths.len(), n)
+            run_convert_batch(exe.as_deref(), paths, target)
+        }
+        VerbAction::ConvertLepton => {
+            // `format` is a placeholder only: the lep branch of `convert_file` /
+            // `convert_to` keys off the extension and never touches it.
+            let target = Target {
+                format: ImageFormat::Jpeg,
+                ext: "lep",
+                webp_quality: None,
             };
-            r.output = first;
-            r
+            let exe = st2k_exe();
+            run_convert_batch(exe.as_deref(), paths, target)
         }
         VerbAction::Transform(t) => {
             // Routed per file to `st2k rotate` on the batch pool (else in-process
@@ -1597,7 +1613,7 @@ mod tests {
                 "{source}"
             );
         }
-        for source in ["layered.psd", "texture.dds", "picture.jp2"] {
+        for source in ["layered.psd", "texture.dds", "picture.jp2", "image.lep"] {
             assert_eq!(
                 routed_edit_output_ext(std::path::Path::new(source)),
                 source.rsplit_once('.').unwrap().1,

@@ -32,6 +32,7 @@ pub struct Target {
 /// JPEG quality used by the shrink-for-email presets (a sensible "looks fine in
 /// an email, stays small" middle ground, independent of the saved Options value).
 mod compress;
+mod lepton;
 mod samplers;
 mod slots;
 mod streaming;
@@ -43,6 +44,11 @@ use samplers::*;
 use streaming::*;
 
 pub use compress::compress_to_size;
+pub use lepton::jpeg_source_ext;
+pub(crate) use lepton::{
+    LEPTON_NEEDS_JPEG_SOURCE, encode_lepton_file, encode_image_to_lepton, is_lossless_jpeg,
+    jpeg_exceeds_lepton_budget,
+};
 pub(crate) use slots::{
     predict_unique_suffix, preserve_src_time, reserve, reserve_unique_suffix, unique_output,
     with_tmp_suffix, write_atomic, OutSlot,
@@ -111,9 +117,14 @@ fn native_output_format(ext: &str) -> Option<ImageFormat> {
 ///
 /// Unknown and decoder-only sources fall back to PNG. This helper is shared by
 /// the in-process writer and out-of-process routing so their reserved/reported
-/// paths cannot drift.
+/// paths cannot drift. `.lep` keeps `.lep`: the edit verbs re-encode it (lossy,
+/// like every `.jpg` edit that misses the lossless jpegtran path) via
+/// [`encode_image_to_lepton`].
 pub(crate) fn edit_output_ext(source_ext: &str) -> &str {
-    if ext_needs_magick(source_ext) || native_output_format(source_ext).is_some() {
+    if ext_needs_magick(source_ext)
+        || native_output_format(source_ext).is_some()
+        || source_ext == "lep"
+    {
         source_ext
     } else {
         "png"
@@ -126,6 +137,33 @@ pub(crate) fn edit_output_ext(source_ext: &str) -> &str {
 /// Returns the output path on success.
 pub fn convert_file(path: &str, target: Target) -> Result<std::path::PathBuf> {
     let bytes = read_capped(path)?;
+
+    // Lepton target (the quick "Convert into ▸ LEP" verb): a JPEG-family source
+    // recompresses LOSSLESSLY (bit-exact — EXIF/ICC survive); every other source
+    // is refused with the distinct "needs a JPEG source" error (the dialog and
+    // CLI surface the reason; the menu verb logs it).
+    if target.ext == "lep" {
+        let slot = unique_output(Path::new(path), "lep");
+        let src_ext = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if jpeg_source_ext(&src_ext) {
+            if is_lossless_jpeg(&bytes) {
+                encode_lepton_file(&bytes, slot.path())?;
+            } else if jpeg_exceeds_lepton_budget(&bytes) {
+                return Err(Error::from(E_FAIL));
+            } else {
+                return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
+            }
+        } else {
+            return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
+        }
+        preserve_src_time(Path::new(path), slot.path());
+        return Ok(slot.path().to_path_buf());
+    }
+
     let img = decode::decode_full(&bytes)?;
 
     let slot = unique_output(Path::new(path), target.ext);
@@ -219,7 +257,13 @@ pub fn transform_file(path: &str, t: Transform) -> Result<PathBuf> {
     };
     let slot = reserve_unique_suffix(src, "edited", out_ext);
     write_atomic(slot.path(), |tmp| {
-        if let Some(format) = native_format {
+        if out_ext == "lep" {
+            // Edit of a .lep source: decode → transform → JPEG (lossy, the
+            // saved quality) → lepton. Bit-exact recompression is impossible
+            // here — pixels changed — so this is the same lossy trade every
+            // .jpg edit makes.
+            encode_image_to_lepton(&out_img, crate::settings::jpeg_quality(), tmp)
+        } else if let Some(format) = native_format {
             encode_to(&out_img, format, out_ext, tmp)
         } else {
             decode::encode_via_magick(&out_img, tmp, out_ext, None)
@@ -248,7 +292,11 @@ pub fn resize_file(path: &str, r: Resize) -> Result<PathBuf> {
     };
     let slot = reserve_unique_suffix(src, "resized", out_ext);
     write_atomic(slot.path(), |tmp| {
-        if let Some(format) = native_format {
+        if out_ext == "lep" {
+            // Resize of a .lep source: decode → resize → JPEG (lossy, the saved
+            // quality) → lepton — pixels changed, so no bit-exact path exists.
+            encode_image_to_lepton(&img, crate::settings::jpeg_quality(), tmp)
+        } else if let Some(format) = native_format {
             encode_to(&img, format, out_ext, tmp)
         } else {
             decode::encode_via_magick(&img, tmp, out_ext, None)
@@ -425,10 +473,6 @@ pub(crate) fn apply_resize(img: DynamicImage, r: Resize) -> DynamicImage {
 /// non-colliding name, writes atomically. Returns the output path.
 pub fn convert_file_opts(path: &str, opts: ConvertOpts, out_dir: &Path) -> Result<PathBuf> {
     let bytes = read_capped(path)?;
-    let mut img = apply_resize(decode::decode_full(&bytes)?, opts.resize);
-    if matches!(opts.target.format, ImageFormat::Jpeg) {
-        img = flatten_onto_white(&img);
-    }
     let stem = Path::new(path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -444,6 +488,41 @@ pub fn convert_file_opts(path: &str, opts: ConvertOpts, out_dir: &Path) -> Resul
         };
         dir.join(name)
     });
+
+    // Lepton target: same dual-path contract as `convert_to` — JPEG-family
+    // source with no resize is lossless; .lep source or any source with a resize
+    // is decode → resize → JPEG (lossy, at the dialog's quality slider) →
+    // lepton; anything else is refused with the distinct error.
+    if opts.target.ext == "lep" {
+        let src_ext = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(opts.resize, Resize::None) && jpeg_source_ext(&src_ext) {
+            if is_lossless_jpeg(&bytes) {
+                encode_lepton_file(&bytes, slot.path())?;
+            } else if jpeg_exceeds_lepton_budget(&bytes) {
+                return Err(Error::from(E_FAIL));
+            } else {
+                return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
+            }
+        } else if bytes.starts_with(&[0xCF, 0x84]) || !matches!(opts.resize, Resize::None) {
+            let img = apply_resize(decode::decode_full(&bytes)?, opts.resize);
+            write_atomic(slot.path(), |tmp| {
+                encode_image_to_lepton(&img, opts.jpeg_quality, tmp)
+            })?;
+        } else {
+            return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
+        }
+        preserve_src_time(Path::new(path), slot.path());
+        return Ok(slot.path().to_path_buf());
+    }
+
+    let mut img = apply_resize(decode::decode_full(&bytes)?, opts.resize);
+    if matches!(opts.target.format, ImageFormat::Jpeg) {
+        img = flatten_onto_white(&img);
+    }
     write_atomic(slot.path(), |tmp| {
         encode_to_opts(
             &img,
@@ -481,6 +560,39 @@ pub fn convert_to(
         .filter(|e| !e.is_empty())
         .ok_or_else(|| Error::from(E_FAIL))?
         .to_ascii_lowercase();
+    // Lepton target: a JPEG-family source with no resize recompresses LOSSLESSLY
+    // (bit-exact — EXIF/ICC survive); a .lep source or any source WITH a resize
+    // goes decode → resize → JPEG (lossy, at `quality`) → lepton, because the
+    // pixels changed (the routed Resize verb predicts a `(resized).lep` sibling
+    // and arrives here exactly this way). Anything else is refused with the
+    // distinct "needs a JPEG source" error.
+    if ext == "lep" {
+        let bytes = read_capped(input)?;
+        let src_ext = Path::new(input)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(resize, Resize::None) && jpeg_source_ext(&src_ext) {
+            // JPEG-family source without a resize: lossless recompression when
+            // within the container budget, else a clean refusal (a >128 MiB
+            // JPEG can't recompress losslessly AND would be rejected by our
+            // own decoder as a container — self-inconsistent output).
+            if is_lossless_jpeg(&bytes) {
+                return encode_lepton_file(&bytes, out);
+            }
+            if jpeg_exceeds_lepton_budget(&bytes) {
+                return Err(Error::from(E_FAIL));
+            }
+        }
+        if bytes.starts_with(&[0xCF, 0x84]) || !matches!(resize, Resize::None) {
+            let img = apply_resize(decode::decode_full(&bytes)?, resize);
+            write_atomic(out, |tmp| encode_image_to_lepton(&img, quality, tmp))?;
+            preserve_src_time(Path::new(input), out);
+            return Ok(());
+        }
+        return Err(Error::from(LEPTON_NEEDS_JPEG_SOURCE));
+    }
     // Route every explicitly supported Magick target through its named coder.
     if ext_needs_magick(&ext) {
         // None = magick's default quality, so the quick verb's out-of-process (`st2k convert`)

@@ -38,6 +38,9 @@ const CID_FORMAT: i32 = 3001;
 const CID_RESIZE: i32 = 3004;
 const CID_OUTDIR: i32 = 3005;
 const CID_BROWSE: i32 = 3006;
+/// "Lepton needs a JPEG source" warning line (shown only when Lepton is
+/// selected with mixed inputs).
+const CID_LEP_WARN: i32 = 3012;
 const CID_PROGRESS: i32 = 3007;
 const CID_SETTINGS: i32 = 3008;
 const CID_RESIZE_CHK: i32 = 3009;
@@ -47,6 +50,10 @@ const WM_CONVERT_PROGRESS: u32 = 0x8000 + 30; // WM_APP + 30
 const WM_CONVERT_DONE: u32 = 0x8000 + 31;
 
 static CONVERT_FILES: OnceLock<Vec<String>> = OnceLock::new();
+/// Whether every file in the current selection has a JPEG-family extension — the
+/// Lepton target's lossless path needs them; set from the selection at dialog
+/// open, read by [`update_ok_enabled`].
+static ALL_JPEG: AtomicBool = AtomicBool::new(false);
 /// Per-format encode settings, chosen in the Settings… popup, read by the worker.
 static QUALITY: AtomicI32 = AtomicI32::new(90); // JPEG quality 1..=100
 static WEBP_QUALITY: AtomicI32 = AtomicI32::new(80); // lossy WebP quality 1..=100
@@ -133,6 +140,13 @@ const CV_FORMATS: &[(&str, Option<ImageFormat>, &str)] = &[
     ("PDF  \u{2014}  Portable Document Format", None, "pdf"),
 ];
 
+/// The Lepton target's combo entry (name, ext). Kept OUT of `CV_FORMATS` on
+/// purpose: `settings_kind`'s `(_, None, _)` arm (the PDF slot) maps to a
+/// JPEG-quality slider, which a `.lep` target must not get (it is lossless —
+/// there is no quality to tune). It gets its own [`CvTarget::Lepton`] variant
+/// instead, resolved by index after the (optional) magick block.
+const CV_LEPTON: (&str, &str) = ("LEP  \u{2014}  Lepton (lossless JPEG)", "lep");
+
 /// Extra Convert targets the `image` crate can't encode — written via the bundled
 /// ImageMagick (hidden on a compact install). Our decode pipeline handles the
 /// input; magick only writes the exotic output. (display name, extension)
@@ -161,11 +175,15 @@ enum CvTarget {
     Native(ImageFormat, &'static str),
     Pdf,
     Magick(&'static str),
+    /// Lepton: lossless JPEG recompression — NOT an `ImageFormat` (it is not a
+    /// pixel format), so it is its own variant; the convert verbs key off the
+    /// `.lep` extension.
+    Lepton,
 }
 
 /// Map the format combo's selection index to a target. Magick entries sit after
-/// the native ones (and only exist when magick is available), so an index past
-/// `CV_FORMATS` is a magick target.
+/// the native ones (and only exist when magick is available); the Lepton entry
+/// sits after magick and is always present.
 fn resolve_cv_target(sel: usize) -> CvTarget {
     if sel < CV_FORMATS.len() {
         let (_, fmt, ext) = CV_FORMATS[sel];
@@ -174,9 +192,21 @@ fn resolve_cv_target(sel: usize) -> CvTarget {
             None => CvTarget::Pdf,
         }
     } else {
-        match CV_MAGICK_FORMATS.get(sel - CV_FORMATS.len()) {
-            Some((_, ext)) => CvTarget::Magick(ext),
-            None => CvTarget::Native(ImageFormat::Png, "png"),
+        let magick_n = if sagethumbs2k_core::magick_available() {
+            CV_MAGICK_FORMATS.len()
+        } else {
+            0
+        };
+        let lep_idx = CV_FORMATS.len() + magick_n;
+        if sel < lep_idx {
+            match CV_MAGICK_FORMATS.get(sel - CV_FORMATS.len()) {
+                Some((_, ext)) => CvTarget::Magick(ext),
+                None => CvTarget::Native(ImageFormat::Png, "png"),
+            }
+        } else if sel == lep_idx {
+            CvTarget::Lepton
+        } else {
+            CvTarget::Native(ImageFormat::Png, "png")
         }
     }
 }
@@ -205,6 +235,22 @@ pub(crate) unsafe fn run_convert_dialog(_hinst: HINSTANCE, listfile: &str) {
     }
     let n = files.len();
     let _ = CONVERT_FILES.set(files);
+    // Whether the Lepton target's lossless path can take every file (the dialog's
+    // OK-gating check; the convert verbs re-verify per file with the same list).
+    ALL_JPEG.store(
+        CONVERT_FILES.get().is_some_and(|fs| {
+            !fs.is_empty()
+                && fs.iter().all(|f| {
+                    let ext = std::path::Path::new(f)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    sagethumbs2k_core::jpeg_source_ext(&ext)
+                })
+        }),
+        Ordering::Relaxed,
+    );
 
     // Restore the per-format export settings the user last chose (persisted in
     // HKCU); without this the Settings popup resets to defaults every launch.
@@ -316,6 +362,10 @@ unsafe fn build_convert_controls(hwnd: HWND, hinst: HINSTANCE) {
             );
         }
     }
+    // Lepton — pure-Rust encode, always available (after the magick block, so
+    // its index is stable for `resolve_cv_target`).
+    let w = wide(CV_LEPTON.0);
+    SendMessageW(fcombo, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize)));
     SendMessageW(fcombo, CB_SETCURSEL, Some(WPARAM(0)), None); // JPG
     dark_theme_combo(fcombo);
     ctl(
@@ -452,6 +502,23 @@ unsafe fn build_convert_controls(hwnd: HWND, hinst: HINSTANCE) {
     );
     let _ = ShowWindow(prog, SW_HIDE);
 
+    // Warning line: shown only when Lepton is selected with mixed (non-JPEG)
+    // inputs — the lossless recompression can't take them, and the Convert
+    // button is disabled in that state.
+    let warn = ctl(
+        hwnd,
+        STATIC,
+        t("cv_lep_jpeg_only"),
+        lbl,
+        16,
+        189,
+        452,
+        14,
+        CID_LEP_WARN,
+        hinst,
+    );
+    let _ = ShowWindow(warn, SW_HIDE);
+
     ctl(
         hwnd,
         BUTTON,
@@ -479,6 +546,7 @@ unsafe fn build_convert_controls(hwnd: HWND, hinst: HINSTANCE) {
 
     update_resize_enabled(hwnd);
     update_settings_enabled(hwnd);
+    update_ok_enabled(hwnd);
 }
 
 /// "Settings…" is enabled only for formats that have a settings panel (JPG/PDF
@@ -487,6 +555,21 @@ unsafe fn update_settings_enabled(hwnd: HWND) {
     let has = settings_kind(combo_sel(hwnd, CID_FORMAT)) != SK_NONE;
     if let Ok(b) = GetDlgItem(Some(hwnd), CID_SETTINGS) {
         let _ = EnableWindow(b, has);
+    }
+}
+
+/// Convert is enabled only when the selected target can take the current
+/// selection: Lepton's LOSSLESS path needs JPEG-family sources, so a mixed
+/// selection disables it (with the warning line shown); every other target
+/// accepts anything decodable. Called at dialog build and on format change.
+unsafe fn update_ok_enabled(hwnd: HWND) {
+    let lepton_blocked = matches!(resolve_cv_target(combo_sel(hwnd, CID_FORMAT)), CvTarget::Lepton)
+        && !ALL_JPEG.load(Ordering::Relaxed);
+    if let Ok(b) = GetDlgItem(Some(hwnd), IDOK) {
+        let _ = EnableWindow(b, !lepton_blocked);
+    }
+    if let Ok(s) = GetDlgItem(Some(hwnd), CID_LEP_WARN) {
+        let _ = ShowWindow(s, if lepton_blocked { SW_SHOW } else { SW_HIDE });
     }
 }
 
@@ -635,6 +718,27 @@ unsafe fn start_convert(hwnd: HWND) {
                         let q = matches!(ext, "avif" | "jxl")
                             .then(|| MAGICK_QUALITY.load(Ordering::Relaxed).clamp(1, 100) as u8);
                         sagethumbs2k_core::convert_to_magick_in(f, &dir, ext, resize, q).ok()
+                    }
+                    // Lepton (lossless JPEG recompression). JPEG-family sources
+                    // recompress bit-exactly; with a resize (or a .lep source) the
+                    // convert verbs fall back to a lossy JPEG re-encode at the
+                    // dialog's quality. Mixed selections are blocked at the OK
+                    // button; the per-file error is dropped like every other target.
+                    CvTarget::Lepton => {
+                        let opts = ConvertOpts {
+                            // `format` is a placeholder only — the lep branch of
+                            // `convert_file_opts` keys off the extension.
+                            target: Target {
+                                format: ImageFormat::Jpeg,
+                                ext: "lep",
+                                webp_quality: None,
+                            },
+                            jpeg_quality: quality,
+                            png_level,
+                            webp_quality: None,
+                            resize,
+                        };
+                        convert_file_opts(f, opts, &dir).ok()
                     }
                 }
             },
@@ -965,7 +1069,10 @@ extern "system" fn convert_wndproc(
                         let hinst: HINSTANCE = GetModuleHandleW(None).unwrap().into();
                         run_format_settings(hwnd, hinst, combo_sel(hwnd, CID_FORMAT));
                     }
-                    CID_FORMAT if notify == CBN_SELCHANGE => update_settings_enabled(hwnd),
+                    CID_FORMAT if notify == CBN_SELCHANGE => {
+                        update_settings_enabled(hwnd);
+                        update_ok_enabled(hwnd);
+                    }
                     CID_RESIZE_CHK => update_resize_enabled(hwnd),
                     CID_RESIZE if notify == CBN_SELCHANGE => update_resize_enabled(hwnd),
                     _ => {}

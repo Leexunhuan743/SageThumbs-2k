@@ -127,15 +127,19 @@ one-at-a-time pass, with no rayon weight added to the in-Explorer DLL. Each work
 initializes COM, which incidentally fixed HEIC/RAW silently failing in the Convert path.
 
 - **Convert into ▸** PNG · JPG · WebP · WebP (lossless) · **AVIF** · BMP · GIF · TIFF ·
-  Icon (.ico); one-click, writes a new file next to the original (never overwrites).
+  Icon (.ico) · **LEP** (Lepton — lossless JPEG recompression); one-click, writes a new
+  file next to the original (never overwrites).
   *HEIC→JPG works here too (a `.heic` decodes via WIC).* *(AVIF is written via the bundled
   ImageMagick; on a compact no-magick install that one verb reports an error (ImageMagick not
-  available) rather than silently doing nothing.)*
+  available) rather than silently doing nothing.)* *(LEP needs a JPEG-family source (JPG/JPEG/JPE/JFIF)
+  — it is a lossless recompression, so there is nothing to write otherwise; the CLI and the
+  Convert… dialog say so explicitly.)*
 - **Convert…** (top-level): opens the **Convert dialog** (XnView-style): an
   **Output format** dropdown, native **JPG · PNG · WebP · BMP · GIF · TIFF · ICO ·
   TGA · QOI · PNM · PDF**, plus (on a full install with the bundled ImageMagick)
   **18 more: AVIF · JPEG XL · PSD · DDS · JP2 · PCX · SGI · EXR · HDR · Farbfeld · PAM · PFM · DPX ·
-  FITS · XPM · PICT · RAS · PALM**; a per-format **Settings…** button (JPEG quality ·
+  FITS · XPM · PICT · RAS · PALM**, plus **LEP (lossless JPEG recompression — no quality knob, and
+  disabled with a note when the selection isn't all JPEG)**: a per-format **Settings…** button (JPEG quality ·
   **WebP lossless/lossy + quality** · PNG compression · **AVIF / JPEG XL quality**), a **Resize** checkbox with
   presets *or* a custom **W × H**, an output-folder picker, and a progress bar. Batch:
   applies to the whole selection. On completion it offers to **open the output folder**.

@@ -63,6 +63,11 @@ pub enum RenamePattern {
 #[derive(Clone, Copy)]
 pub enum VerbAction {
     Convert(Target),
+    /// Convert into ▸ LEP: Lepton's lossless JPEG recompression. NOT an
+    /// `ImageFormat` (it is not a pixel format), so it gets its own variant
+    /// instead of a `Convert(Target)` — the `Target.format` slot has no honest
+    /// value for it.
+    ConvertLepton,
     Transform(Transform),
     Clipboard,
     /// Upload the selected image(s) to a keyless host — the companion app POSTs each
@@ -129,6 +134,13 @@ const fn convert(key: &'static str, format: ImageFormat, ext: &'static str) -> M
     )
 }
 
+/// The "Convert into ▸ LEP" leaf. Unlike the other convert leaves there is no
+/// `ImageFormat` behind it (a `.lep` holds a bit-exact JPEG, it is not a pixel
+/// format), so it dispatches to [`VerbAction::ConvertLepton`].
+const fn convert_lepton(key: &'static str) -> MenuItem {
+    MenuItem::Verb(key, VerbAction::ConvertLepton)
+}
+
 /// Quality for the quick "Convert into ▸ WebP" verb. WebP's whole point is small
 /// files, so the one-click verb encodes LOSSY at this quality (libwebp) rather
 /// than the pure-Rust lossless encoder (which can produce files larger than the
@@ -165,6 +177,10 @@ pub const MENU: &[MenuItem] = &[
             convert("menu_fmt_gif", ImageFormat::Gif, "gif"),
             convert("menu_fmt_tiff", ImageFormat::Tiff, "tiff"),
             convert("menu_fmt_ico", ImageFormat::Ico, "ico"),
+            // Lepton: lossless JPEG recompression (bit-exact — EXIF/ICC survive).
+            // Only JPEG-family sources can go lossless; the verb fails cleanly on
+            // anything else (the CLI/dialog surface the reason; the menu logs it).
+            convert_lepton("menu_fmt_lep"),
         ],
     ),
     MenuItem::Verb("menu_convert_dialog", VerbAction::ConvertDialog),
@@ -724,8 +740,8 @@ mod tests {
     fn leaf_count_snapshot() {
         assert_eq!(
             leaf_count(),
-            43,
-            "MENU leaf count changed — re-check quick_items()/preview-slot math, then update this snapshot",
+            44,
+            "MENU leaf count changed — re-check quick_items()/preview-slot math, then update this snapshot"
         );
     }
 

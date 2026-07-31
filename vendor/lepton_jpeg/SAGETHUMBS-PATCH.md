@@ -104,6 +104,46 @@ rationale in the repository-root `src/lib.rs`).
     reads 4 bytes per entry from the zlib stream, so an unbounded count is
     an OOM entry point even though `compressed_header_size` itself is
     capped. Legit files carry one small entry per scan.
+11. **`structs/multiplexer.rs` — `MultiplexWriter::flush` propagates a dead
+    writer channel.** Upstream `.unwrap()`-ed the channel `send` of every
+    64 KiB block. When the multiplex writer thread exits early on an I/O
+    error (disk full, quota, broken pipe), `multiplex_write` drops the
+    packet receivers while encode workers are still flushing; the send then
+    fails and the unwrap panicked inside a pool worker — aborting
+    explorer/dllhost under panic=abort (`catch_unwind` is a no-op there).
+    The patch maps the failure to an `io::ErrorKind::BrokenPipe` error that
+    flows through the existing `?`/`context()` chains. Discriminating
+    regression: the in-module `flush_after_receiver_drop_returns_error_not_panic`
+    unit test (pre-patch it panics and fails).
+12. **`jpeg/jpeg_header.rs` — Huffman length-end shift wraps instead of
+    overflowing.** Upstream's `code = code << 1` overflowed u16 for ANY
+    canonical table with short codes: empty later lengths keep doubling
+    `code`, so even a normal JPEG (e.g. counts[1]=2, counts[2]=3,
+    counts[3]=1) reaches 61440 by the last round and panicked in debug
+    builds (release wrapped silently and benignly — an early-round wrap
+    trips the `code >= (1u32 << len)` layout check with a clean error, and
+    the final round's value is never used). `wrapping_shl(1)` keeps the
+    release semantics byte-identical and removes the debug abort. (An
+    earlier audit draft proposed rejecting `code > 0x7fff` — that would
+    have REJECTED every real JPEG with short codes, since empty rounds
+    legitimately push the running code past 0x7fff; the wrap is the correct
+    fix.)
+13. **`jpeg/jpeg_read.rs` — progressive successive-approximation shifts
+    wrap instead of overflowing.** The four `<< jf.cs_sal` coefficient
+    shifts (DC first stage, DC refine, AC first stage, SA-later) overflowed
+    i16 for |coef| >= 16 with cs_sal >= 1 (debug panic; release wrapped
+    silently and the wrapped value then hit the clean `CoefficientOutOfRange`
+    gate). `wrapping_shl` keeps the release semantics byte-identical and
+    removes the debug abort.
+
+Encode-side audits (Phase 1 of the Lepton-encode feature) covered the
+previously-unfuzzed JPEG entropy surface (`jpeg_read.rs` first/progressive
+scan decode, `bit_reader.rs`, `jpeg_position_state.rs`, `model.rs`,
+`lepton_encoder.rs`, `row_spec.rs`, `truncate_components.rs`,
+`block_context.rs`). No release-mode panics beyond patches 11-13; all
+structural asserts/indexes there are guarded (coefficient magnitudes are
+capped at 2047 by the `CoefficientOutOfRange` gate before they can feed
+model priors).
 
 ## Verification
 

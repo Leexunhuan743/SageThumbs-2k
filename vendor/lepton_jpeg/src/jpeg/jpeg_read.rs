@@ -344,7 +344,7 @@ fn read_first_scan<R: BufRead + Seek>(
                 let v = coef.wrapping_add(last_dc[state.get_cmp()]);
                 last_dc[state.get_cmp()] = v;
 
-                current_block.set_transposed_from_zigzag(0, v << jf.cs_sal);
+                current_block.set_transposed_from_zigzag(0, v.wrapping_shl(u32::from(jf.cs_sal)));
 
                 let old_mcu = state.get_mcu();
                 sta = state.next_mcu_pos(jf);
@@ -427,7 +427,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                     0,
                     current_block
                         .get_transposed_from_zigzag(0)
-                        .wrapping_add(value << jf.cs_sal),
+                        .wrapping_add(value.wrapping_shl(u32::from(jf.cs_sal))),
                 );
 
                 sta = state.next_mcu_pos(jf);
@@ -484,7 +484,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                         for bpos in jf.cs_from..eob {
                             current_block.set_transposed_from_zigzag(
                                 usize::from(bpos),
-                                block[usize::from(bpos)] << jf.cs_sal,
+                                block[usize::from(bpos)].wrapping_shl(u32::from(jf.cs_sal)),
                             );
                         }
                     }
@@ -545,7 +545,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                             usize::from(bpos),
                             current_block
                                 .get_transposed_from_zigzag(usize::from(bpos))
-                                .wrapping_add(block[usize::from(bpos)] << jf.cs_sal),
+                                .wrapping_add(block[usize::from(bpos)].wrapping_shl(u32::from(jf.cs_sal))),
                         );
                     }
 

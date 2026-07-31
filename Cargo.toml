@@ -201,11 +201,13 @@ djvu-rs = { version = "0.26", default-features = false, features = ["std"] }
 jxl-oxide = { version = "0.12", default-features = false, features = ["image"] }
 # Lepton (.lep) — Dropbox's lossless JPEG recompression (0xCF 0x84 magic). Pure-Rust
 # Apache-2.0 port of dropbox/lepton (microsoft/lepton_jpeg_rust), #![forbid(unsafe_code)],
-# fuzzed; decodes back to a bit-exact JPEG which the `image` tier then decodes. Decode-only
-# in our tree (LTO dead-strips the encoder from the DLL). Vendored + patched (overflow
-# panics on legacy C++ files + a worker-thread leak in per-call pools — see
-# vendor/lepton_jpeg/SAGETHUMBS-PATCH.md); the per-call thread pool keeps no threads
-# parked in dllhost/explorer. Exact-pinned: security-sensitive decoder.
+# fuzzed; decodes back to a bit-exact JPEG which the `image` tier then decodes, and
+# ENCODES JPEG byte streams back into .lep containers (the Convert-into-LEP verb and
+# the .lep edit paths — see src/verbs/encode/lepton.rs). Vendored + patched (overflow
+# panics on legacy C++ files + a worker-thread leak in per-call pools + encode-side
+# output-failure robustness — see vendor/lepton_jpeg/SAGETHUMBS-PATCH.md); the per-call
+# thread pool keeps no threads parked in dllhost/explorer. Exact-pinned:
+# security-sensitive decoder AND encoder.
 lepton_jpeg = "=0.5.8"
 
 [features]

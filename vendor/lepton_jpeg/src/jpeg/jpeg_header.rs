@@ -258,7 +258,18 @@ impl HuffCodes {
                 j += 1;
             }
 
-            code = code << 1;
+            // SAGETHUMBS PATCH (0.5.8): the length-end shift below overflowed
+            // u16 for ANY table with short codes — empty later lengths keep
+            // doubling `code`, so even a normal JPEG (counts[1]=2, counts[2]=3,
+            // counts[3]=1) reaches 61440 by the last round and panicked in
+            // debug builds (release wrapped silently, and the wrap was benign:
+            // an early-round wrap trips the `code >= (1u32 << len)` layout
+            // check below with a clean error, and the final round's value is
+            // never used). wrapping_shl keeps the release byte-semantics
+            // identical while removing the debug abort. (A hostile table that
+            // pushes code toward 0xffff before the last round is still caught
+            // by the `code == 65535` check inside the loop.)
+            code = code.wrapping_shl(1);
         }
 
         hc.post_initialize();
