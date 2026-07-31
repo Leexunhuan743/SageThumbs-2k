@@ -412,3 +412,46 @@ fn concurrent_encodes_all_succeed() {
         assert!(n > 0);
     }
 }
+
+/// The GATE itself, through the REAL production path: four parallel `st2k
+/// convert` processes each run convert_to → encode_lepton_file →
+/// lepton_gate::acquire (a cross-process named semaphore, 2 permits). With
+/// more contenders than permits, the extras must WAIT (not fail) and every
+/// file must land. This is the path the dialog's parallel workers and the
+/// menu's st2k children actually take — a deadlock or a wedged gate would
+/// hang or fail these processes.
+#[test]
+fn parallel_cli_converts_all_succeed_through_the_gate() {
+    let dir = scratch("parallel_gate");
+    for i in 0..4 {
+        std::fs::write(dir.join(format!("p{i}.jpg")), JPEG).unwrap();
+    }
+    let handles: Vec<_> = (0..4)
+        .map(|i| {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                let src = dir.join(format!("p{i}.jpg"));
+                let out = dir.join(format!("p{i}.lep"));
+                Command::new(st2k())
+                    .args([
+                        "convert",
+                        src.to_str().unwrap(),
+                        out.to_str().unwrap(),
+                    ])
+                    .output()
+                    .expect("st2k runs")
+            })
+        })
+        .collect();
+    for (i, h) in handles.into_iter().enumerate() {
+        let status = h.join().expect("worker did not panic");
+        assert!(
+            status.status.success(),
+            "parallel convert {i} failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        let bytes = std::fs::read(dir.join(format!("p{i}.lep"))).unwrap();
+        assert!(bytes.starts_with(&[0xCF, 0x84]));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
