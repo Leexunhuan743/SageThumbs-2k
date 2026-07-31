@@ -120,13 +120,19 @@ try {
     }
 
     # The pre-patch EXR lookup tables duplicated static data in all three Rust
-    # artifacts. Keep that raw-payload regression rejected even if compression
-    # happens to hide it in the installer.
+    # artifacts (measured +662,016 B raw: dll 6,785,024 / EXE 9,118,720 /
+    # st2k 6,974,464). The 2026-07-31 policy raise (lepton encode, +0.754 MiB)
+    # grew the allowance past that measured amount, so the fixed pre-patch
+    # sizes no longer trip the gate; keep the regression protection instead —
+    # any raw growth BEYOND the policy allowance must fail. Computed from the
+    # production policy so a future reviewed raise tracks automatically.
+    $prodPol = Get-Content -Raw -LiteralPath $productionPolicy | ConvertFrom-Json
+    $dupGrowth = $prodPol.referenceRustPayloadBytes + $prodPol.rustPayloadGrowthAllowanceBytes + 1
     Set-SparseLength $installer 13118612
-    Set-SparseLength (Join-Path $stage 'sagethumbs2k.dll') 6785024
-    Set-SparseLength (Join-Path $stage 'SageThumbs2K.exe') 9118720
-    Set-SparseLength (Join-Path $stage 'st2k.exe') 6974464
-    Assert-Fails 'known duplicated-table Rust payload' {
+    Set-SparseLength (Join-Path $stage 'sagethumbs2k.dll') 6564352
+    Set-SparseLength (Join-Path $stage 'SageThumbs2K.exe') 8899072
+    Set-SparseLength (Join-Path $stage 'st2k.exe') ($dupGrowth - 6564352 - 8899072)
+    Assert-Fails 'duplicated-table raw growth beyond the policy allowance' {
         & $checker -InstallerPath $installer -PolicyPath $productionPolicy -StagePath $stage
     }
 
@@ -137,7 +143,7 @@ try {
     }
 
     Set-SparseLength $installer 13118612
-    Set-StageTotal $stage 22478337
+    Set-StageTotal $stage ($prodPol.maxRustPayloadBytes + 1)
     Assert-Fails 'production Rust ceiling plus one byte' {
         & $checker -InstallerPath $installer -PolicyPath $productionPolicy -StagePath $stage
     }
