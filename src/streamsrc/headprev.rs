@@ -1,0 +1,81 @@
+//! The head-preview rescues: containers whose baked thumbnail lives in the first
+//! bytes (Photoshop PSD/PSB image-resource 1036, Blender's `TEST` block, DWG's preview
+//! records), so a bounded prefix read stands in for the whole document.
+//!
+//! Two entry points on purpose: the UNDER-cap fast path exists to save I/O on a folder
+//! of big documents, and only commits when the prefix really does yield a preview; the
+//! OVERSIZED one is a rescue for files the cascade would otherwise refuse outright.
+
+use super::*;
+
+/// The head-preview fast path (see the call site in [`stream_source`]): bounded-
+/// prefix read + probe for an opaque PSD/PSB or plain `.blend`, any file size.
+/// Returns the prefix only when it is strictly smaller than the file (no byte
+/// savings otherwise) AND [`crate::container::extract_cover`] — the same extractor
+/// the decode tier will run on it — actually finds a preview inside. Any miss
+/// returns None and the caller proceeds exactly as before this path existed.
+/// Rewinds via `stream_prefix` on the hit path and explicitly on the miss paths.
+pub(super) unsafe fn head_preview_fast(stream: &IStream) -> Option<Vec<u8>> {
+    let size = stream_size(stream)?;
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    let mut head = [0u8; 8];
+    let mut got: u32 = 0;
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    if hr.is_err() || (got as usize) < head.len() {
+        return None;
+    }
+    // G-code carries no magic bytes, so it is reachable only by extension — the
+    // same Stat-recovered name the generic-archive probe uses. A stream with no
+    // recoverable name (rare virtual sources) simply misses that one member.
+    let ext = stream_path(stream).map(|p| p.rsplit('.').next().unwrap_or("").to_ascii_lowercase());
+    let wanted = crate::container::head_preview_len(
+        &head,
+        ext.as_deref(),
+        &mut IStreamReader {
+            stream: stream.clone(),
+        },
+        decode::HEAD_PREVIEW_BYTES as u64,
+    );
+    // The length probe seeks the SHARED stream around; park it back at 0 before
+    // any return. Every downstream consumer re-seeks anyway — this is insurance
+    // for future ones that might not.
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    let wanted = wanted?.min(decode::HEAD_PREVIEW_BYTES as u64);
+    if wanted >= size {
+        return None; // prefix would be the whole file — the normal read is equivalent
+    }
+    let prefix = stream_prefix(stream, wanted as usize)?;
+    crate::container::extract_cover(&prefix)
+        .is_some()
+        .then_some(prefix)
+}
+
+/// For an OVERSIZED file (past the in-memory cap): if its magic marks a container
+/// whose baked preview lives in the head — Blender `.blend` (`TEST` block ~100 bytes
+/// in) or Photoshop PSD/PSB (image resource 1036 just past the header) — read a
+/// bounded [`decode::HEAD_PREVIEW_BYTES`] prefix and thumbnail from THAT, instead of
+/// skipping to the default icon. Big Blender scenes and PSBs routinely exceed the
+/// 100 MB default cap while their thumbnails sit in the first kilobytes (GitHub
+/// issue #1). Every container extractor is bounds-checked, so a truncated tail just
+/// means "no preview found" (default icon — same as before), never a mis-decode.
+pub(super) unsafe fn head_preview_prefix(stream: &IStream) -> Option<Vec<u8>> {
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    let mut head = [0u8; 8];
+    let mut got: u32 = 0;
+    let hr = stream.Read(
+        head.as_mut_ptr() as *mut c_void,
+        head.len() as u32,
+        Some(&mut got),
+    );
+    let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+    let got = (got as usize).min(head.len());
+    if hr.is_err() || got < head.len() || !crate::container::has_head_preview(&head) {
+        return None;
+    }
+    stream_prefix(stream, decode::HEAD_PREVIEW_BYTES)
+}

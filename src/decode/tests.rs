@@ -1,6 +1,9 @@
 //! Unit tests for the decode pipeline (extracted verbatim from decode.rs).
 
 use super::*;
+// The tests exercise internals that now live in the sibling children; glob them in so
+// every assertion below still names them exactly as it did pre-split.
+use super::readers::*;
 
 fn png_bytes(w: u32, h: u32, color: [u8; 4]) -> Vec<u8> {
     let mut img = image::RgbaImage::new(w, h);

@@ -126,6 +126,16 @@ Read this before doing either again.
   grep), and (2) **struct fields** (a struct can be `pub(super)` while its individual fields are
   still private, and the compiler error for that is easy to skim past). Check both explicitly,
   don't assume "the struct is visible" means "the fields are too."
+- **The `super::` re-anchoring trap (hit again 2026-07-31, splitting `screenshot/overlay.rs`):**
+  when the file you are splitting was ITSELF a child of something else, every `super::foo` in it
+  meant *the grandparent* while the code lived in one file. Move that same line into a new leaf
+  and `super::` now means the file you just split, so it silently stops resolving. The compiler
+  does catch it (`cannot find X in super`), but the fix is not "widen a visibility": rewrite the
+  path to `crate::<grandparent>::foo` (or re-import the name in the hub). Grep the extracted
+  children for `super::` and check each one is still pointing where it was.
+  **This is the reason to prefer `foo.rs` + `foo/` over converting to `foo/mod.rs`:** keeping the
+  parent file where it is means `super::` inside IT stays correct and only the new leaves need
+  auditing. It also sidesteps the `include_bytes!` depth change below entirely.
 - **`include_bytes!` path breakage:** paths in `include_bytes!`/`include_str!` are relative to
   the *source file*, not the crate root. Moving a file one level deeper into a new subdirectory
   (e.g. `foo.rs` → `foo/bar.rs`) silently breaks any `include_bytes!("../asset.bin")`-style path
