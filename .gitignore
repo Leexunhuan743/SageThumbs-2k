@@ -74,6 +74,10 @@ Thumbs.db
 /mutants.out/
 /mutants.out.old/
 .pi
+# Agent Lattice knowledge graph + repo guidelines — local working notes, not part of
+# the shipped project (already in history; kept on disk for `lat check`/agent hooks).
+/AGENTS.md
+/lat.md/
 # vendored lepton_jpeg builds standalone under `cargo test --manifest-path` (like exr);
 # its generated lockfile is not part of the patch.
 vendor/lepton_jpeg/Cargo.lock
