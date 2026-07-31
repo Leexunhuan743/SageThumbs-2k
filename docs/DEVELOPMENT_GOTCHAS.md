@@ -142,6 +142,17 @@ Read this before doing either again.
   **This is the reason to prefer `foo.rs` + `foo/` over converting to `foo/mod.rs`:** keeping the
   parent file where it is means `super::` inside IT stays correct and only the new leaves need
   auditing. It also sidesteps the `include_bytes!` depth change below entirely.
+- **`pub(super)` re-anchors too - the VISIBILITY twin of the trap above (hit 2026-07-31 splitting
+  `preview/highlight.rs` and `preview/window.rs`).** The bullet above is about `super::` in a
+  *path*; this is the same word in a *visibility*, and it fails far more confusingly. An item
+  already marked `pub(super)` in `preview/window.rs` means "visible to `preview`". Move it
+  verbatim into `preview/window/zoom.rs` and it silently means "visible to `window`", so
+  `preview::mod`'s existing callers stop seeing it. The error is **`E0603 "... is private"` at the
+  CALLER**, naming an *import* rather than the item, which reads like a missing `pub use` and
+  sends you editing the hub instead of the child. Fix: rewrite `pub(super)` to the absolute
+  `pub(in crate::<parent>)` in every extracted item, and make the hub's re-export match it
+  (`pub(in crate::preview) use zoom::*;`). The pre-existing `window/scroll.rs` was already written
+  this way: copy a working sibling's visibility form rather than the parent's.
 - **`include_bytes!` path breakage:** paths in `include_bytes!`/`include_str!` are relative to
   the *source file*, not the crate root. Moving a file one level deeper into a new subdirectory
   (e.g. `foo.rs` → `foo/bar.rs`) silently breaks any `include_bytes!("../asset.bin")`-style path
