@@ -71,3 +71,4 @@ Thumbs.db
 # cargo-mutants scratch (mutation-testing results; regenerated every run)
 /mutants.out/
 /mutants.out.old/
+.pi
