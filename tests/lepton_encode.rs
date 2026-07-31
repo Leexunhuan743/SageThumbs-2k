@@ -509,3 +509,93 @@ fn parallel_cli_converts_all_succeed_through_the_gate() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A LARGE high-quality JPEG (4.2 MB, q100, 1600×1200 — enough to trigger
+/// multi-partition encoding) through the PRODUCTION convert_file → .lep must
+/// stay LOSSLESS: the container holds the original JPEG bytes bit-exact. Pins
+/// the lossless contract at a size the 1085 B fixture never exercises.
+#[test]
+fn large_jpeg_lossless_roundtrip_is_byte_exact() {
+    let dir = scratch("probe_large");
+    let img = image::RgbImage::from_fn(1600, 1200, |x, y| {
+        image::Rgb([
+            (x * 255 / 1600) as u8,
+            (y * 255 / 1200) as u8,
+            ((x + y) * 128 / 2800) as u8,
+        ])
+    });
+    let mut jpg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 100)
+        .encode_image(&image::DynamicImage::ImageRgb8(img))
+        .unwrap();
+    let src = dir.join("hi.jpg");
+    std::fs::write(&src, &jpg).unwrap();
+    let out = sagethumbs2k_core::convert_file(
+        src.to_str().unwrap(),
+        sagethumbs2k_core::Target {
+            format: image::ImageFormat::Jpeg,
+            ext: "lep",
+            webp_quality: None,
+        },
+    )
+    .expect("convert_file to lep");
+    let lep = std::fs::read(&out).unwrap();
+    let mut decoded = Vec::new();
+    lepton_jpeg::decode_lepton(
+        &mut std::io::Cursor::new(&lep),
+        &mut decoded,
+        &decode_features(),
+        &pool(),
+    )
+    .expect("decodes");
+    assert_eq!(
+        decoded.len(),
+        jpg.len(),
+        "container must hold the ORIGINAL JPEG bytes"
+    );
+    assert_eq!(decoded, jpg, "lossless jpg->lep must be bit-exact");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Same large-JPEG contract through the CLI (`st2k convert hi.jpg out.lep` →
+/// convert_to): the container must still hold the original bytes — a user who
+/// reports "the .lep is much smaller than the source" must not be seeing a
+/// silently lossy conversion.
+#[test]
+fn cli_large_jpeg_lossless_roundtrip_is_byte_exact() {
+    let dir = scratch("probe_cli");
+    let img = image::RgbImage::from_fn(1600, 1200, |x, y| {
+        image::Rgb([
+            (x * 255 / 1600) as u8,
+            (y * 255 / 1200) as u8,
+            ((x + y) * 128 / 2800) as u8,
+        ])
+    });
+    let mut jpg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 100)
+        .encode_image(&image::DynamicImage::ImageRgb8(img))
+        .unwrap();
+    let src = dir.join("hi.jpg");
+    std::fs::write(&src, &jpg).unwrap();
+    let out = dir.join("out.lep");
+    let status = Command::new(st2k())
+        .args(["convert", src.to_str().unwrap(), out.to_str().unwrap()])
+        .output()
+        .expect("st2k runs");
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let lep = std::fs::read(&out).unwrap();
+    let mut decoded = Vec::new();
+    lepton_jpeg::decode_lepton(
+        &mut std::io::Cursor::new(&lep),
+        &mut decoded,
+        &decode_features(),
+        &pool(),
+    )
+    .expect("decodes");
+    assert_eq!(decoded, jpg, "CLI jpg->lep must be bit-exact");
+    let _ = std::fs::remove_dir_all(&dir);
+}
